@@ -25,15 +25,22 @@ jobs:
           # -j2: -j$(nproc) on the runner OOM-killed the parallel gcc jobs
           # (ytdlp.cpp is a large TU) and make died silently mid-build.
           cmake --build build -j2 > /tmp/build.log 2>&1 || code=$?
-          tail -3 /tmp/build.log
+          echo "BUILD EXIT CODE: $code"
+          echo "LOG LINES: $(wc -l < /tmp/build.log)"
           if [ "$code" -ne 0 ]; then
-            # Surface the log tail + every error line as check annotations.
-            { tail -40 /tmp/build.log; grep -nE "rror|Killed" /tmp/build.log; } |
-              sort -u | head -40 | while IFS= read -r line; do
-                echo "::error::${line:0:400}"
-              done
+            grep -E "error:" /tmp/build.log | head -12 |
+              while IFS= read -r line; do echo "::error::${line:0:400}"; done
+            tail -12 /tmp/build.log |
+              while IFS= read -r line; do echo "::error::TAIL ${line:0:380}"; done
             exit "$code"
           fi
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-build-log
+          path: /tmp/build.log
+          if-no-files-found: ignore
       - name: Smoke test (binary runs, prints usage errors only)
         run: |
           ./build/crossfade --help 2>&1 | head -5 || true
