@@ -851,7 +851,8 @@ void draw_settings_panel(AppState &state)
         ImGui::SetClipboardText(state.backend_auth_file.c_str());
     ImGui::SameLine();
     if (ui_ghost_button("Copy folder", ImVec2(130.0f * m.layout_scale, m.control_h)))
-        ImGui::SetClipboardText(std::filesystem::path(state.backend_auth_file).parent_path().c_str());
+        ImGui::SetClipboardText(
+            std::filesystem::path(state.backend_auth_file).parent_path().string().c_str());
 
     ImGui::Dummy(ImVec2(0.0f, m.space_2));
     ImGui::TextColored(ui_c().text_muted, "Re-authenticate");

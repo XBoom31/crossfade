@@ -9,11 +9,19 @@ find_package(OpenGL REQUIRED)
 find_package(Threads REQUIRED)
 
 if(WIN32)
-    # No pkg-config / glib / libnotify on Windows: mpv is located via
-    # MPV_INCLUDE_DIR / MPV_LIBRARY cache variables (or vcpkg's find_package(mpv)),
-    # and the Linux desktop-integration code is compiled out (see stubs).
+    # No glib / libnotify on Windows: the Linux desktop-integration code is
+    # compiled out (see win32/ stubs). libmpv is discovered automatically via
+    # pkg-config (MSYS2) or find_library/find_path; an explicit
+    # -DMPV_LIBRARY=... / -DMPV_INCLUDE_DIR=... still takes precedence.
     set(P100_WIN TRUE)
     add_compile_definitions(P100_WINDOWS)
+
+    find_package(PkgConfig QUIET)
+    if(PkgConfig_FOUND)
+        pkg_check_modules(MPV QUIET mpv)
+    endif()
+    find_library(MPV_LIBRARY NAMES mpv libmpv HINTS ${MPV_LIBRARY_DIRS})
+    find_path(MPV_INCLUDE_DIR mpv/client.h HINTS ${MPV_INCLUDE_DIRS})
 else()
     find_package(PkgConfig REQUIRED)
     pkg_check_modules(MPV REQUIRED mpv)
@@ -85,6 +93,7 @@ if(P100_WIN)
     target_include_directories(crossfade PRIVATE ${MPV_INCLUDE_DIR})
     target_link_libraries(crossfade
         imgui
+        SDL2::SDL2main
         ${MPV_LIBRARY}
         Threads::Threads
         winmm

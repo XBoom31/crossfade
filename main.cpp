@@ -1902,8 +1902,18 @@ int main(int, char **)
     SDL_Window *window = SDL_CreateWindow("crossfade",
                                           SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, 1280, 820,
                                           SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI);
+    if (!window)
+    {
+        fprintf(stderr, "SDL_CreateWindow failed: %s\n", SDL_GetError());
+        return 1;
+    }
     SDL_SetWindowMinimumSize(window, 860, 600);
     SDL_GLContext gl_context = SDL_GL_CreateContext(window);
+    if (!gl_context)
+    {
+        fprintf(stderr, "OpenGL 3.2 core context unavailable: %s\n", SDL_GetError());
+        return 1;
+    }
     SDL_GL_MakeCurrent(window, gl_context);
     SDL_GL_SetSwapInterval(1);
 
@@ -1927,7 +1937,13 @@ int main(int, char **)
 
     // ---- Backends ----
     ImGui_ImplSDL2_InitForOpenGL(window, gl_context);
-    ImGui_ImplOpenGL3_Init("#version 130");
+    if (!ImGui_ImplOpenGL3_Init("#version 130"))
+    {
+        fprintf(stderr,
+                "OpenGL 3.2+ is required (found no working GL driver). "
+                "Update your GPU driver or use a machine with hardware/llvmpipe OpenGL.\n");
+        return 1;
+    }
 
     // ---- Mpv ----
     // Single cookie source everywhere: mpv, local yt-dlp calls and the
@@ -2391,9 +2407,11 @@ int main(int, char **)
 
     while (running)
     {
+#ifndef P100_WINDOWS
         while (g_main_context_iteration(g_main_context_default(), FALSE))
         {
         }
+#endif
 
         // Target frame interval for the current activity. Full 60 FPS is
         // reserved for visible animation (scroll easing, loading spinner)

@@ -40,6 +40,7 @@ jobs:
           install: >-
             mingw-w64-ucrt-x86_64-toolchain
             mingw-w64-ucrt-x86_64-cmake
+            mingw-w64-ucrt-x86_64-pkgconf
             mingw-w64-ucrt-x86_64-SDL2
             mingw-w64-ucrt-x86_64-mpv
             mingw-w64-ucrt-x86_64-python
@@ -48,12 +49,22 @@ jobs:
         run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
       - name: Build
         run: cmake --build build -j"$(nproc)"
+      - name: Bundle runtime DLLs
+        run: |
+          cd /ucrt64/bin
+          cp SDL2.dll libmpv-2.dll libstdc++-6.dll libgcc_s_seh-1.dll \
+             libwinpthread-1.dll "$GITHUB_WORKSPACE/build/"
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: crossfade-windows
           path: |
             build/crossfade.exe
+            build/SDL2.dll
+            build/libmpv-2.dll
+            build/libstdc++-6.dll
+            build/libgcc_s_seh-1.dll
+            build/libwinpthread-1.dll
             p100-backend.py
             p100-backend-oauth.py
             requirements.txt

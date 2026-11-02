@@ -183,6 +183,28 @@ your data between machines.
 
 </details>
 
+## Build on Windows
+
+The same source tree builds on Windows with the MSYS2 UCRT64 toolchain (MinGW-w64) —
+the Linux-only desktop integration (MPRIS, libnotify, GLib) is compiled out and
+replaced by no-op stubs.
+
+```bash
+# In a UCRT64 MSYS2 shell (C:\msys64\ucrt64.exe)
+pacman -S --needed mingw-w64-ucrt-x86_64-toolchain mingw-w64-ucrt-x86_64-cmake \
+                   mingw-w64-ucrt-x86_64-pkgconf mingw-w64-ucrt-x86_64-SDL2 \
+                   mingw-w64-ucrt-x86_64-mpv
+git clone <this-repo> crossfade
+cd crossfade
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build
+```
+
+To run the exe outside the MSYS2 shell, copy `SDL2.dll`, `libmpv-2.dll`,
+`libstdc++-6.dll`, `libgcc_s_seh-1.dll` and `libwinpthread-1.dll` from
+`/ucrt64/bin` next to `crossfade.exe`. The Python backend needs a Windows Python 3
+with `ytmusicapi` + `yt-dlp`; without it the UI runs but cannot reach YouTube Music.
+
 ## Sign in
 
 crossfade talks to YouTube Music through `ytmusicapi`, which needs your logged-in session

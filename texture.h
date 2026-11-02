@@ -2,6 +2,11 @@
 #include <string>
 #include <GL/gl.h>
 
+// GL 1.2 enum used for texture wrapping; the Windows GL/gl.h only covers 1.1.
+#ifndef GL_CLAMP_TO_EDGE
+#define GL_CLAMP_TO_EDGE 0x812F
+#endif
+
 struct TextureInfo
 {
     GLuint id = 0;

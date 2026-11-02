@@ -436,6 +436,7 @@ static void channel_close(BackendChannel &ch)
 }
 #endif // P100_WINDOWS
 
+#ifndef P100_WINDOWS
 static std::string backend_read_line(BackendChannel &ch)
 {
     // Raw fd reads (not fgets): stdio buffering hides data from poll(), which
@@ -506,6 +507,7 @@ static std::string backend_read_line(BackendChannel &ch)
         line.pop_back();
     return line;
 }
+#endif // !P100_WINDOWS
 
 static void backend_write_line(BackendChannel &ch, const std::string &cmd)
 {
@@ -1158,7 +1160,11 @@ static std::string send_command(const std::string &cmd)
 // the main channel. Falls back to the main channel if that worker is down.
 static std::string send_play_command(const std::string &cmd)
 {
+#ifdef P100_WINDOWS
+    if (g_play_backend.h_in_write != NULL)
+#else
     if (g_play_backend.in)
+#endif
         return send_command_on(g_play_backend, cmd);
     return send_command_on(g_backend, cmd);
 }
@@ -2405,7 +2411,12 @@ std::string sniff_audio_container_ext(const std::string &path, const std::string
 // ------------------ Backend/auth diagnostics ------------------
 bool backend_running()
 {
+#ifdef P100_WINDOWS
+    return g_backend.h_in_write != NULL && g_backend.pid != NULL &&
+           !g_backend.dead.load();
+#else
     return g_backend.in != nullptr && g_backend.pid > 0 && !g_backend.dead.load();
+#endif
 }
 
 BackendError backend_error_snapshot()

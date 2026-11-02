@@ -1,6 +1,15 @@
 #pragma once
 #include <string>
 
+#ifdef P100_WINDOWS
+#include <direct.h>
+// POSIX mkdir(path, mode): the mode argument does not exist on Windows.
+inline int mkdir(const char *path, int)
+{
+    return _mkdir(path);
+}
+#endif
+
 // Central path resolution for p100.
 //
 // Config rule: $P100_CONFIG_DIR, else $XDG_CONFIG_HOME/p100, else

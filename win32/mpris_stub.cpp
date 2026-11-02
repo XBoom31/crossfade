@@ -2,7 +2,7 @@
 // protocol; a future Windows version would map these calls onto the Media
 // Session API (winrt::SystemMediaTransportControls). For now the surface is
 // a no-op so the rest of the app compiles and runs unchanged.
-#include "mpris.h"
+#include "../mpris.h"
 
 struct MprisPlayer::Impl
 {
