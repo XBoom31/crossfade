@@ -80,13 +80,18 @@ void MpvPlayer::load_next(const std::string &url)
 void MpvPlayer::stop()
 {
     replacing = false; // a genuine stop: any pending swap marker is void
-    mpv_command_async(mpv.get(), 0, (const char *[]){"stop", nullptr});
+    // Named array: a compound literal is a temporary, and g++ rejects
+    // passing its address (mpv_command_async keeps no reference, so a
+    // local is safe — the call copies the vector before returning).
+    const char *stop_cmd[] = {"stop", nullptr};
+    mpv_command_async(mpv.get(), 0, stop_cmd);
     playing = false;
 }
 
 void MpvPlayer::toggle_pause()
 {
-    mpv_command_async(mpv.get(), 0, (const char *[]){"cycle", "pause", nullptr});
+    const char *pause_cmd[] = {"cycle", "pause", nullptr};
+    mpv_command_async(mpv.get(), 0, pause_cmd);
 }
 
 void MpvPlayer::set_paused(bool paused)

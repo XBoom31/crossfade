@@ -4,7 +4,8 @@
 
 #ifndef P100_WINDOWS
 #include <gio/gio.h>
-#endif#include <cctype>
+#endif
+#include <cctype>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
