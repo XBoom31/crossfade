@@ -183,6 +183,23 @@ your data between machines.
 
 </details>
 
+## Install on Windows (one click)
+
+No admin rights, no build tools:
+
+1. Grab **`install-crossfade.cmd`** from the [latest release](https://github.com/XBoom31/crossfade/releases/latest)
+   and double-click it.
+2. Launch **crossfade** from the Start Menu.
+3. Sign in once: Start Menu → **crossfade-login**, and follow the prompts
+   (it takes the request headers from your clipboard — see [Sign in](#sign-in)).
+
+The installer sets up everything per-user under `%LOCALAPPDATA%\crossfade`:
+the app with every runtime DLL bundled (SDL2, libmpv + codecs, and Mesa
+llvmpipe software OpenGL, so it starts even without a GL 3.2 driver — remove
+`opengl32.dll`, `libgallium_wgl.dll` and `dxil.dll` from `bin\` to use your
+GPU driver instead), a private Python 3.12, the backend venv with
+`ytmusicapi` + `yt-dlp`, and Start Menu shortcuts.
+
 ## Build on Windows
 
 The same source tree builds on Windows with the MSYS2 UCRT64 toolchain (MinGW-w64) —
