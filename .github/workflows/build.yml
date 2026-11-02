@@ -21,12 +21,11 @@ jobs:
         run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
       - name: Build
         run: |
-          set -o pipefail
-          cmake --build build -j"$(nproc)" 2>&1 | tee /tmp/build.log | tail -3
-          code=${PIPESTATUS[0]}
+          code=0
+          cmake --build build -j"$(nproc)" 2>&1 | tee /tmp/build.log | tail -3 || code=$?
           if [ "$code" -ne 0 ]; then
             # Surface the tail of the log as check annotations (readable via API).
-            tail -25 /tmp/build.log | while IFS= read -r line; do
+            tail -30 /tmp/build.log | while IFS= read -r line; do
               echo "::error::${line:0:400}"
             done
             exit "$code"
