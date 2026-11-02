@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+# Create/refresh the browser-cookie auth file in crossfade's config directory.
+set -euo pipefail
+
+CONFIG_DIR="${P100_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/crossfade}"
+SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SHARE_DIR="${P100_SHARE_DIR:-}"
+
+if [ -z "$SHARE_DIR" ]; then
+    for candidate in "$SELF_DIR/../share/crossfade" "$SELF_DIR/.." "$SELF_DIR"; do
+        if [ -x "$candidate/venv/bin/ytmusicapi" ] || [ -f "$candidate/p100-backend.py" ]; then
+            SHARE_DIR="$candidate"
+            break
+        fi
+    done
+fi
+
+mkdir -p "$CONFIG_DIR"
+cd "$CONFIG_DIR"
+
+AUTH_ARGS=(browser --file "$CONFIG_DIR/browser.json")
+
+if [ -n "$SHARE_DIR" ] && [ -x "$SHARE_DIR/venv/bin/ytmusicapi" ]; then
+    exec "$SHARE_DIR/venv/bin/ytmusicapi" "${AUTH_ARGS[@]}" "$@"
+fi
+
+if [ -n "$SHARE_DIR" ] && [ -x "$SHARE_DIR/py/bin/ytmusicapi" ]; then
+    exec "$SHARE_DIR/py/bin/ytmusicapi" "${AUTH_ARGS[@]}" "$@"
+fi
+
+PYTHON="${P100_PYTHON:-python3}"
+exec "$PYTHON" -c '
+import sys
+from ytmusicapi.setup import main
+sys.argv = ["ytmusicapi"] + sys.argv[1:]
+raise SystemExit(main())
+' "${AUTH_ARGS[@]}" "$@"

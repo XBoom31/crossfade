@@ -1,0 +1,150 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+## Build & Run
+
+```bash
+# Development loop: build into build/ and run from there (no root, no install)
+./mk
+
+# Per-user install into ~/.local (builds, installs, creates the backend venv)
+./install.sh
+p100
+```
+
+Manual build:
+
+```bash
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build -j"$(nproc)"
+./build/p100
+```
+
+**Dependencies:**
+- SDL2, OpenGL, CMake, mpv, glib-2.0/gio-2.0, libnotify
+- Python 3 with `ytmusicapi` and `yt-dlp` in an isolated venv
+- For browser auth: run `p100-login` (or `./scripts/p100-login`) to create
+  `<config>/browser.json`
+
+`./install.sh` installs to `~/.local` by default:
+
+```text
+~/.local/bin/p100
+~/.local/bin/p100-login
+~/.local/share/p100/p100-backend.py
+~/.local/share/p100/p100-backend-oauth.py
+~/.local/share/p100/assets/fonts/
+~/.local/share/p100/venv/
+~/.local/share/applications/p100.desktop
+```
+
+Override the prefix with `PREFIX=/some/prefix ./install.sh`. For an offline
+install, put wheels in `wheels/` at the project root; the installer then uses
+`pip --no-index --find-links wheels`.
+
+**Python backend authentication:** The app communicates with YouTube Music via a Python backend process. Two variants exist:
+- `p100-backend.py` — uses browser cookies (`browser.json`, generated via `ytmusicapi browser`)
+- `p100-backend-oauth.py` — uses OAuth (hardcoded client ID/secret; first run opens browser for login)
+
+The backend is selected from the auth mode stored in `settings.json` (Settings →
+Authentication), defaulting to browser cookies.
+
+**Build from scratch after checkout** only requires the native dependencies and
+`python3`; `./install.sh` creates the venv and installs the Python packages.
+
+## Architecture
+
+Desktop YouTube Music client. C++ frontend (SDL2 + OpenGL + Dear ImGui) drives the UI; mpv handles playback; a Python backend process bridges to YouTube Music's API.
+
+### Process structure
+
+```
+p100 binary (C++)
+  ├── mpv (libmpv)          — audio playback, gapless/crossfade
+  ├── Python backend (fork) — stdin/stdout JSON protocol, communicates with ytmusicapi
+  └── yt-dlp subprocess     — audio stream URL extraction, audio file caching
+```
+
+The C++ process forks the Python backend at startup, communicating via pipes. Each command (`recommendations`, `search <q>`, `radio <id>`, `album <browse_id>`, `artist <channel_id>`, `artist_search <q>`, `lyrics <id>`) sends a line to stdin, reads a JSON line from stdout. The backend is long-lived, processing one command per line. The `lyrics <id>` command is metadata-only (no stream resolution/audio), so it works for tracks served from the local audio cache.
+
+`lyrics <id>` runs a multi-provider cascade (first timestamped result wins, else the first plain one): YouTube Music native timed lyrics (unauthenticated mobile browse) → LRCLIB → NetEase Cloud Music → Kugou → lyrics.ovh → YouTube Music native plain (LyricFind). Search hits are matched on normalised title (+artist/duration) so lyrics for the wrong song are never returned.
+
+### Module overview
+
+| File | Role |
+|---|---|
+| `main.cpp` | Entry point, SDL/mpv/ImGui init, main loop, event dispatch, session restore |
+| `ui.h` | `AppState` struct (global state), `Track`/`Playlist`/`Settings`/`SessionState` types, UI function declarations, layout constants |
+| `ui_helpers.cpp` | Liked songs persistence (`liked.json`), saved albums/artists persistence (`albums.json`, `artists.json`), album/artist data caches (`album_cache/`, `artist_cache/`), playlist file I/O, session persistence, shared UI helpers |
+| `ui_top.cpp` | Top navigation bar (Home/Downloads/Radio/Liked/Albums/Artists/Playlists/Settings) + search bar with debounce |
+| `ui_main.cpp` | Main content area — track list with thumbnails, right-click context menu (like/radio/view album/view artist/save album/save artist/add to playlist), double-click to play |
+| `ui_bottom.cpp` | Bottom bar — album art, track info, prev/play-pause/next buttons, custom seek bar, volume slider |
+| `ui_playlists.cpp` | Left-right split panel — playlist list on left, track list on right |
+| `ui_album.cpp` | Album detail view (drill-down with save/unsave, album download) + saved albums grid |
+| `ui_artists.cpp` | Artist detail view (popular songs + albums/singles, save/unsave) + saved artists grid + artist search results |
+| `ui_settings.cpp` | Settings panel (crossfade, volume normalization, notifications, lyrics timing offset, browser choice) + "danger zone" reset buttons |
+| `ui_lyrics.cpp` | Lyrics side panel on list tabs — Spotify-style treatment (enlarged active line, distance dimming, glow-weighted auto-center scroll, per-line morph on verse change, edge fades), load/retry states; toggled from the bottom bar |
+| `ytdlp.h` / `ytdlp.cpp` | Python backend process management (fork/exec, pipe I/O), JSON parsing (custom, no dependency), audio caching via yt-dlp, `Track` struct |
+| `mpvplayer.h` / `mpvplayer.cpp` | mpv wrapper — play/stop/pause/seek/volume, event callback for start/end/error |
+| `texture.h` / `texture.cpp` | Async thumbnail loading pipeline — curl download → STB decode → GPU upload (thread-safe queue) with failed-URL backoff |
+| `mpris.h` / `mpris.cpp` | MPRIS D-Bus integration (org.mpris.MediaPlayer2.p100) via raw GDBus — Play/Pause/Next/Prev/Seek/Stop, metadata updates |
+| `config.h` / `config.cpp` | Simple browser config (`<config>/config.ini`) |
+| `paths.h` / `paths.cpp` | Config/share/asset path resolution (`P100_CONFIG_DIR`, XDG, installed vs dev tree) |
+| `accent.h` / `accent.cpp` | Accent colour: `P100_ACCENT`, XDG portal, daily date-seeded fallback |
+| `daily_accent.h` | In-tree deterministic date-seeded RGB helper |
+| `p100-backend.py` | Python backend (browser cookie auth via `browser.json`) |
+| `p100-backend-oauth.py` | Python backend (OAuth variant) |
+| `scripts/p100-login` | Browser-cookie auth helper (writes `<config>/browser.json`) |
+| `scripts/p100-export.sh` / `scripts/p100-import.sh` | Full/slim data migration |
+| `install.sh` / `dist.sh` | Per-user install and source tarball |
+
+### AppState — global state hub
+
+`AppState` (in `ui.h`) is the central shared state struct. It's passed by reference to every UI function and mutated directly (with `std::atomic` for cross-thread flags). Key groups:
+
+- **Playlists/tracks:** `recommendations`, `search_results`, `downloaded_tracks`, `radio_results`, `liked_tracks`, `playlists[]` — all `std::vector<Track>`
+- **Current playback:** `current_title`, `current_artist`, `current_track_id`, `current_track_url`, `current_track_index`
+- **Pending play requests:** `pending_*` fields consumed by main loop to kick off audio resolution
+- **User controls:** `next_requested`, `prev_requested`, `user_pause_requested`, `user_play_requested`, `search_dirty`, `refresh_requested` — set by UI, consumed by main loop
+- **Playlist source tracking:** `current_playlist_source` (Home/Search/Downloads/Radio/Liked/Playlist/Album/Artist) determines which vector drives the current view
+
+### Main loop power management
+
+The main loop uses `SDL_WaitEventTimeout()` with a 200ms timeout when idle (nothing playing) and 1ms when active — this keeps idle CPU usage near zero while maintaining responsive UI during playback. ImGui renders at ~30 FPS.
+
+### Data flow
+
+1. User action (click, search) → sets flag in `AppState`
+2. Main loop detects flag → spawns detached `std::thread` for network work
+3. Background thread calls Python backend → parses JSON → writes result into `AppState` (under `g_data_mutex`)
+4. Next frame renders updated data
+
+### Persistence locations
+
+All user data lives in one directory, resolved as `$P100_CONFIG_DIR`, then
+`$XDG_CONFIG_HOME/p100`, then `~/.config/p100` (the historical default, kept so
+copied data works unchanged).
+
+- `session.json` — last-played track, position, volume, playlist source (saved every 10s + on quit)
+- `settings.json` — crossfade duration, volume normalization, notifications, browser choice, lyrics timing offset (±5 s)
+- `liked.json` — liked tracks
+- `albums.json` — saved albums (metadata for the permanent Albums tab)
+- `artists.json` — saved artists (metadata for the permanent Artists tab)
+- `album_cache/<browse_id>.json` — cached album header + track list (instant reopen/offline)
+- `artist_cache/<channel_id>.json` — cached artist header + top songs + albums/singles (instant reopen/offline)
+- `playlists/*.json` — one file per playlist
+- `audio_cache/` — downloaded audio files (opus/m4a/mp3) with `.meta.json` sidecars
+- `thumb_cache/` — cached thumbnail images
+- `lyrics/` — per-track lyrics cache (`<videoId>.json`; synced lines + time offsets)
+- `imgui.ini` — window layout (used to live next to the binary)
+- `backend.log` — Python backend stderr (yt-dlp probe noise)
+
+### Notable patterns
+
+- **Custom JSON parser:** No nlohmann/json or similar — `ytdlp.cpp` has hand-rolled `json_get_string()`, `json_get_int()`, `parse_track_array()` with Unicode escape support
+- **Async texture loading:** `get_texture()` fires a detached thread that downloads → decodes (stb_image) → pushes to a queue; `process_texture_queue()` consumes it on the main GL thread each frame
+- **Failed URL backoff:** 60-second window before retrying a failed thumbnail download, preventing continuous subprocess spawning for dead URLs
+- **Search debounce:** 1-second quiet period before dispatching a search (tracked in `ui_top.cpp` statics with `search_id` to discard stale in-flight results)
+- **MPRIS via raw GDBus:** Interface built from XML strings at runtime with `g_dbus_connection_register_object` — no auto-generated bindings
+- **No external C++ dependencies** beyond SDL2, OpenGL, mpv, glib, libnotify, and vendored ImGui/stb

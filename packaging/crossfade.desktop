@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=crossfade
+GenericName=Music Player
+Comment=Native YouTube Music player with real crossfade
+Exec=crossfade
+Icon=crossfade
+Terminal=false
+Categories=AudioVideo;Audio;Player;
+Keywords=music;youtube;player;crossfade;
+StartupNotify=true
+StartupWMClass=crossfade

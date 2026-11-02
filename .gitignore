@@ -1,0 +1,15 @@
+build/
+py/
+wheels/
+__pycache__/
+*.pyc
+browser.json
+browseroauth.json
+oauth.json
+imgui.ini
+p100-*-src.tar.gz
+p100-data-*.tar.*
+crossfade-*-src.tar.gz
+crossfade-data-*.tar.*
+*.tar.zst
+.zcode/
