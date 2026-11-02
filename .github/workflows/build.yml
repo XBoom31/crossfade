@@ -20,7 +20,16 @@ jobs:
       - name: Configure
         run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
       - name: Build
-        run: cmake --build build -j"$(nproc)"
+        run: |
+          set -o pipefail
+          cmake --build build -j"$(nproc)" 2>&1 | tee /tmp/build.log | tail -3
+          code=${PIPESTATUS[0]}
+          if [ "$code" -ne 0 ]; then
+            # Surface each unique compiler error as a check annotation.
+            grep -E "error:" /tmp/build.log | sort -u | head -20 |
+              while IFS= read -r line; do echo "::error::${line:0:400}"; done
+            exit "$code"
+          fi
       - name: Smoke test (binary runs, prints usage errors only)
         run: |
           ./build/crossfade --help 2>&1 | head -5 || true
