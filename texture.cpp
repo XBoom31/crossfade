@@ -18,6 +18,9 @@
 #include <sys/types.h>
 #ifndef P100_WINDOWS
 #include <unistd.h>
+#else
+#include <fcntl.h>
+#include <io.h>
 #endif
 #include <cerrno>
 #include <cstring>
@@ -190,6 +193,11 @@ static bool download_url(const std::string &url, std::vector<uint8_t> &data)
     std::unique_ptr<FILE, decltype(&pclose)> pipe(popen(cmd.c_str(), "r"), pclose);
     if (!pipe)
         return false;
+#ifdef P100_WINDOWS
+    // _popen defaults to text mode: CRLF translation on raw image bytes
+    // corrupts every download. Switch the pipe to binary before reading.
+    _setmode(_fileno(pipe.get()), _O_BINARY);
+#endif
     std::array<char, 4096> buffer;
     size_t total = 0;
     const size_t MAX_DOWNLOAD = 50 * 1024 * 1024; // 50 MB limit
