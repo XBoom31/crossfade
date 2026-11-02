@@ -22,13 +22,16 @@ jobs:
       - name: Build
         run: |
           code=0
-          cmake --build build -j"$(nproc)" > /tmp/build.log 2>&1 || code=$?
+          # -j2: -j$(nproc) on the runner OOM-killed the parallel gcc jobs
+          # (ytdlp.cpp is a large TU) and make died silently mid-build.
+          cmake --build build -j2 > /tmp/build.log 2>&1 || code=$?
           tail -3 /tmp/build.log
           if [ "$code" -ne 0 ]; then
-            # Surface the tail of the log as check annotations (readable via API).
-            tail -30 /tmp/build.log | while IFS= read -r line; do
-              echo "::error::${line:0:400}"
-            done
+            # Surface the log tail + every error line as check annotations.
+            { tail -40 /tmp/build.log; grep -nE "rror|Killed" /tmp/build.log; } |
+              sort -u | head -40 | while IFS= read -r line; do
+                echo "::error::${line:0:400}"
+              done
             exit "$code"
           fi
       - name: Smoke test (binary runs, prints usage errors only)
