@@ -22,7 +22,8 @@ jobs:
       - name: Build
         run: |
           code=0
-          cmake --build build -j"$(nproc)" 2>&1 | tee /tmp/build.log | tail -3 || code=$?
+          cmake --build build -j"$(nproc)" > /tmp/build.log 2>&1 || code=$?
+          tail -3 /tmp/build.log
           if [ "$code" -ne 0 ]; then
             # Surface the tail of the log as check annotations (readable via API).
             tail -30 /tmp/build.log | while IFS= read -r line; do
