@@ -102,6 +102,25 @@ keeps going.
 
 ## Install (Linux)
 
+### Prebuilt packages (recommended)
+
+Grab the latest file for your distro from [Releases](../../releases):
+
+| File | For |
+|---|---|
+| `crossfade-*-x86_64.AppImage` | **Anything** — one file, run it. No install. |
+| `crossfade-*-amd64.deb` | Debian, Ubuntu, Mint, Pop!_OS (`sudo apt install ./crossfade-*amd64.deb`) |
+| `crossfade-*-x86_64.rpm` | Fedora / openSUSE (`sudo dnf install ./crossfade-*x86_64.rpm`) — `mpv-libs` comes from RPM Fusion |
+| `crossfade-*-linux-x64.tar.gz` | Manual installs to any prefix |
+
+Arch users: `packaging/arch/PKGBUILD` in this repo builds via `makepkg -si`.
+
+The packages set up the Python backend for you during install (one-time
+network fetch of `ytmusicapi` + `yt-dlp`). The AppImage bootstraps it into
+`~/.local/share/crossfade/venv` on first launch.
+
+### Build from source
+
 crossfade installs per-user (no root) and manages its own Python environment.
 
 ### 1. Native dependencies

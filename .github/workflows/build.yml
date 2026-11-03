@@ -71,12 +71,58 @@ jobs:
           cp packaging/crossfade.desktop "dist/${PKG}/"
           cp README.md LICENSE "dist/${PKG}/"
           tar -czf "dist/${PKG}.tar.gz" -C dist "${PKG}"
-      - name: Upload Linux package
+      - name: Build deb and rpm packages
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          VER="${GITHUB_REF_NAME#v}"
+          sudo gem install fpm --no-document 2>/dev/null | tail -1
+          STAGE=$(mktemp -d)
+          mkdir -p "$STAGE/usr/bin" "$STAGE/usr/share/crossfade/assets"                    "$STAGE/usr/share/applications"                    "$STAGE/usr/share/icons/hicolor/scalable/apps"
+          cp build/crossfade "$STAGE/usr/bin/"
+          cp scripts/crossfade-login "$STAGE/usr/bin/"
+          cp p100-backend.py p100-backend-oauth.py requirements.txt "$STAGE/usr/share/crossfade/"
+          cp -r assets/fonts "$STAGE/usr/share/crossfade/assets/"
+          cp packaging/crossfade.desktop "$STAGE/usr/share/applications/"
+          cp assets/crossfade.svg "$STAGE/usr/share/icons/hicolor/scalable/apps/"
+          chmod +x packaging/linux/after-install.sh
+          # deb: libmpv package name differs across releases (libmpv1 on
+          # Ubuntu 20.04, libmpv2 on 22.04+/Debian 12) — allow either.
+          fpm -s dir -t deb -n crossfade -v "$VER" --iteration 1               --description "A native YouTube Music desktop player with real crossfade"               --url "https://github.com/XBoom31/crossfade" --license "MIT"               --depends "libsdl2-2.0-0" --depends "libglib2.0-0" --depends "libnotify4"               --depends "libmpv2 | libmpv1" --depends "python3 (>= 3.8)"               --depends "python3-venv" --depends "python3-pip" --depends "curl"               --after-install packaging/linux/after-install.sh               -C "$STAGE" -p "dist/crossfade-${VER}-amd64.deb" usr
+          # rpm: mpv-libs lives in RPM Fusion on Fedora — the app needs it.
+          fpm -s dir -t rpm -n crossfade -v "$VER" --iteration 1               --description "A native YouTube Music desktop player with real crossfade"               --url "https://github.com/XBoom31/crossfade" --license "MIT"               --depends "SDL2" --depends "glib2" --depends "libnotify"               --depends "mpv-libs" --depends "python3"               --after-install packaging/linux/after-install.sh               -C "$STAGE" -p "dist/crossfade-${VER}-x86_64.rpm" usr
+      - name: Build AppImage
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          VER="${GITHUB_REF_NAME#v}"
+          wget -q https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
+          chmod +x linuxdeploy-x86_64.AppImage
+          mkdir -p AppDir/usr/bin AppDir/usr/share/applications                    AppDir/usr/share/icons/hicolor/scalable/apps                    AppDir/usr/share/crossfade/assets
+          # The GUI binary moves aside; usr/bin/crossfade is the launcher that
+          # bootstraps the user-space venv (squashfs is read-only).
+          cp build/crossfade AppDir/usr/bin/crossfade.bin
+          cp packaging/linux/crossfade-appimage-wrapper.sh AppDir/usr/bin/crossfade
+          chmod +x AppDir/usr/bin/crossfade
+          cp p100-backend.py p100-backend-oauth.py requirements.txt AppDir/usr/share/crossfade/
+          cp -r assets/fonts AppDir/usr/share/crossfade/assets/
+          cp packaging/crossfade.desktop AppDir/usr/share/applications/
+          cp assets/crossfade.svg AppDir/usr/share/icons/hicolor/scalable/apps/
+          sudo apt-get install -y librsvg2-bin >/dev/null 2>&1 || true
+          mkdir -p AppDir/usr/share/icons/hicolor/256x256/apps
+          rsvg-convert -w 256 -h 256 assets/crossfade.svg               -o AppDir/usr/share/icons/hicolor/256x256/apps/crossfade.png || true
+          export P100_SOURCE_DIR="$PWD"
+          ./linuxdeploy-x86_64.AppImage --appimage-extract-and-run               --appdir AppDir --output appimage
+          mkdir -p dist
+          mv crossfade-*-x86_64.AppImage "dist/crossfade-${VER}-x86_64.AppImage"
+      - name: Upload Linux packages
         if: startsWith(github.ref, 'refs/tags/v')
         uses: actions/upload-artifact@v4
         with:
           name: crossfade-linux-release
-          path: dist/*.tar.gz
+          path: |
+            dist/*.tar.gz
+            dist/*.deb
+            dist/*.rpm
+            dist/*.AppImage
           if-no-files-found: error
 
   windows:
@@ -169,4 +215,7 @@ jobs:
           generate_release_notes: true
           files: |
             dist/*.tar.gz
+            dist/*.deb
+            dist/*.rpm
+            dist/*.AppImage
             dist/*.zip

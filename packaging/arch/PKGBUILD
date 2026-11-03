@@ -1,0 +1,30 @@
+# Maintainer: crossfade contributors
+# Arch package: build with `makepkg -si`. Requires python3 for the backend
+# venv (created by the post-install step, needs network once).
+pkgname=crossfade
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="A native YouTube Music desktop player with real crossfade"
+arch=('x86_64')
+url="https://github.com/XBoom31/crossfade"
+license=('MIT')
+depends=('sdl2' 'mpv' 'glib2' 'libnotify' 'python' 'curl')
+makedepends=('cmake' 'git')
+source=("$pkgname-$pkgver.tar.gz::https://github.com/XBoom31/crossfade/archive/refs/tags/v$pkgver.tar.gz")
+sha256sums=('SKIP')
+
+build() {
+    cd "$pkgname-$pkgver"
+    cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_INSTALL_PREFIX=/usr
+    cmake --build build -j"$(nproc)"
+}
+
+package() {
+    cd "$pkgname-$pkgver"
+    DESTDIR="$pkgdir" cmake --install build
+    # Backend venv so the app works right after install.
+    python3 -m venv "$pkgdir/usr/share/crossfade/venv"
+    "$pkgdir/usr/share/crossfade/venv/bin/pip" install --quiet \
+        -r "$pkgdir/usr/share/crossfade/requirements.txt"
+}
