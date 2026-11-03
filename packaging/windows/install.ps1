@@ -10,7 +10,7 @@ $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
-$Release = "https://github.com/XBoom31/crossfade/releases/download/v0.1.1"
+$Release = "https://github.com/XBoom31/crossfade/releases/download/v0.1.2"
 $Root    = "$env:LOCALAPPDATA\crossfade"
 $Tmp     = "$env:TEMP\crossfade-install"
 $PyDir   = "$env:LOCALAPPDATA\Programs\crossfade-python"

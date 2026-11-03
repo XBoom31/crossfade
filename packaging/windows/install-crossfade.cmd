@@ -10,7 +10,7 @@ echo.
 echo ==== crossfade installer ====
 echo Downloading installer ...
 set "PS1=%TEMP%\crossfade-install.ps1"
-curl -sL -o "%PS1%" https://github.com/XBoom31/crossfade/releases/download/v0.1.1/install.ps1
+curl -sL -o "%PS1%" https://github.com/XBoom31/crossfade/releases/download/v0.1.2/install.ps1
 if errorlevel 1 (
     echo.
     echo Could not download the installer - check your internet connection.

@@ -159,44 +159,56 @@ jobs:
           fi
       - name: Bundle runtime DLLs
         run: |
-          cd /ucrt64/bin
-          cp SDL2.dll libmpv-2.dll libstdc++-6.dll libgcc_s_seh-1.dll \
-             libwinpthread-1.dll "$GITHUB_WORKSPACE/build/"
+          # UCRT64 ships libmpv's codecs as separate DLLs (avcodec, avformat,
+          # swresample, libass, libplacebo, ...), and libmpv resolves them at
+          # load time. Copy the whole runtime set instead of only the five
+          # DLLs the exe links directly, otherwise mpv fails to start on a
+          # machine without MSYS2 installed.
+          cp /ucrt64/bin/*.dll "$GITHUB_WORKSPACE/build/"
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: crossfade-windows
           path: |
             build/crossfade.exe
-            build/SDL2.dll
-            build/libmpv-2.dll
-            build/libstdc++-6.dll
-            build/libgcc_s_seh-1.dll
-            build/libwinpthread-1.dll
+            build/*.dll
             p100-backend.py
             p100-backend-oauth.py
             requirements.txt
+            packaging/windows/crossfade-login.cmd
+            packaging/windows/make_browser_json.py
       - name: Package Windows release
         if: startsWith(github.ref, 'refs/tags/v')
         shell: pwsh
         run: |
-          $ver = $env:GITHUB_REF_NAME.TrimStart('v')
-          $pkg = "crossfade-$ver-windows-x64"
-          New-Item -ItemType Directory -Path "dist/$pkg" -Force | Out-Null
-          Copy-Item build/crossfade.exe, build/SDL2.dll, build/libmpv-2.dll, `
-            build/libstdc++-6.dll, build/libgcc_s_seh-1.dll, build/libwinpthread-1.dll `
-            "dist/$pkg/"
+          # Layout expected by packaging/windows/install.ps1:
+          #   crossfade-windows/bin/           exe + all runtime DLLs
+          #   crossfade-windows/share/crossfade/ backend + fonts
+          $pkg = "crossfade-windows"
+          $root = "dist/$pkg"
+          New-Item -ItemType Directory -Path "$root/bin" -Force | Out-Null
+          New-Item -ItemType Directory -Path "$root/share/crossfade/assets" -Force | Out-Null
+          Copy-Item build/crossfade.exe "$root/bin/"
+          Copy-Item build/*.dll "$root/bin/"
+          Copy-Item packaging/windows/crossfade-login.cmd "$root/bin/"
           Copy-Item p100-backend.py, p100-backend-oauth.py, requirements.txt, `
-            README.md, LICENSE "dist/$pkg/"
-          Copy-Item packaging/windows/install.ps1, packaging/windows/install-crossfade.cmd "dist/$pkg/"
-          Copy-Item assets/fonts "dist/$pkg/fonts" -Recurse
-          Compress-Archive -Path "dist/$pkg" -DestinationPath "dist/$pkg.zip"
+            packaging/windows/make_browser_json.py "$root/share/crossfade/"
+          Copy-Item assets/fonts "$root/share/crossfade/assets/fonts" -Recurse
+          Copy-Item README.md, LICENSE "$root/"
+          # The one-click installer downloads this exact filename from the
+          # release page; the scripts themselves are published next to it as
+          # standalone assets.
+          Copy-Item packaging/windows/install.ps1, packaging/windows/install-crossfade.cmd "dist/"
+          Compress-Archive -Path $root -DestinationPath "dist/$pkg.zip"
       - name: Upload Windows package
         if: startsWith(github.ref, 'refs/tags/v')
         uses: actions/upload-artifact@v4
         with:
           name: crossfade-windows-release
-          path: dist/*.zip
+          path: |
+            dist/crossfade-windows.zip
+            dist/install.ps1
+            dist/install-crossfade.cmd
           if-no-files-found: error
 
   release:
@@ -220,3 +232,5 @@ jobs:
             dist/*.rpm
             dist/*.AppImage
             dist/*.zip
+            dist/install.ps1
+            dist/install-crossfade.cmd
