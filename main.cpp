@@ -209,6 +209,8 @@ static void stop_fade()
     g_crossfade_pending = false;
     g_crossfade_active = false;
     g_manual_fade = false;
+    g_crossfade_track = Track{};
+    g_crossfade_index = -1;
     g_fade_player->set_stream_record("");
     g_fade_player->stop();
     g_fade_player->set_volume(0);
@@ -1525,9 +1527,10 @@ static bool can_start_manual_crossfade(const Track &t)
     return true;
 }
 
-// Finish a timer-driven manual fade: promote the incoming helper player to
-// be the main player and retire the (cut-short) outgoing one.
-static void finish_manual_crossfade()
+// Promote the helper player (the track that faded in) to be the main player
+// and retire the outgoing one. Shared by timer-driven manual fades and by
+// selections that arrive while a fade is already in flight.
+static void promote_fade_player_to_main()
 {
     if (!g_fade_player)
         return;
@@ -1548,14 +1551,47 @@ static void finish_manual_crossfade()
 
     g_crossfade_track = Track{};
     g_crossfade_index = -1;
-    g_state.loading = false;
     g_state.playing = true;
-    g_state.status_text = "Playing";
     g_state.repaint_requested = true;
+}
+
+// Finish a timer-driven manual fade: promote the incoming helper player to
+// be the main player and retire the (cut-short) outgoing one.
+static void finish_manual_crossfade()
+{
+    if (!g_fade_player)
+        return;
+    promote_fade_player_to_main();
+    g_state.loading = false;
+    g_state.status_text = "Playing";
 
     prefetch_next_track();
     predownload_next_track();
     maybe_start_endless_refill();
+}
+
+// A manual selection (track click, queue row, next/prev) arrived while a
+// crossfade is already in flight. Settle that transition first: otherwise
+// the helper player can keep playing the old "next" track while the new
+// selection is loaded into the main player, leaving an orphaned player the
+// app no longer tracks.
+static void settle_inflight_crossfade()
+{
+    if (!g_fade_player)
+        return;
+    if (g_crossfade_active.load())
+    {
+        // The faded-in track is already audible, so make it the outgoing
+        // track for the new selection instead of letting the helper linger.
+        discard_recording();
+        promote_fade_player_to_main();
+    }
+    else if (g_crossfade_pending.load())
+    {
+        // The incoming track never became audible: cancel it and keep the
+        // current main player, which can switch to the new selection.
+        stop_fade();
+    }
 }
 
 static void start_manual_crossfade(const Track &t, int index,
@@ -2868,6 +2904,10 @@ int main(int, char **)
                 std::lock_guard<std::mutex> lock(g_data_mutex);
                 if (!g_state.pending_play_url.empty())
                 {
+                    // A click/next/queue pick can land mid-crossfade. Settle
+                    // that fade before resolving the new track so the helper
+                    // player cannot be left playing an orphaned track.
+                    settle_inflight_crossfade();
                     bool fade_started = false;
                     // Optional skip crossfade for track clicks (scope >= 1).
                     // Session restore never takes this path because the main
@@ -2949,6 +2989,13 @@ int main(int, char **)
                              (unsigned long long)g_play_generation.load());
                         continue;
                     }
+
+                    // A crossfade may have started while this resolve was in
+                    // flight (the non-cached target takes a network round-trip).
+                    // Settle it first so the helper player doesn't keep playing
+                    // a stale "next" track underneath this request.
+                    if (g_crossfade_pending.load() || g_crossfade_active.load())
+                        settle_inflight_crossfade();
 
                     // Anything still recording here was skipped, not
                     // finished (finished tracks are finalized in the "end"

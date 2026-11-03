@@ -457,8 +457,6 @@ void draw_bottom_bar(AppState &state, MpvPlayer &player)
     if (s_flash_timer > 0.0f)
         dl->AddRect(art_min, art_max, ui_accent_u32(s_flash_timer / kFlashDuration * 0.9f), m.radius_sm, 0, 2.0f);
 
-    const float right_w = std::min(366.0f * m.layout_scale, bar_w * 0.33f);
-    const float right_x = bar_w - side_pad - right_w;
     const float center_w = std::min(430.0f * m.layout_scale, bar_w * 0.36f);
     const float center_x = (bar_w - center_w) * 0.5f;
     const float info_x = art_max.x + m.space_3;
@@ -671,9 +669,73 @@ void draw_bottom_bar(AppState &state, MpvPlayer &player)
 
     const bool lyrics_setting = state.settings.lyrics_panel_open;
     const bool lyrics_open = lyrics_setting && l.lyrics_open;
-    const float lyrics_size = std::min(m.control_h, bar_h * 0.48f);
-    const float queue_size = lyrics_size;
-    const float sleep_size = lyrics_size;
+
+    // Right-hand utility cluster (sleep / queue / lyrics / volume / speed).
+    // It is laid out right-to-left from the window edge: the volume slider
+    // absorbs the free space, and the secondary readouts (speed first, then
+    // the percentage) drop out when the window or the UI scale is too tight.
+    // This keeps the icons from colliding with each other and with the
+    // transport controls at every size.
+    const float right_edge = bar_w - side_pad;
+    const float icon_gap = m.space_2;
+    float icon_size = std::min(m.control_h, bar_h * 0.48f);
+    float icons_w = icon_size * 3.0f + icon_gap * 2.0f;
+    const float right_min_x = center_x + center_w + m.space_3;
+    const float right_avail = std::max(0.0f, right_edge - right_min_x);
+
+    // Extremely narrow / over-scaled layouts: shrink the icons instead of
+    // letting them run underneath the transport controls.
+    if (right_avail < icons_w && icon_size > 0.0f)
+    {
+        icon_size = std::max(8.0f * m.layout_scale,
+                             (right_avail - icon_gap * 2.0f) / 3.0f);
+        icons_w = icon_size * 3.0f + icon_gap * 2.0f;
+    }
+
+    const float vol_icon = 20.0f * m.layout_scale;
+    const float pct_w = std::max(38.0f * m.layout_scale,
+                                 ui_measure_width(g_ui_fonts.body, 15.0f, "100%") + m.space_1);
+    const float speed_text_w = ui_measure_width(g_ui_fonts.body, 14.0f, "0.75×");
+    const float speed_w = std::max(42.0f * m.layout_scale, speed_text_w + m.space_2);
+    const float min_bar = 40.0f * m.layout_scale;
+    const float desired_bar = 150.0f * m.layout_scale;
+    const float smallest_bar = 12.0f * m.layout_scale;
+
+    auto utility_fixed_width = [&](bool show_pct_w, bool show_speed_w_)
+    {
+        float w = icons_w + icon_gap + vol_icon + icon_gap;
+        if (show_pct_w)
+            w += icon_gap + pct_w;
+        if (show_speed_w_)
+            w += icon_gap + speed_w;
+        return w;
+    };
+
+    bool show_pct = true;
+    bool show_speed = true;
+    // Prefer a usable amount of slider travel over the secondary readouts:
+    // drop the speed button first, then the percentage.
+    if (right_avail < utility_fixed_width(true, true) + min_bar)
+        show_speed = false;
+    if (right_avail < utility_fixed_width(true, false) + min_bar)
+        show_pct = false;
+
+    const float utility_fixed = utility_fixed_width(show_pct, show_speed);
+    const bool show_volume = right_avail >= utility_fixed + smallest_bar;
+    const float vol_bar_w =
+        show_volume ? std::clamp(right_avail - utility_fixed, smallest_bar, desired_bar) : 0.0f;
+
+    float utility_w = icons_w;
+    if (show_volume)
+        utility_w += icon_gap + vol_icon + icon_gap + vol_bar_w +
+                     (show_pct ? icon_gap + pct_w : 0.0f) +
+                     (show_speed ? icon_gap + speed_w : 0.0f);
+
+    const float sleep_x = std::max(right_min_x, right_edge - utility_w);
+    const float queue_x = sleep_x + icon_size + icon_gap;
+    const float lyrics_x = queue_x + icon_size + icon_gap;
+    const float vol_x = lyrics_x + icon_size + icon_gap;
+    const float vol_y = wp.y + (bar_h - seek_h) * 0.5f;
 
     // Sleep timer (Moon icon): click opens the arm/disarm popup. Accent-tinted
     // while armed; the tooltip shows the countdown or end-of-track mode.
@@ -692,10 +754,9 @@ void draw_bottom_bar(AppState &state, MpvPlayer &player)
     else
         snprintf(sleep_tip, sizeof(sleep_tip), "Sleep timer");
 
-    const float sleep_x = right_x;
-    ImGui::SetCursorScreenPos(ImVec2(sleep_x, wp.y + (bar_h - sleep_size) * 0.5f));
+    ImGui::SetCursorScreenPos(ImVec2(sleep_x, wp.y + (bar_h - icon_size) * 0.5f));
     const bool sleep_active = state.sleep_armed || state.sleep_at_end_of_track;
-    if (ui_icon_button("##sleep_toggle", UiIcon::Moon, sleep_size, sleep_active, 0, sleep_tip))
+    if (ui_icon_button("##sleep_toggle", UiIcon::Moon, icon_size, sleep_active, 0, sleep_tip))
         ImGui::OpenPopup("##sleep_popup");
     if (ImGui::BeginPopup("##sleep_popup"))
     {
@@ -740,10 +801,9 @@ void draw_bottom_bar(AppState &state, MpvPlayer &player)
         ImGui::EndPopup();
     }
 
-    const float queue_x = sleep_x + sleep_size + m.space_2;
-    ImGui::SetCursorScreenPos(ImVec2(queue_x, wp.y + (bar_h - queue_size) * 0.5f));
+    ImGui::SetCursorScreenPos(ImVec2(queue_x, wp.y + (bar_h - icon_size) * 0.5f));
     const bool queue_active = state.current_tab == Tab::Queue;
-    if (ui_icon_button("##queue_toggle", UiIcon::Queue, queue_size, queue_active, 0, "Up next"))
+    if (ui_icon_button("##queue_toggle", UiIcon::Queue, icon_size, queue_active, 0, "Up next"))
     {
         if (state.current_tab != Tab::Queue)
         {
@@ -752,9 +812,8 @@ void draw_bottom_bar(AppState &state, MpvPlayer &player)
             state.current_tab = Tab::Queue;
         }
     }
-    const float lyrics_x = right_x + queue_size + m.space_2;
-    ImGui::SetCursorScreenPos(ImVec2(lyrics_x, wp.y + (bar_h - lyrics_size) * 0.5f));
-    if (ui_icon_button("##lyrics_toggle", UiIcon::Lyrics, lyrics_size, lyrics_open, 0, "Lyrics"))
+    ImGui::SetCursorScreenPos(ImVec2(lyrics_x, wp.y + (bar_h - icon_size) * 0.5f));
+    if (ui_icon_button("##lyrics_toggle", UiIcon::Lyrics, icon_size, lyrics_open, 0, "Lyrics"))
     {
         state.settings.lyrics_panel_open = !lyrics_setting;
         save_settings(state.settings);
@@ -767,64 +826,71 @@ void draw_bottom_bar(AppState &state, MpvPlayer &player)
 
     const int vol = (int)player.get_property_double("volume");
     float vol_value01 = vol / 100.0f;
-    const float vol_x = lyrics_x + lyrics_size + m.space_2;
-    const float vol_icon = 20.0f * m.layout_scale;
-    const float vol_pct_w = 38.0f * m.layout_scale;
-    const float speed_btn_w = 42.0f * m.layout_scale;
-    const float vol_bar_w = std::max(36.0f, bar_w - side_pad - vol_x - vol_icon - vol_pct_w -
-                                               speed_btn_w - m.space_2 * 4.0f);
-    const float vol_y = wp.y + (bar_h - seek_h) * 0.5f;
+    const float pct_line = 15.0f * m.text_scale * 1.2f;
+    const float speed_line = 14.0f * m.text_scale * 1.2f;
 
-    ui_draw_icon(dl, UiIcon::Volume, ImVec2(vol_x + vol_icon * 0.5f, wp.y + bar_h * 0.5f), vol_icon,
-                 ui_text_muted_u32(), 1.5f);
-    ImGui::SetCursorScreenPos(ImVec2(vol_x + vol_icon + m.space_2, vol_y));
-    if (draw_progress_bar("##volume", &vol_value01, vol_bar_w, seek_h,
-                          ui_accent_u32(1.0f), ui_overlay_u32(0.14f),
-                          [&](float t) { return std::to_string((int)(t * 100.0f)) + "%"; }))
+    if (show_volume)
     {
-        player.set_volume((int)(vol_value01 * 100.0f));
-    }
-    dl->AddText(g_ui_fonts.body, 15.0f * m.text_scale,
-                ImVec2(vol_x + vol_icon + m.space_2 + vol_bar_w + m.space_2,
-                       wp.y + (bar_h - 15.0f * m.text_scale * 1.2f) * 0.5f),
-                ui_text_muted_u32(), (std::to_string((int)(vol_value01 * 100.0f)) + "%").c_str());
+        const float bar_x = vol_x + vol_icon + icon_gap;
+        const float pct_x = bar_x + vol_bar_w + icon_gap;
+        const float speed_x = pct_x + (show_pct ? pct_w + icon_gap : 0.0f);
 
-    // Playback speed: compact "1.0×" text button with a preset popup. Accent
-    // tint while active so a non-1.0 speed is visible at a glance.
-    {
-        char speed_label[16];
-        snprintf(speed_label, sizeof(speed_label), "%.2g×", (double)state.settings.playback_speed);
-        const float speed_x = vol_x + vol_icon + m.space_2 + vol_bar_w + m.space_2 +
-                              vol_pct_w + m.space_2;
-        ImGui::SetCursorScreenPos(ImVec2(speed_x, vol_y));
-        ImGui::PushID("##speed_btn");
-        if (ImGui::InvisibleButton("##speed_hit", ImVec2(speed_btn_w, seek_h)))
-            ImGui::OpenPopup("##speed_popup");
-        const bool speed_hovered = ImGui::IsItemHovered();
-        const ImVec2 tsz = ImGui::CalcTextSize(speed_label);
-        dl->AddText(g_ui_fonts.body, 14.0f * m.text_scale,
-                    ImVec2(speed_x + (speed_btn_w - tsz.x) * 0.5f,
-                           vol_y + (seek_h - tsz.y) * 0.5f),
-                    state.settings.playback_speed != 1.0f
-                        ? ui_accent_u32(speed_hovered ? 1.0f : 0.85f)
-                        : (speed_hovered ? ui_text_muted_u32() : ui_text_dim_u32()),
-                    speed_label);
-        if (ImGui::BeginPopup("##speed_popup"))
+        ui_draw_icon(dl, UiIcon::Volume, ImVec2(vol_x + vol_icon * 0.5f, wp.y + bar_h * 0.5f),
+                     vol_icon, ui_text_muted_u32(), 1.5f);
+        ImGui::SetCursorScreenPos(ImVec2(bar_x, vol_y));
+        if (draw_progress_bar("##volume", &vol_value01, vol_bar_w, seek_h,
+                              ui_accent_u32(1.0f), ui_overlay_u32(0.14f),
+                              [&](float t) { return std::to_string((int)(t * 100.0f)) + "%"; }))
         {
-            const float speeds[] = {0.5f, 0.75f, 1.0f, 1.25f, 1.5f, 1.75f, 2.0f};
-            for (float sp : speeds)
-            {
-                char item[16];
-                snprintf(item, sizeof(item), "%.2g×", (double)sp);
-                if (ImGui::MenuItem(item, nullptr, state.settings.playback_speed == sp))
-                {
-                    state.settings.playback_speed = sp;
-                    save_settings(state.settings);
-                }
-            }
-            ImGui::EndPopup();
+            player.set_volume((int)(vol_value01 * 100.0f));
         }
-        ImGui::PopID();
+
+        const std::string pct_label = std::to_string((int)(vol_value01 * 100.0f)) + "%";
+        if (show_pct)
+        {
+            const float pct_text_w = ui_measure_width(g_ui_fonts.body, 15.0f, pct_label);
+            dl->AddText(g_ui_fonts.body, 15.0f * m.text_scale,
+                        ImVec2(pct_x + (pct_w - pct_text_w) * 0.5f,
+                               wp.y + (bar_h - pct_line) * 0.5f),
+                        ui_text_muted_u32(), pct_label.c_str());
+        }
+
+        // Playback speed: compact "1.0×" text button with a preset popup. Accent
+        // tint while active so a non-1.0 speed is visible at a glance.
+        if (show_speed)
+        {
+            char speed_label[16];
+            snprintf(speed_label, sizeof(speed_label), "%.2g×", (double)state.settings.playback_speed);
+            const float label_w = ui_measure_width(g_ui_fonts.body, 14.0f, speed_label);
+            ImGui::SetCursorScreenPos(ImVec2(speed_x, vol_y));
+            ImGui::PushID("##speed_btn");
+            if (ImGui::InvisibleButton("##speed_hit", ImVec2(speed_w, seek_h)))
+                ImGui::OpenPopup("##speed_popup");
+            const bool speed_hovered = ImGui::IsItemHovered();
+            dl->AddText(g_ui_fonts.body, 14.0f * m.text_scale,
+                        ImVec2(speed_x + (speed_w - label_w) * 0.5f,
+                               wp.y + (bar_h - speed_line) * 0.5f),
+                        state.settings.playback_speed != 1.0f
+                            ? ui_accent_u32(speed_hovered ? 1.0f : 0.85f)
+                            : (speed_hovered ? ui_text_muted_u32() : ui_text_dim_u32()),
+                        speed_label);
+            if (ImGui::BeginPopup("##speed_popup"))
+            {
+                const float speeds[] = {0.5f, 0.75f, 1.0f, 1.25f, 1.5f, 1.75f, 2.0f};
+                for (float sp : speeds)
+                {
+                    char item[16];
+                    snprintf(item, sizeof(item), "%.2g×", (double)sp);
+                    if (ImGui::MenuItem(item, nullptr, state.settings.playback_speed == sp))
+                    {
+                        state.settings.playback_speed = sp;
+                        save_settings(state.settings);
+                    }
+                }
+                ImGui::EndPopup();
+            }
+            ImGui::PopID();
+        }
     }
 
     ImGui::End();
