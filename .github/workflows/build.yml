@@ -10,6 +10,10 @@ on:
 permissions:
   contents: write # needed by the release job to publish binaries
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true # a new push/tag supersedes stale runs
+
 jobs:
   linux:
     runs-on: ubuntu-latest
@@ -45,9 +49,14 @@ jobs:
           name: linux-build-log
           path: /tmp/build.log
           if-no-files-found: ignore
-      - name: Smoke test (binary runs, prints usage errors only)
+      - name: Smoke test
         run: |
-          ./build/crossfade --help 2>&1 | head -5 || true
+          # The binary has no CLI flags and blocks in its event loop once up,
+          # so "runs" means: 10 s of live runtime (SDL init + backend spawn
+          # attempts; backend errors are expected on a headless auth-less
+          # runner) without crashing. timeout's kill is the exit path.
+          timeout --signal=TERM 10 ./build/crossfade > /tmp/smoke.log 2>&1 || true
+          cat /tmp/smoke.log || true
           test -x ./build/crossfade
       - name: Package Linux release
         if: startsWith(github.ref, 'refs/tags/v')
