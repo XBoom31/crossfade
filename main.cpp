@@ -1886,8 +1886,8 @@ int main(int, char **)
     g_state.play_queue = load_play_queue();
     g_state.search_recent = load_search_recent();
 
-    // ---- Accent colour (system portal or daily fallback) ----
-    update_accent();
+    // ---- Accent colour (custom setting, system portal or daily fallback) ----
+    update_accent(g_state.settings);
 
     // ---- libnotify init ----
 #ifndef P100_WINDOWS
@@ -2468,7 +2468,7 @@ int main(int, char **)
         if (wall_now - last_accent_check >= 60)
         {
             last_accent_check = wall_now;
-            update_accent();
+            update_accent(g_state.settings);
             ui_theme_refresh_accent();
         }
 

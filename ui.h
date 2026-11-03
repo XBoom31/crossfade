@@ -190,6 +190,10 @@ struct Settings
     int animations = 2;
     // Day mode: true = light theme, false = dark theme. Persisted in settings.json.
     bool day_mode = false;
+    // Custom accent colour as "#rrggbb". Empty means automatic: follow the
+    // desktop accent (XDG portal) or the date-seeded daily colour. P100_ACCENT
+    // still takes precedence over both.
+    std::string accent_color;
     // Ambient backdrop: tint the background with the playing album's dominant
     // colour (or the app accent when nothing is loaded). Fades smoothly between
     // tracks. `album_backdrop_strength` scales the glow (0.1 - 1.0).
@@ -260,7 +264,8 @@ struct Settings
                ui_text_scale == o.ui_text_scale &&
                ui_widget_scale == o.ui_widget_scale &&
                ui_layout_scale == o.ui_layout_scale && animations == o.animations &&
-               day_mode == o.day_mode && album_backdrop == o.album_backdrop &&
+               day_mode == o.day_mode && accent_color == o.accent_color &&
+               album_backdrop == o.album_backdrop &&
                album_backdrop_strength == o.album_backdrop_strength &&
                glow_separators == o.glow_separators &&
                glow_separator_strength == o.glow_separator_strength &&

@@ -34,7 +34,7 @@ static int hex_digit(char c)
     return -1;
 }
 
-static bool parse_hex_color(const char *text, ImVec4 &out)
+bool accent_parse_hex(const char *text, ImVec4 &out)
 {
     if (!text || text[0] != '#' || strlen(text) != 7)
         return false;
@@ -50,6 +50,20 @@ static bool parse_hex_color(const char *text, ImVec4 &out)
                  (values[4] * 16 + values[5]) / 255.0f,
                  1.0f);
     return true;
+}
+
+static int color_channel_255(float value)
+{
+    int v = (int)(value * 255.0f + 0.5f);
+    return v < 0 ? 0 : (v > 255 ? 255 : v);
+}
+
+std::string accent_to_hex(const ImVec4 &color)
+{
+    char buf[8];
+    snprintf(buf, sizeof(buf), "#%02x%02x%02x", color_channel_255(color.x),
+             color_channel_255(color.y), color_channel_255(color.z));
+    return std::string(buf);
 }
 
 // Read the desktop accent colour from the XDG desktop portal. Plasma and
@@ -106,14 +120,18 @@ static bool read_portal_accent(ImVec4 &out)
 }
 #endif // !P100_WINDOWS
 
-void update_accent()
+void update_accent(const Settings &settings)
 {
     static bool portal_available = true;
     ImVec4 base;
     bool have_color = false;
 
     if (const char *override_color = getenv("P100_ACCENT"))
-        have_color = parse_hex_color(override_color, base);
+        have_color = accent_parse_hex(override_color, base);
+
+    // Explicit choice from Settings takes precedence over the desktop theme.
+    if (!have_color && !settings.accent_color.empty())
+        have_color = accent_parse_hex(settings.accent_color.c_str(), base);
 
 #ifndef P100_WINDOWS
     if (!have_color && portal_available)

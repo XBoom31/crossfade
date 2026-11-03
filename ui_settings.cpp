@@ -4,6 +4,7 @@
 #include "ui_components.h"
 #include "ui_icons.h"
 #include "ui_theme.h"
+#include "accent.h"
 #include "paths.h"
 #include "writeback.h"
 #include "misc/cpp/imgui_stdlib.h"
@@ -207,6 +208,7 @@ void save_settings(const Settings &settings)
         << "\"shuffle_enabled\":" << (settings.shuffle_enabled ? "true" : "false") << ","
         << "\"repeat_mode\":" << std::max(0, std::min(2, settings.repeat_mode)) << ","
         << "\"day_mode\":" << (settings.day_mode ? "true" : "false") << ","
+        << "\"accent_color\":\"" << json_escape(settings.accent_color) << "\","
         << "\"album_backdrop\":" << (settings.album_backdrop ? "true" : "false") << ","
         << "\"album_backdrop_strength\":" << settings.album_backdrop_strength << ","
         << "\"glow_separators\":" << (settings.glow_separators ? "true" : "false") << ","
@@ -409,6 +411,15 @@ Settings load_settings()
             s.repeat_mode = std::max(0, std::min(2, (int)std::lround(get_float("repeat_mode"))));
         if (json.find("\"day_mode\"") != std::string::npos)
             s.day_mode = get_bool("day_mode");
+        // Empty/absent means automatic (system or daily colour). Ignore a
+        // malformed value instead of leaving the accent stuck on black.
+        s.accent_color = get_str("accent_color");
+        if (!s.accent_color.empty())
+        {
+            ImVec4 parsed;
+            if (!accent_parse_hex(s.accent_color.c_str(), parsed))
+                s.accent_color.clear();
+        }
         if (json.find("\"album_backdrop\"") != std::string::npos)
             s.album_backdrop = get_bool("album_backdrop");
         if (json.find("\"album_backdrop_strength\"") != std::string::npos)
@@ -570,6 +581,56 @@ void draw_settings_panel(AppState &state)
     if (ImGui::IsItemDeactivatedAfterEdit())
         save = true;
     settings_help("Scales text, widgets and layout together. Most people only need this one.");
+
+    // Accent colour: automatic by default. Editing the swatch stores an
+    // explicit override, which is the only option on Windows and on Linux
+    // desktops that don't expose org.freedesktop.appearance.
+    ImGui::TextColored(ui_c().text_muted, "Accent colour");
+    if (ImGui::ColorButton("##accent_swatch", g_accent,
+                           ImGuiColorEditFlags_NoAlpha | ImGuiColorEditFlags_NoTooltip,
+                           ImVec2(field_w, m.control_h)))
+    {
+        ImGui::OpenPopup("##accent_picker");
+        ImGui::SetNextWindowPos(
+            ImVec2(ImGui::GetItemRectMin().x,
+                   ImGui::GetItemRectMax().y + ImGui::GetStyle().ItemSpacing.y));
+    }
+    static bool accent_picker_was_open = false;
+    if (ImGui::BeginPopup("##accent_picker"))
+    {
+        accent_picker_was_open = true;
+        ImVec4 accent = g_accent;
+        if (ImGui::ColorPicker4("##accent_picker_edit", &accent.x,
+                                ImGuiColorEditFlags_NoAlpha))
+        {
+            state.settings.accent_color = accent_to_hex(accent);
+            update_accent(state.settings);
+            ui_theme_refresh_accent();
+        }
+        ImGui::EndPopup();
+    }
+    else if (accent_picker_was_open)
+    {
+        accent_picker_was_open = false;
+        save = true;
+    }
+    if (state.settings.accent_color.empty())
+    {
+        ImGui::TextDisabled("Automatic - system colour or today's colour");
+    }
+    else
+    {
+        ImGui::TextDisabled("Custom colour %s", state.settings.accent_color.c_str());
+        ImGui::SameLine();
+        if (ui_ghost_button("Use automatic", ImVec2(150.0f * m.layout_scale, m.control_h)))
+        {
+            state.settings.accent_color.clear();
+            update_accent(state.settings);
+            ui_theme_refresh_accent();
+            save = true;
+        }
+    }
+    settings_help("Used for highlights, progress bars and glows. Automatic follows your desktop accent, or a new daily colour when the system doesn't provide one. Pick a colour to use your own everywhere.");
 
     ImGui::TextColored(ui_c().text_muted, "Animations");
     const char *animations[] = {"Off", "Subtle", "Standard", "Playful"};
