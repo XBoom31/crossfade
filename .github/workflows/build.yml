@@ -108,8 +108,9 @@ jobs:
           export P100_SOURCE_DIR="$PWD"
           ./linuxdeploy-x86_64.AppImage --appimage-extract-and-run               --appdir AppDir --output appimage
           mkdir -p dist
-          # linuxdeploy names the output after the desktop file id, not the
-          # version — locate whatever it produced and rename it.
+          # Move the packaging tool away first, so the only *.AppImage left in
+          # the directory is the one linuxdeploy just built for us.
+          mv linuxdeploy-x86_64.AppImage /tmp/
           PRODUCT=$(find . -maxdepth 1 -name '*.AppImage' | head -1)
           test -n "$PRODUCT"
           mv "$PRODUCT" "dist/crossfade-${VER}-x86_64.AppImage"
