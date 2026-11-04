@@ -22,7 +22,8 @@ enum class UiNotifyType
 // Show a toast. duration <= 0 means sticky: it stays until the user closes it
 // (used for errors). action_label (optional) renders a button on the toast.
 void ui_notify(UiNotifyType type, const std::string &title, const std::string &message,
-               float duration = 6.0f, const char *action_label = nullptr);
+               float duration = 6.0f, const char *action_label = nullptr,
+               void (*action_fn)() = nullptr);
 
 // Turn a classified backend error into the right toast: sign-in problems get
 // a sticky error with an "Open settings" action, network outages a normal

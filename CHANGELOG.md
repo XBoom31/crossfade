@@ -4,6 +4,15 @@ All notable changes to crossfade are documented here.
 
 ## Unreleased
 
+## 0.1.9 - 2026-11-04
+
+### Added
+
+- **Windows auto-update.** At startup the app checks the latest GitHub release
+  and offers **Update now** in a toast. The updater launches the one-click
+  installer in its own console, which installs the new build and asks whether
+  to restart crossfade. Linux remains on package-manager/manual updates.
+
 ## 0.1.8 - 2026-11-04
 
 ### Fixed

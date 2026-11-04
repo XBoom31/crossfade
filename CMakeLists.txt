@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(crossfade VERSION 0.1.8 LANGUAGES CXX)
+project(crossfade VERSION 0.1.9 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -78,6 +78,7 @@ set(SOURCES
     party_util.cpp
     party_net.cpp
     party_server.cpp
+    updater.cpp
     external/qrcodegen.cpp
 )
 
@@ -95,6 +96,7 @@ add_executable(crossfade ${SOURCES})
 # found when the binary is copied elsewhere (e.g. /bin) or run from build/.
 target_compile_definitions(crossfade PRIVATE
     P100_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
+    CROSSFADE_VERSION="${PROJECT_VERSION}"
 )
 
 if(P100_WIN)
@@ -108,6 +110,7 @@ if(P100_WIN)
         ws2_32
         iphlpapi
         bcrypt
+        shell32
     )
 else()
     target_include_directories(crossfade PRIVATE

@@ -123,5 +123,11 @@ Write-Host "  - Sign in: Start Menu -> crossfade-login (one-time)."
 Write-Host "    (Copy the request headers it asks for; it takes them from the clipboard.)"
 Write-Host ""
 if ($Host.Name -eq "ConsoleHost") {
-    Read-Host "Press Enter to close" | Out-Null
+    $answer = Read-Host "Restart crossfade now? [Y/n]"
+    if ($answer -notmatch '^(n|no)$') {
+        Start-Process -FilePath "$Root\bin\crossfade.exe" -WorkingDirectory "$Root\bin"
+    }
+    else {
+        Read-Host "Press Enter to close" | Out-Null
+    }
 }

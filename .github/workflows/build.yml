@@ -215,10 +215,12 @@ jobs:
           $ver = $env:GITHUB_REF_NAME.TrimStart('v')
           New-Item -ItemType Directory -Path "$root/bin" -Force | Out-Null
           New-Item -ItemType Directory -Path "$root/share/crossfade/assets" -Force | Out-Null
+          Set-Content -Path "dist/version.txt" -Value $ver -Encoding ascii
           Set-Content -Path "$root/version.txt" -Value $ver -Encoding ascii
           Copy-Item build/crossfade.exe "$root/bin/"
           Copy-Item build/*.dll "$root/bin/"
           Copy-Item packaging/windows/crossfade-login.cmd "$root/bin/"
+          Copy-Item packaging/windows/install-crossfade.cmd "$root/bin/"
           Copy-Item p100-backend.py, p100-backend-oauth.py, requirements.txt, `
             packaging/windows/make_browser_json.py "$root/share/crossfade/"
           Copy-Item assets/fonts "$root/share/crossfade/assets/fonts" -Recurse
@@ -237,6 +239,7 @@ jobs:
             dist/crossfade-windows.zip
             dist/install.ps1
             dist/install-crossfade.cmd
+            dist/version.txt
           if-no-files-found: error
 
   release:
@@ -262,3 +265,4 @@ jobs:
             dist/*.zip
             dist/install.ps1
             dist/install-crossfade.cmd
+            dist/version.txt

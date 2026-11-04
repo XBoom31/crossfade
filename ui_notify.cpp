@@ -20,6 +20,7 @@ struct Toast
     std::string title;
     std::string message;
     std::string action;      // optional button label
+    void (*action_fn)() = nullptr; // optional callback for the action button
     double spawn = 0.0;      // notify_now() when shown
     float duration = 6.0f;   // <= 0: sticky until closed
     bool closing = false;
@@ -87,7 +88,7 @@ void ui_notify_set_open_settings(void (*fn)())
 }
 
 void ui_notify(UiNotifyType type, const std::string &title, const std::string &message,
-               float duration, const char *action_label)
+               float duration, const char *action_label, void (*action_fn)())
 {
     std::lock_guard<std::mutex> lock(g_notify_mutex);
     Toast t;
@@ -96,6 +97,7 @@ void ui_notify(UiNotifyType type, const std::string &title, const std::string &m
     t.title = title;
     t.message = message;
     t.action = action_label ? action_label : "";
+    t.action_fn = action_fn;
     t.spawn = notify_now();
     t.duration = duration;
     g_toasts.push_back(std::move(t));
@@ -479,7 +481,9 @@ void ui_notify_draw()
             ImGui::SetCursorScreenPos(ImVec2(p0.x + pad_x, p1.y - pad_y - m.control_h));
             if (ui_ghost_button(t.action.c_str(), ImVec2(0, m.control_h)))
             {
-                if (g_open_settings)
+                if (t.action_fn)
+                    t.action_fn();
+                else if (g_open_settings)
                     g_open_settings();
                 t.closing = true;
                 t.close_start = now;

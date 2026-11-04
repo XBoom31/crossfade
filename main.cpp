@@ -34,6 +34,7 @@
 #include "texture.h"
 #include "mpris.h"
 #include "ui_notify.h"
+#include "updater.h"
 #include "writeback.h"
 #include "discord_rpc.h"
 
@@ -1969,6 +1970,7 @@ int main(int, char **)
     SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER);
     party_init();
     party_set_wake(party_wake_event);
+    updater::init(party_wake_event);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 2);
@@ -3401,6 +3403,7 @@ int main(int, char **)
             draw_main_ui(g_state, *g_player, true);
             draw_bottom_bar(g_state, *g_player);
             draw_party_chip(g_state);
+            updater::poll();
             ui_notify_draw();
             // Draw the QR takeover after the toasts so it is a true top-most
             // surface. The modal already blocks clicks to everything behind it.

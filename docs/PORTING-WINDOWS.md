@@ -54,6 +54,18 @@ cmake --build build -j
 package](https://mpv.io/)); MSYS2's `mingw-w64-ucrt-x86_64-mpv` provides
 them via pkg-config, which CMake uses automatically on MSYS2.
 
+## Updating
+
+`updater.cpp` runs a Windows-only startup check against
+`releases/latest/download/version.txt` (a small asset published by the release
+workflow) and compares it with the compile-time `CROSSFADE_VERSION`. When a
+newer version exists, the normal toast stack offers **Update now**. That action
+launches `install-crossfade.cmd` from the install directory, falling back to
+downloading the current one from the release page for older installs. The
+installer runs in its own console, replaces the app and asks whether to restart
+it. Linux builds compile the updater as a no-op because distro packages own
+their files.
+
 ## Known-unknowns (first Windows run will tell)
 
 - `imgui_impl_sdl2` + OpenGL 3.2 core on Windows drivers

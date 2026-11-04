@@ -220,6 +220,16 @@ llvmpipe software OpenGL, so it starts even without a GL 3.2 driver — remove
 GPU driver instead), a private Python 3.12, the backend venv with
 `ytmusicapi` + `yt-dlp`, and Start Menu shortcuts.
 
+### Updates (Windows)
+
+crossfade checks the latest GitHub release at startup. When a newer version is
+available, a toast offers **Update now**. It launches the one-click installer
+in its own console, which downloads the new build and replaces the installed
+files; when it finishes it asks whether to restart crossfade. The check only
+fetches the release's tiny `version.txt` file — there is no telemetry. Linux
+installs are updated through the package manager or by re-running the
+installer, so the in-app updater is Windows-only for now.
+
 ## Build on Windows
 
 The same source tree builds on Windows with the MSYS2 UCRT64 toolchain (MinGW-w64) —
