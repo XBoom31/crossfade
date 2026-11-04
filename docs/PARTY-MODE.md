@@ -210,6 +210,11 @@ scripts/party-smoke-test.sh
 - A guest's own items get a "you" badge client-side from the `you.ids` list in
   each snapshot; the queue DOM is only rebuilt when its identity/status/badge
   signature changes, so the 1 s snapshot refresh does not restart animations.
+- Playback progress is extrapolated from the moment the phone *receives* a
+  snapshot using a monotonic local clock, not by comparing the phone's wall
+  clock with the host's. Phones on an internet-less hotspot can have a badly
+  skewed clock; using `serverTime` made the position sit at 0:00 for tens of
+  seconds and then run permanently late.
 - IPv4 only (the QR URL and Host check are IPv4-based). IPv6 LANs are out of
   scope for this pass.
 - HTTP, not HTTPS. That is appropriate for a trusted home LAN; do not port

@@ -132,7 +132,11 @@ button{font:inherit;cursor:pointer;touch-action:manipulation}
 (function(){
 "use strict";
 var ACCENT="__ACCENT__";
-var S={v:-1,data:null,timer:null,hidden:document.hidden,unchanged:0,myIds:new Set(),queueSig:null,searchTimer:null,searchSeq:0,adding:false};
+var S={v:-1,data:null,timer:null,hidden:document.hidden,unchanged:0,recvAt:0,myIds:new Set(),queueSig:null,searchTimer:null,searchSeq:0,adding:false};
+// Monotonic local clock. Progress must not depend on the phone's wall clock
+// matching the host's: phones on a hotspot without internet often have a
+// skewed clock, which made the position stay at 0:00 and then run late.
+function mono(){return (window.performance&&performance.now?performance.now():Date.now())/1000;}
 var $=function(id){return document.getElementById(id);};
 function el(tag,attrs,text){var n=document.createElement(tag);if(attrs){for(var k in attrs){if(k==="class")n.className=attrs[k];else if(k==="src")n.src=attrs[k];else if(k==="alt")n.alt=attrs[k];else n.setAttribute(k,attrs[k]);}}if(text!==undefined&&text!==null)n.textContent=String(text);return n;}
 function fmt(s){s=Math.max(0,Math.floor(s||0));var m=Math.floor(s/60);var x=s%60;return m+":"+(x<10?"0":"")+x;}
@@ -143,9 +147,9 @@ function artFor(id,cls){var img=el("img",{class:cls||"art",alt:""});img.loading=
 function badge(by,pending){if(pending)return el("span",{class:"badge pending"},"waiting for host");if(by)return el("span",{class:"badge"},by);return null;}
 function renderNow(d){var n=d.now||{};var img=$("nowArt");var src=n.id?"/api/art/"+encodeURIComponent(n.id):"";if(src){if(img.getAttribute("src")!==src)img.src=src;img.style.visibility="visible";}else{img.removeAttribute("src");img.style.visibility="hidden";}
 $("nowTitle").textContent=n.title||"Nothing playing";$("nowArtist").textContent=n.artist||"Waiting for the host";
-S.now=n;updateProgress();}
+S.now=n;S.recvAt=mono();updateProgress();}
 function updateProgress(){var n=S.now;if(!n||!n.durationSec){$("prog").style.width="0%";$("pos").textContent="0:00";$("dur").textContent="0:00";return;}
-var p=(n.positionSec||0);if(!n.paused&&S.data&&S.data.serverTime){p+=(Date.now()/1000-S.data.serverTime);}p=Math.max(0,Math.min(n.durationSec,p));
+var p=(n.positionSec||0);if(!n.paused&&S.recvAt)p+=(mono()-S.recvAt);p=Math.max(0,Math.min(n.durationSec,p));
 var pct=Math.min(100,(p/n.durationSec)*100);$("prog").style.width=pct+"%";$("progWrap").setAttribute("aria-valuenow",String(Math.round(pct)));$("pos").textContent=fmt(p);$("dur").textContent=fmt(n.durationSec);}
 function queueSig(q){var s="";q.forEach(function(it){s+=it.id+"|"+it.status+"|"+it.by+"|"+(S.myIds.has(it.id)?"1":"0")+";";});return s;}
 function renderQueue(d){var q=d.queue||[];var sig=queueSig(q);if(sig===S.queueSig)return;S.queueSig=sig;
