@@ -513,6 +513,24 @@ void ui_backdrop_draw()
 // ----------------------------------------------------------------------
 namespace
 {
+// Windows' GL/gl.h only covers GL 1.1. These are the few GL 2 enums/types the
+// shader pass needs; Linux GL headers already define them.
+#ifndef GL_VERTEX_SHADER
+#define GL_VERTEX_SHADER 0x8B31
+#endif
+#ifndef GL_FRAGMENT_SHADER
+#define GL_FRAGMENT_SHADER 0x8B30
+#endif
+#ifndef GL_COMPILE_STATUS
+#define GL_COMPILE_STATUS 0x8B81
+#endif
+#ifndef GL_LINK_STATUS
+#define GL_LINK_STATUS 0x8B82
+#endif
+#ifndef GLchar
+typedef char GLchar;
+#endif
+
 // The system GL 1.1 headers don't declare the GL 2/3 entry points we need, and
 // pulling in a full loader just for one pass is overkill. Resolve the handful
 // of functions through SDL; this works with both WGL and GLX.
