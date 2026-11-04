@@ -2,6 +2,7 @@
 
 #include "library.h"
 #include "paths.h"
+#include "version.h"
 
 #include <atomic>
 #include <chrono>

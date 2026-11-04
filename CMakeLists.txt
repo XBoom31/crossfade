@@ -4,6 +4,14 @@ project(crossfade VERSION 0.1.10 LANGUAGES C CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# Single source of truth for the C++ version string. CMakeLists.txt's project()
+# version is checked against packaging metadata in CI.
+configure_file(
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/core/version.h.in
+    ${CMAKE_CURRENT_BINARY_DIR}/generated/version.h
+    @ONLY
+)
+
 find_package(SDL2 REQUIRED)
 find_package(OpenGL REQUIRED)
 find_package(Threads REQUIRED)
@@ -99,7 +107,6 @@ add_executable(crossfade ${SOURCES})
 # found when the binary is copied elsewhere (e.g. /bin) or run from build/.
 target_compile_definitions(crossfade PRIVATE
     P100_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
-    CROSSFADE_VERSION="${PROJECT_VERSION}"
     SQLITE_ENABLE_FTS5=1
     SQLITE_OMIT_LOAD_EXTENSION=1
     SQLITE_THREADSAFE=1
@@ -107,6 +114,7 @@ target_compile_definitions(crossfade PRIVATE
 
 target_include_directories(crossfade PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
+    ${CMAKE_CURRENT_BINARY_DIR}/generated
     ${CMAKE_CURRENT_SOURCE_DIR}/src
     ${CMAKE_CURRENT_SOURCE_DIR}/src/ui
     ${CMAKE_CURRENT_SOURCE_DIR}/src/party
