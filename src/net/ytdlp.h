@@ -165,6 +165,9 @@ void set_audio_cache_cap(double bytes);
 void set_audio_cache_rank(int (*rank_fn)(const std::string &video_id));
 double audio_cache_usage_bytes();
 void audio_cache_clear(const std::string &keep_id = "");
+// Test hook: run the size-cap eviction immediately. Production calls this
+// after a download finishes; tests need deterministic control.
+void audio_cache_enforce_cap_now(const std::string &keep_id = "");
 
 // Cache helpers for the YouTube tab (raw JSON on disk).
 std::string youtube_playlists_cache_path();

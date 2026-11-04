@@ -48,6 +48,8 @@ int main()
 {
     {
         std::vector<Track> q;
+        check(party_queue::round_for_guest(q, "a") == 0, "empty round");
+        check(party_queue::count_guest_items(q, "a") == 0, "empty count");
         check(party_queue::insert_fair(q, make("a1", "a")) == 0, "first insert index");
         check(ids(q) == "a1", "first insert order");
         check(q[0].from_party, "guest item flagged from_party");
@@ -112,6 +114,16 @@ int main()
         check(party_queue::is_duplicate(q, "now", "now", false), "duplicate now playing");
         check(!party_queue::is_duplicate(q, "other", "now", false), "new id is not duplicate");
         check(!party_queue::is_duplicate(q, "", "", false), "empty id is not duplicate");
+    }
+
+    {
+        // Long queue: fairness stays stable and bounded by the guest count.
+        std::vector<Track> q;
+        for (int i = 0; i < 120; ++i)
+            party_queue::insert_fair(q, make("a" + std::to_string(i), "a"));
+        check(q.size() == 120, "long queue size");
+        check(party_queue::round_for_guest(q, "a") == 120, "long queue round");
+        check(party_queue::count_guest_items(q, "a") == 120, "long queue count");
     }
 
     if (g_failures == 0)

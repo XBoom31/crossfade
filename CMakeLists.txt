@@ -233,6 +233,91 @@ if(CROSSFADE_BUILD_TESTS)
     target_link_libraries(test_library Threads::Threads)
     add_test(NAME library COMMAND test_library)
 
+    add_executable(test_cache tests/test_cache.cpp
+        src/net/ytdlp.cpp src/data/paths.cpp src/data/library.cpp
+        external/sqlite/sqlite3.c)
+    target_include_directories(test_cache PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/core
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/ui
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/party
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/data
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/net
+        ${CMAKE_CURRENT_SOURCE_DIR}/external/sqlite
+        ${CMAKE_CURRENT_SOURCE_DIR}/external/imgui)
+    target_compile_definitions(test_cache PRIVATE
+        SQLITE_ENABLE_FTS5=1 SQLITE_OMIT_LOAD_EXTENSION=1 SQLITE_THREADSAFE=1)
+    target_link_libraries(test_cache Threads::Threads)
+    add_test(NAME cache COMMAND test_cache)
+
+    add_executable(test_json tests/test_json.cpp
+        src/net/ytdlp.cpp src/data/paths.cpp src/data/library.cpp
+        external/sqlite/sqlite3.c)
+    target_include_directories(test_json PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/core
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/ui
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/party
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/data
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/net
+        ${CMAKE_CURRENT_SOURCE_DIR}/external/sqlite
+        ${CMAKE_CURRENT_SOURCE_DIR}/external/imgui)
+    target_compile_definitions(test_json PRIVATE
+        SQLITE_ENABLE_FTS5=1 SQLITE_OMIT_LOAD_EXTENSION=1 SQLITE_THREADSAFE=1)
+    target_link_libraries(test_json Threads::Threads)
+    add_test(NAME json COMMAND test_json)
+
+    add_executable(test_session tests/test_session.cpp
+        src/playback/session.cpp src/data/cache.cpp src/ui/playlists_io.cpp
+        src/net/ytdlp.cpp src/data/paths.cpp src/data/library.cpp
+        external/sqlite/sqlite3.c)
+    target_include_directories(test_session PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/core
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/ui
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/party
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/data
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/net
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/playback
+        ${CMAKE_CURRENT_SOURCE_DIR}/external/sqlite
+        ${CMAKE_CURRENT_SOURCE_DIR}/external/imgui
+        ${MPV_INCLUDE_DIRS})
+    target_compile_definitions(test_session PRIVATE
+        SQLITE_ENABLE_FTS5=1 SQLITE_OMIT_LOAD_EXTENSION=1 SQLITE_THREADSAFE=1)
+    target_link_libraries(test_session Threads::Threads)
+    add_test(NAME session COMMAND test_session)
+
+    add_executable(test_playlists tests/test_playlists.cpp
+        src/ui/playlists_io.cpp src/net/ytdlp.cpp src/data/paths.cpp
+        src/data/library.cpp external/sqlite/sqlite3.c)
+    target_include_directories(test_playlists PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/core
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/ui
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/party
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/data
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/net
+        ${CMAKE_CURRENT_SOURCE_DIR}/external/sqlite
+        ${CMAKE_CURRENT_SOURCE_DIR}/external/imgui)
+    target_compile_definitions(test_playlists PRIVATE
+        SQLITE_ENABLE_FTS5=1 SQLITE_OMIT_LOAD_EXTENSION=1 SQLITE_THREADSAFE=1)
+    target_link_libraries(test_playlists Threads::Threads)
+    add_test(NAME playlists COMMAND test_playlists)
+
+    add_executable(test_settings tests/test_settings.cpp)
+    target_include_directories(test_settings PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/core
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/ui
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/party
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/net
+        ${CMAKE_CURRENT_SOURCE_DIR}/external/imgui)
+    add_test(NAME settings COMMAND test_settings)
+
     # Headless HTTP harness used by scripts/party-smoke-test.sh.
     add_executable(party_smoke_server
         tests/party_smoke_server.cpp

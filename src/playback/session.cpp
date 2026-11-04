@@ -1,4 +1,4 @@
-#include "ui.h"
+#include "session.h"
 #include "mpvplayer.h"
 #include "paths.h"
 
@@ -6,6 +6,7 @@
 #include <cstdio>
 #include <cstring>
 #include <fstream>
+#include <sstream>
 #include <string>
 #include <sys/stat.h>
 
@@ -17,12 +18,8 @@ static std::string session_file_path()
     return p100_config_path("session.json");
 }
 
-void save_session(const AppState &state, const MpvPlayer &player, int volume_override)
+std::string session_json(const AppState &state, double position, int volume)
 {
-    std::string path = session_file_path();
-    std::string dir = path.substr(0, path.rfind('/'));
-    mkdir(dir.c_str(), 0755);
-
     auto esc = [](const std::string &s) -> std::string
     {
         std::string r;
@@ -35,10 +32,7 @@ void save_session(const AppState &state, const MpvPlayer &player, int volume_ove
         return r;
     };
 
-    std::ofstream out(path);
-    if (!out)
-        return;
-
+    std::ostringstream out;
     out << "{"
         << "\"track_id\":\"" << esc(state.current_track_id) << "\","
         << "\"track_title\":\"" << esc(state.current_title) << "\","
@@ -73,13 +67,27 @@ void save_session(const AppState &state, const MpvPlayer &player, int volume_ove
         << "\"artist_browse_id\":\"" << esc(state.artist_browse_id) << "\","
         << "\"artist_name\":\"" << esc(state.artist_name) << "\","
         << "\"index\":" << state.current_track_index << ","
-        << "\"position\":" << player.get_property_double("time-pos") << ","
-        << "\"volume\":" << (volume_override >= 0
-                                 ? volume_override
-                                 : (int)player.get_property_double("volume")) << ","
+        << "\"position\":" << position << ","
+        << "\"volume\":" << volume << ","
         << "\"playing\":" << (state.playing ? "true" : "false") << ","
         << "\"search_query\":\"" << esc(state.search_buffer) << "\""
         << "}";
+    return out.str();
+}
+
+void save_session(const AppState &state, const MpvPlayer &player, int volume_override)
+{
+    std::string path = session_file_path();
+    std::string dir = path.substr(0, path.rfind('/'));
+    mkdir(dir.c_str(), 0755);
+
+    const int volume = volume_override >= 0
+                           ? volume_override
+                           : (int)player.get_property_double("volume");
+    std::ofstream out(path);
+    if (!out)
+        return;
+    out << session_json(state, player.get_property_double("time-pos"), volume);
     out.close();
 }
 

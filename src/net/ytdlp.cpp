@@ -2421,6 +2421,11 @@ static void audio_cache_enforce_cap(const std::string &keep_id)
     g_downloads_dirty = true;
 }
 
+void audio_cache_enforce_cap_now(const std::string &keep_id)
+{
+    audio_cache_enforce_cap(keep_id);
+}
+
 void finalize_recorded_audio(const std::string &video_id, const std::string &audio_path)
 {
     // Network-bound fetch first, outside the lock.
