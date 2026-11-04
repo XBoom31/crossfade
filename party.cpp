@@ -70,6 +70,13 @@ struct AddWaiter
     party_api::AddResult result;
 };
 
+struct AddedNotice
+{
+    std::string title;
+    std::string by;
+    bool pending = false;
+};
+
 struct InboxAdd
 {
     std::shared_ptr<AddWaiter> waiter;
@@ -837,7 +844,7 @@ void party_tick(AppState &state, double position_sec, double duration_sec, bool 
     if (g_state != PartyRunState::Running)
         return;
 
-    std::vector<std::pair<std::string, std::string>> notifications; // title, by
+    std::vector<AddedNotice> notifications;
     std::string prefetch_ids;
 
     {
@@ -861,7 +868,7 @@ void party_tick(AppState &state, double position_sec, double duration_sec, bool 
             const std::string by = item.by;
             party_api::AddResult r = process_add(state, std::move(item));
             if (r.http == 200 && !title.empty())
-                notifications.emplace_back(title, by);
+                notifications.push_back({title, by, r.status == "pending"});
         }
         while (!g_undo_inbox.empty())
         {
@@ -921,12 +928,13 @@ void party_tick(AppState &state, double position_sec, double duration_sec, bool 
 
     if (!notifications.empty() && state.settings.show_notifications)
     {
-        for (const auto &n : notifications)
+        for (const AddedNotice &n : notifications)
         {
-            std::string msg = n.first;
-            if (!n.second.empty())
-                msg += " · " + n.second;
-            ui_notify(UiNotifyType::Success, "Song added", msg, 5.0f);
+            std::string msg = n.title;
+            if (!n.by.empty())
+                msg += " · " + n.by;
+            ui_notify(UiNotifyType::Success, n.pending ? "Song requested" : "Song added",
+                      msg, 5.0f);
         }
     }
 

@@ -11,8 +11,10 @@
 #include <bcrypt.h>
 #else
 #include <fcntl.h>
-#include <sys/random.h>
 #include <unistd.h>
+#ifdef __linux__
+#include <sys/random.h>
+#endif
 #endif
 
 namespace party_util
