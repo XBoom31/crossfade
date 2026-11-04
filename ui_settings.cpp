@@ -212,6 +212,7 @@ void save_settings(const Settings &settings)
         << "\"accent_color\":\"" << json_escape(settings.accent_color) << "\","
         << "\"album_backdrop\":" << (settings.album_backdrop ? "true" : "false") << ","
         << "\"album_backdrop_strength\":" << settings.album_backdrop_strength << ","
+        << "\"backdrop_shader\":" << (settings.backdrop_shader ? "true" : "false") << ","
         << "\"glow_separators\":" << (settings.glow_separators ? "true" : "false") << ","
         << "\"glow_separator_strength\":" << settings.glow_separator_strength << ","
         << "\"backdrop_drift\":" << (settings.backdrop_drift ? "true" : "false") << ","
@@ -442,6 +443,8 @@ Settings load_settings()
             if (v > 0.0f)
                 s.album_backdrop_strength = std::max(0.10f, std::min(1.0f, v));
         }
+        if (json.find("\"backdrop_shader\"") != std::string::npos)
+            s.backdrop_shader = get_bool("backdrop_shader");
         if (json.find("\"glow_separators\"") != std::string::npos)
             s.glow_separators = get_bool("glow_separators");
         if (json.find("\"glow_separator_strength\"") != std::string::npos)
@@ -756,6 +759,9 @@ void draw_settings_panel(AppState &state)
         if (ImGui::Checkbox("Drifting glow", &state.settings.backdrop_drift))
             save = true;
         settings_help("Every so often the glow slowly turns to a different corner, so the backdrop never looks pinned in place. Long, gentle transitions.");
+        if (ImGui::Checkbox("Smooth backdrop shader", &state.settings.backdrop_shader))
+            save = true;
+        settings_help("Draws the ambient wash as one full-screen shader pass with subtle dithering, which removes the colour steps OLED panels expose. It replaces the layered ellipse overdraw, so GPU use stays similar or lower.");
     }
 
     if (ImGui::Checkbox("Glowing separators", &state.settings.glow_separators))

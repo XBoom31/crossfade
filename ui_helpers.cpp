@@ -1313,6 +1313,7 @@ void save_artist_cache(const ArtistInfo &artist)
         << "\",\"subscribers\":\"" << json_escape(artist.subscribers)
         << "\",\"monthly_listeners\":\"" << json_escape(artist.monthly_listeners)
         << "\",\"thumbnail_url\":\"" << json_escape(artist.thumbnail_url)
+        << "\",\"songs_browse_id\":\"" << json_escape(artist.songs_browse_id)
         << "\",\"songs\":";
     write_album_tracks(out, artist.songs);
     out << ",\"albums\":[";
@@ -1358,6 +1359,7 @@ bool load_artist_cache(const std::string &browse_id, ArtistInfo &out)
     out.subscribers = extract_str_field(json, "subscribers");
     out.monthly_listeners = extract_str_field(json, "monthly_listeners");
     out.thumbnail_url = extract_str_field(json, "thumbnail_url");
+    out.songs_browse_id = extract_str_field(json, "songs_browse_id");
     out.songs = parse_track_array(json);
 
     size_t albums_key = json.find("\"albums\":");
@@ -1903,53 +1905,32 @@ float ui_anim_texture_alpha(const std::string &url)
     return ui_anim_ease_out(t);
 }
 
-void draw_scroll_edge_fades()
+float ui_content_edge_alpha(float top_y, float bottom_y)
 {
     const float max_scroll = ImGui::GetScrollMaxY();
     if (max_scroll <= 1.0f)
-        return;
+        return 1.0f;
 
     const ImVec2 pos = ImGui::GetWindowPos();
     const ImVec2 size = ImGui::GetWindowSize();
-    if (size.x <= 1.0f || size.y <= 1.0f)
-        return;
+    if (size.y <= 1.0f)
+        return 1.0f;
 
     const float scroll = ImGui::GetScrollY();
     const float fade = std::min(ui_px(26.0f), size.y * 0.18f);
+    float alpha = 1.0f;
+    if (scroll > 1.0f && top_y < pos.y + fade)
+        alpha = std::min(alpha, std::clamp((top_y - pos.y) / fade, 0.0f, 1.0f));
+    if (scroll < max_scroll - 1.0f && bottom_y > pos.y + size.y - fade)
+        alpha = std::min(alpha, std::clamp(((pos.y + size.y) - bottom_y) / fade, 0.0f, 1.0f));
+    return alpha;
+}
 
-    // Fade into whatever is actually behind the list. With the ambient
-    // backdrop off this is exactly the old opaque background colour; as the
-    // backdrop fades in, the overlay samples the local glow instead of
-    // painting a black band over it. The inner edge also relaxes to fully
-    // transparent so the glassy surface has no visible seam.
-    const float vis = ui_backdrop_visibility();
-    const float inner_alpha = (60.0f / 255.0f) * (1.0f - vis);
-    auto endpoint = [](const ImVec2 &p, float alpha) {
-        ImVec4 c = ui_backdrop_sample(p);
-        c.w = alpha;
-        return ImGui::GetColorU32(c);
-    };
-
-    ImDrawList *dl = ImGui::GetWindowDrawList();
-
-    if (scroll > 1.0f)
-    {
-        dl->AddRectFilledMultiColor(
-            ImVec2(pos.x, pos.y), ImVec2(pos.x + size.x, pos.y + fade),
-            endpoint(ImVec2(pos.x, pos.y), 1.0f),
-            endpoint(ImVec2(pos.x + size.x, pos.y), 1.0f),
-            endpoint(ImVec2(pos.x + size.x, pos.y + fade), inner_alpha),
-            endpoint(ImVec2(pos.x, pos.y + fade), inner_alpha));
-    }
-    if (scroll < max_scroll - 1.0f)
-    {
-        dl->AddRectFilledMultiColor(
-            ImVec2(pos.x, pos.y + size.y - fade), ImVec2(pos.x + size.x, pos.y + size.y),
-            endpoint(ImVec2(pos.x, pos.y + size.y - fade), inner_alpha),
-            endpoint(ImVec2(pos.x + size.x, pos.y + size.y - fade), inner_alpha),
-            endpoint(ImVec2(pos.x + size.x, pos.y + size.y), 1.0f),
-            endpoint(ImVec2(pos.x, pos.y + size.y), 1.0f));
-    }
+void draw_scroll_edge_fades()
+{
+    // Rows, media cards and lyric lines now fade their own content with
+    // ui_content_edge_alpha(). Painting a background-coloured overlay here
+    // could never match the local panel surface beneath it.
 }
 
 void load_session(AppState &state)

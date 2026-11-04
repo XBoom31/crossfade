@@ -358,6 +358,7 @@ def get_artist_data(yt, channel_id):
 
     songs = []
     song_sec = artist.get('songs') or {}
+    songs_browse_id = song_sec.get('browseId') or ''
     for item in song_sec.get('results') or []:
         if not isinstance(item, dict):
             continue
@@ -395,8 +396,46 @@ def get_artist_data(yt, channel_id):
         'monthly_listeners': artist.get('monthlyListeners') or '',
         'thumbnail_url': _thumb_url(artist),
         'songs': songs,
+        'songs_browse_id': songs_browse_id,
         'albums': albums,
     }
+
+
+_ARTIST_SONGS_CACHE = {}
+
+
+def get_artist_songs(yt, browse_id, offset, count):
+    """Fetch a slice of the artist's full songs shelf.
+
+    The artist header only returns a handful of top songs. Its songs browseId
+    is a playlist-like endpoint with the full list; cache that list in the
+    backend so consecutive "load more" clicks are cheap.
+    """
+    if not browse_id:
+        return {'error': 'Missing songs browse id'}
+    cached = _ARTIST_SONGS_CACHE.get(browse_id)
+    if cached is None:
+        try:
+            playlist = yt.get_playlist(browse_id, limit=None)
+        except Exception as e:
+            return {'error': f'Failed to fetch artist songs: {str(e)}'}
+        tracks = []
+        for item in playlist.get('tracks') or []:
+            if not isinstance(item, dict):
+                continue
+            if not (item.get('videoId') or item.get('id')):
+                continue
+            try:
+                tracks.append(track_to_dict(item))
+            except Exception:
+                continue
+        if len(_ARTIST_SONGS_CACHE) >= 8:
+            _ARTIST_SONGS_CACHE.clear()
+        _ARTIST_SONGS_CACHE[browse_id] = tracks
+        cached = tracks
+    offset = max(0, int(offset))
+    count = max(0, int(count))
+    return cached[offset:offset + count]
 
 
 def artist_for_track(yt, video_id):
@@ -1302,6 +1341,15 @@ def main():
                 result = album_for_track(yt, arg) if arg else {'error': 'Missing video_id'}
             elif cmd == 'artist':
                 result = get_artist_data(yt, arg) if arg else {'error': 'Missing artist_id'}
+            elif cmd == 'artist_songs':
+                try:
+                    bits = (arg or '').split()
+                    if len(bits) != 3:
+                        result = {'error': 'Usage: artist_songs <browse_id> <offset> <count>'}
+                    else:
+                        result = get_artist_songs(yt, bits[0], int(bits[1]), int(bits[2]))
+                except ValueError:
+                    result = {'error': 'Bad artist_songs offset/count'}
             elif cmd == 'artist_of':
                 result = artist_for_track(yt, arg) if arg else {'error': 'Missing video_id'}
             elif cmd == 'artist_search':

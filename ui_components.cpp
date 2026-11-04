@@ -464,7 +464,7 @@ float ui_pill_pulse_value(ImGuiID id, double now, bool clicked)
 
 void ui_draw_cover(ImDrawList *dl, const std::string &url, ImVec2 pmin, ImVec2 pmax,
                        float rounding, float alpha, UiIcon fallback, const char *scope,
-                       bool instant)
+                       bool instant, bool skip_texture_fade)
 {
     if (instant)
         alpha = 1.0f; // hero art: never dimmed by the entrance/reveal fades
@@ -516,7 +516,9 @@ void ui_draw_cover(ImDrawList *dl, const std::string &url, ImVec2 pmin, ImVec2 p
 
     // Hero tiles (instant) skip the first-sighting reveal fade entirely: a
     // cached cover must be fully opaque on its very first frame.
-    const float fade = instant ? 1.0f : ui_anim_texture_alpha(use);
+    const float fade = (instant || skip_texture_fade)
+                           ? 1.0f
+                           : ui_anim_texture_alpha(use);
 
     // Outgoing cover fades out under the incoming one.
     if (prev_ti.id && fade < 1.0f)
@@ -742,6 +744,9 @@ TrackRowResult ui_track_row(AppState &state, const Track &track, int index, cons
             ui_anim_request();
     }
     const float slide = (1.0f - appear) * ui_anim_offset(ui_px(7.0f));
+    // Fade the row itself at a scroll edge; this leaves the backdrop untouched
+    // instead of painting a sampled background band over it.
+    appear *= ui_content_edge_alpha(row_y, row_y + row_h);
     const float draw_y = row_y + slide;
 
     ImGui::SetCursorScreenPos(ImVec2(row_x, row_y));
@@ -1229,6 +1234,7 @@ MediaCardResult ui_media_card(const char *id, const std::string &title, const st
     const float caption_h = title_h + (meta.empty() ? 0.0f : m.space_1 + meta_h);
     const float card_h = art_size + m.space_3 + caption_h + m.space_2;
     const ImVec2 pos = ImGui::GetCursorScreenPos();
+    const float edge_alpha = ui_content_edge_alpha(pos.y, pos.y + card_h);
 
     ImGui::InvisibleButton(id, ImVec2(width, card_h),
                            ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight);
@@ -1244,16 +1250,18 @@ MediaCardResult ui_media_card(const char *id, const std::string &title, const st
     if (r.hovered || current)
         dl->AddRectFilled(ImVec2(pos.x - m.space_1, pos.y - m.space_1),
                           ImVec2(pos.x + width + m.space_1, pos.y + card_h + m.space_1),
-                          current ? ui_accent_u32(0.13f) : ui_overlay_u32(0.045f), m.radius_md);
-    draw_art(dl, thumb_url, amin, amax, m.radius_md, circular);
+                          current ? ui_accent_u32(0.13f * edge_alpha)
+                                  : ui_overlay_u32(0.045f * edge_alpha), m.radius_md);
+    draw_art(dl, thumb_url, amin, amax, m.radius_md, circular, edge_alpha);
     if (r.hovered)
     {
+        const ImU32 scrim = IM_COL32(0, 0, 0, (int)(110.0f * edge_alpha));
         if (circular)
-            dl->AddCircleFilled(ImVec2((amin.x + amax.x) * 0.5f, (amin.y + amax.y) * 0.5f), art_size * 0.5f, IM_COL32(0, 0, 0, 110), 48);
+            dl->AddCircleFilled(ImVec2((amin.x + amax.x) * 0.5f, (amin.y + amax.y) * 0.5f), art_size * 0.5f, scrim, 48);
         else
-            dl->AddRectFilled(amin, amax, IM_COL32(0, 0, 0, 110), m.radius_md);
+            dl->AddRectFilled(amin, amax, scrim, m.radius_md);
         ui_draw_icon(dl, UiIcon::Play, ImVec2((amin.x + amax.x) * 0.5f, (amin.y + amax.y) * 0.5f),
-                     art_size * 0.24f, IM_COL32_WHITE, 1.5f);
+                     art_size * 0.24f, ui_with_alpha(IM_COL32_WHITE, edge_alpha), 1.5f);
     }
 
     const float tx = pos.x;
@@ -1263,10 +1271,11 @@ MediaCardResult ui_media_card(const char *id, const std::string &title, const st
     std::string md = ui_ellipsize(g_ui_fonts.body, meta_base, meta, tw);
     dl->PushClipRect(ImVec2(tx, title_y), ImVec2(tx + tw, title_y + caption_h), true);
     dl->AddText(g_ui_fonts.medium, title_base * m.text_scale, ImVec2(tx, title_y),
-                current ? ui_accent_text_u32() : ui_text_u32(), td.c_str());
+                ui_with_alpha(current ? ui_accent_text_u32() : ui_text_u32(), edge_alpha),
+                td.c_str());
     if (!meta.empty())
         dl->AddText(g_ui_fonts.body, meta_base * m.text_scale, ImVec2(tx, title_y + title_h + m.space_1),
-                    ui_text_dim_u32(), md.c_str());
+                    ui_with_alpha(ui_text_dim_u32(), edge_alpha), md.c_str());
     dl->PopClipRect();
 
     ImGui::SetCursorScreenPos(ImVec2(pos.x, pos.y + card_h + m.card_gap));

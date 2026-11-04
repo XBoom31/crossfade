@@ -1886,6 +1886,7 @@ bool fetch_artist(const std::string &browse_id, ArtistInfo &out)
     out.subscribers = json_get_string(response, "subscribers");
     out.monthly_listeners = json_get_string(response, "monthly_listeners");
     out.thumbnail_url = json_get_string(response, "thumbnail_url");
+    out.songs_browse_id = json_get_string(response, "songs_browse_id");
 
     auto parse_array = [&](const std::string &key, auto &&each) {
         size_t key_pos = response.find("\"" + key + "\":");
@@ -1935,6 +1936,25 @@ bool fetch_artist(const std::string &browse_id, ArtistInfo &out)
     });
 
     return !out.name.empty() || !out.songs.empty();
+}
+
+bool fetch_artist_songs(const std::string &songs_browse_id, int offset, int count,
+                        std::vector<Track> &out)
+{
+    out.clear();
+    if (songs_browse_id.empty() || count <= 0)
+        return false;
+    const std::string response = send_command(
+        "artist_songs " + songs_browse_id + " " + std::to_string(std::max(0, offset)) + " " +
+        std::to_string(count));
+    if (response.empty() || response.find("\"error\"") != std::string::npos)
+    {
+        if (!response.empty())
+            fprintf(stderr, "Artist songs error: %s\n", response.c_str());
+        return false;
+    }
+    out = parse_track_array(response);
+    return true;
 }
 
 bool fetch_artist_for_track(const std::string &video_id, std::string &artist_id, std::string &artist_name)

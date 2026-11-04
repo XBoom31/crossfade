@@ -77,7 +77,7 @@ float ui_pill_pulse_value(ImGuiID id, double now, bool clicked);
 // cover -> placeholder -> cover.
 void ui_draw_cover(ImDrawList *dl, const std::string &url, ImVec2 pmin, ImVec2 pmax,
                    float rounding, float alpha, UiIcon fallback, const char *scope = "",
-                   bool instant = false);
+                   bool instant = false, bool skip_texture_fade = false);
 
 // Small outlined pill for hero metadata; returns its width.
 float ui_meta_chip(ImDrawList *dl, const UiMetrics &m, const char *text, ImVec2 pos,

@@ -1442,14 +1442,12 @@ void draw_main_ui(AppState &state, MpvPlayer &player, bool show_recommendations)
     // Tab changes replay both the content fade and the list stagger, even
     // when the destination tab still has the same tracks as last time.
     static int s_fade_tab = -1;
-    static double s_fade_start = -1000.0;
     const int tab_index = (int)state.current_tab;
     if (s_fade_tab < 0)
         s_fade_tab = tab_index;
     else if (tab_index != s_fade_tab)
     {
         s_fade_tab = tab_index;
-        s_fade_start = ImGui::GetTime();
         ui_anim_reset_list_reveals();
         ui_bump_page_epoch();
     }
@@ -1595,24 +1593,6 @@ void draw_main_ui(AppState &state, MpvPlayer &player, bool show_recommendations)
         {
             ImGui::SetCursorPos(ImVec2(layout.body_size.x - lyrics_w, 0.0f));
             draw_lyrics_panel(state, player, layout.lyrics_w, layout.body_size.y);
-        }
-    }
-
-    // Fade the content area in when switching tabs. The lyrics panel keeps
-    // rendering continuously so it is deliberately left out of the overlay.
-    if (!lyrics_only && ui_animations_enabled())
-    {
-        const float fade_dur = std::max(0.001f, ui_anim_duration(0.22f));
-        const float t = ui_anim_ease_out((float)((ImGui::GetTime() - s_fade_start) / fade_dur));
-        const float alpha = (1.0f - t) * 0.60f;
-        if (alpha > 0.001f)
-        {
-            const ImVec2 wp = ImGui::GetWindowPos();
-            const float cover_w = (layout.lyrics_open && layout.lyrics_docked) ? list_w : layout.body_size.x;
-            ImGui::GetWindowDrawList()->AddRectFilled(
-                wp, ImVec2(wp.x + cover_w, wp.y + layout.body_size.y),
-                ui_with_alpha(ui_col(ui_c().bg), alpha));
-            ui_anim_request();
         }
     }
 

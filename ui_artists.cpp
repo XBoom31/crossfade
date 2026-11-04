@@ -71,6 +71,10 @@ static void apply_artist(AppState &state, const ArtistInfo &artist)
     state.artist_monthly_listeners = artist.monthly_listeners;
     state.artist_thumbnail_url = artist.thumbnail_url;
     state.artist_songs = artist.songs;
+    state.artist_songs_browse_id = artist.songs_browse_id;
+    state.artist_songs_offset = (int)artist.songs.size();
+    state.artist_songs_has_more = !artist.songs_browse_id.empty();
+    state.artist_songs_loading = false;
     state.artist_albums.clear();
     for (const auto &a : artist.albums)
     {
@@ -121,9 +125,40 @@ static void fetch_artist_into(AppState &state, const std::string &browse_id)
     ArtistInfo artist;
     if (fetch_artist(browse_id, artist))
     {
+        const bool same_artist = state.artist_browse_id == browse_id ||
+                                 state.artist_browse_id == artist.browse_id;
+        const std::vector<Track> previous = same_artist ? state.artist_songs
+                                                         : std::vector<Track>{};
+        const int previous_offset = state.artist_songs_offset;
+        const bool previous_has_more = state.artist_songs_has_more;
+
         prefetch_urls_for(artist.songs, 5);
-        save_artist_cache(artist);
         apply_artist(state, artist);
+
+        // A background refresh publishes only the header's top songs. If the
+        // user already expanded this artist, keep those extra rows.
+        if (same_artist && !previous.empty())
+        {
+            for (const Track &old : previous)
+            {
+                if (old.id.empty())
+                    continue;
+                const bool exists = std::any_of(
+                    state.artist_songs.begin(), state.artist_songs.end(),
+                    [&](const Track &t) { return t.id == old.id; });
+                if (!exists)
+                    state.artist_songs.push_back(old);
+            }
+            state.artist_songs_offset =
+                std::max((int)artist.songs.size(), previous_offset);
+            state.artist_songs_has_more =
+                !state.artist_songs_browse_id.empty() && previous_has_more;
+        }
+
+        ArtistInfo cached = artist;
+        cached.songs = state.artist_songs;
+        save_artist_cache(cached);
+
         state.artist_ready = true;
         state.artist_failed = false;
         state.artist_error_msg.clear();
@@ -142,6 +177,55 @@ static void fetch_artist_into(AppState &state, const std::string &browse_id)
         }
     }
     state.artist_loading = false;
+    state.repaint_requested = true;
+}
+
+// Pull the next five songs from the artist's full songs shelf. The backend
+// caches the full list, so repeated clicks are cheap.
+static void load_more_artist_songs(AppState &state, const std::string &artist_id,
+                                   const std::string &browse_id, int offset)
+{
+    std::vector<Track> more;
+    const bool ok = fetch_artist_songs(browse_id, offset, 5, more);
+    if (state.artist_browse_id != artist_id ||
+        state.artist_songs_browse_id != browse_id)
+        return; // the user navigated to another artist while this was loading
+    if (ok)
+    {
+        int added = 0;
+        for (const Track &t : more)
+        {
+            if (t.id.empty())
+                continue;
+            const bool exists = std::any_of(
+                state.artist_songs.begin(), state.artist_songs.end(),
+                [&](const Track &existing) { return existing.id == t.id; });
+            if (!exists)
+            {
+                state.artist_songs.push_back(t);
+                ++added;
+            }
+        }
+        state.artist_songs_offset = offset + (int)more.size();
+        if ((int)more.size() < 5)
+            state.artist_songs_has_more = false;
+        if (added > 0)
+            prefetch_urls_for(more, more.size());
+
+        ArtistInfo cached;
+        if (load_artist_cache(state.artist_browse_id, cached))
+        {
+            cached.songs = state.artist_songs;
+            save_artist_cache(cached);
+        }
+    }
+    else
+    {
+        BackendError err = take_backend_error();
+        if (err)
+            ui_notify_backend_error(err);
+    }
+    state.artist_songs_loading = false;
     state.repaint_requested = true;
 }
 
@@ -169,6 +253,10 @@ void open_artist_view(AppState &state, const std::string &browse_id,
     state.artist_thumbnail_url.clear();
     state.artist_songs.clear();
     state.artist_albums.clear();
+    state.artist_songs_browse_id.clear();
+    state.artist_songs_offset = 0;
+    state.artist_songs_has_more = false;
+    state.artist_songs_loading = false;
 
     ArtistInfo cached;
     bool had_cache = load_artist_cache(browse_id, cached);
@@ -218,6 +306,10 @@ void open_artist_from_track(AppState &state, const Track &track)
     state.artist_thumbnail_url = track.thumbnail_url;
     state.artist_songs.clear();
     state.artist_albums.clear();
+    state.artist_songs_browse_id.clear();
+    state.artist_songs_offset = 0;
+    state.artist_songs_has_more = false;
+    state.artist_songs_loading = false;
     state.artist_loading = true;
     state.artist_ready = false;
     state.artist_failed = false;
@@ -598,6 +690,7 @@ void draw_artist_panel(AppState &state)
         const std::string reveal_key = std::string("artist:") + state.artist_browse_id;
         const double reveal_start = ui_anim_track_list_reveal(reveal_key.c_str(), state.artist_songs);
         const float row_pitch = ui_track_row_pitch(44.0f * m.layout_scale);
+        const float list_start_y = ImGui::GetCursorPosY();
         ImGuiListClipper clipper;
         clipper.Begin((int)state.artist_songs.size(), row_pitch);
         while (clipper.Step())
@@ -616,6 +709,33 @@ void draw_artist_panel(AppState &state)
             if (!t.album.empty())
                 opt.secondary = t.album;
             ui_track_row(state, t, i, opt);
+        }
+        // The clipper only advances the cursor over visible rows; move it to
+        // the real end of the list before placing the footer button. The pitch
+        // includes the inter-row gap, so subtract it to sit just under the
+        // final row instead of leaving an awkward empty band.
+        ImGui::SetCursorPosY(list_start_y +
+                             (float)state.artist_songs.size() * row_pitch -
+                             ImGui::GetStyle().ItemSpacing.y + m.space_2);
+
+        if (state.artist_songs_has_more || state.artist_songs_loading)
+        {
+            if (state.artist_songs_loading)
+            {
+                ui_push_small();
+                ImGui::TextColored(ui_c().text_muted, "Loading more songs...");
+                ImGui::PopFont();
+            }
+            else if (ui_ghost_button("Load 5 more songs",
+                                     ImVec2(180.0f * m.layout_scale, m.control_h)))
+            {
+                state.artist_songs_loading = true;
+                state.repaint_requested = true;
+                std::thread(load_more_artist_songs, std::ref(state),
+                            state.artist_browse_id, state.artist_songs_browse_id,
+                            state.artist_songs_offset)
+                    .detach();
+            }
         }
     }
 

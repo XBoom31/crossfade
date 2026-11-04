@@ -3,8 +3,12 @@
 #include "ui_theme.h"
 #include "texture.h"
 
+#include <GL/gl.h>
+#include <SDL2/SDL.h>
+
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <string>
 
 namespace
@@ -22,6 +26,7 @@ struct BackdropState
     float transition_time = 1.0f;
     float transition_duration = 0.0f;
     bool timed_transition = false;
+    bool crossfade_synced = false;
     // Slow orientation drift: the wash and blooms turn a quarter/half turn
     // every so often so the glow never looks pinned in one place.
     float spin = 0.0f;
@@ -31,6 +36,8 @@ struct BackdropState
     float spin_duration = 7.0f;
     float spin_wait = 40.0f;
     bool track_pending = false; // waiting for the new cover's colour
+    bool use_shader = false;
+    bool shader_failed = false;
     std::string last_track_id;
 };
 
@@ -306,6 +313,7 @@ void ui_backdrop_update(const AppState &state)
 
     const float want_visible = state.settings.album_backdrop ? 1.0f : 0.0f;
     g_backdrop.visibility = ui_anim_approach(g_backdrop.visibility, want_visible, 3.2f);
+    g_backdrop.use_shader = state.settings.backdrop_shader;
 
     // A track change arms a "breath" pulse. The colour itself can only be
     // sampled once the cover has decoded, so the pulse is held until then --
@@ -353,23 +361,21 @@ void ui_backdrop_update(const AppState &state)
         {
             g_backdrop.target = desired;
 
-            // When an audio crossfade is actually in flight, stretch the
-            // colour wash over the same window (using the remaining time, so
-            // it lands with the audio rather than running past it). With no
-            // crossfade we keep the quick ambient ease.
-            const float progress = clampf(state.crossfade_progress, 0.0f, 1.0f);
+            // When an audio crossfade is actually in flight, blend the wash
+            // through the same 34-66% window as the bottom-bar metadata. That
+            // keeps the colour change centered on the visual hand-off instead
+            // of running behind it. With no crossfade use the quick ease.
             const bool sync = ui_animations_enabled() && state.crossfade_active &&
-                              state.crossfade_seconds > 0.15f && progress < 0.999f;
+                              state.crossfade_seconds > 0.15f;
             if (sync)
             {
                 g_backdrop.from_color = g_backdrop.color;
-                g_backdrop.transition_duration =
-                    std::max(0.15f, state.crossfade_seconds * (1.0f - progress));
-                g_backdrop.transition_time = 0.0f;
-                g_backdrop.timed_transition = true;
+                g_backdrop.crossfade_synced = true;
+                g_backdrop.timed_transition = false;
             }
             else
             {
+                g_backdrop.crossfade_synced = false;
                 g_backdrop.timed_transition = false;
             }
         }
@@ -384,19 +390,31 @@ void ui_backdrop_update(const AppState &state)
     }
 
     const ImVec4 previous = g_backdrop.color;
-    if (g_backdrop.timed_transition)
+    if (g_backdrop.crossfade_synced && state.crossfade_active)
     {
-        const float duration = std::max(0.05f, g_backdrop.transition_duration);
-        g_backdrop.transition_time = std::min(1.0f, g_backdrop.transition_time + dt / duration);
+        const float p = clampf((state.crossfade_progress - 0.34f) / 0.32f, 0.0f, 1.0f);
         g_backdrop.color = lerp4(g_backdrop.from_color, g_backdrop.target,
-                                 smootherstep01(g_backdrop.transition_time));
-        if (g_backdrop.transition_time >= 1.0f)
-            g_backdrop.timed_transition = false;
+                                 smootherstep01(p));
         ui_anim_request();
     }
     else
     {
-        g_backdrop.color = ease_color(g_backdrop.color, g_backdrop.target, 2.35f);
+        g_backdrop.crossfade_synced = false;
+        if (g_backdrop.timed_transition)
+        {
+            const float duration = std::max(0.05f, g_backdrop.transition_duration);
+            g_backdrop.transition_time =
+                std::min(1.0f, g_backdrop.transition_time + dt / duration);
+            g_backdrop.color = lerp4(g_backdrop.from_color, g_backdrop.target,
+                                     smootherstep01(g_backdrop.transition_time));
+            if (g_backdrop.transition_time >= 1.0f)
+                g_backdrop.timed_transition = false;
+            ui_anim_request();
+        }
+        else
+        {
+            g_backdrop.color = ease_color(g_backdrop.color, g_backdrop.target, 2.35f);
+        }
     }
 
     if (g_backdrop.pulse > 0.0f)
@@ -462,6 +480,10 @@ void ui_backdrop_draw()
     if (p.intensity <= 0.0005f)
         return;
 
+    // The shader path paints the same wash in one pass after glClear().
+    if (g_backdrop.use_shader && !g_backdrop.shader_failed)
+        return;
+
     ImDrawList *dl = ImGui::GetBackgroundDrawList();
 
     // Broad diagonal wash. The bright corner walks around the screen as the
@@ -478,6 +500,330 @@ void ui_backdrop_draw()
     for (int i = 0; i < p.spot_count; ++i)
         soft_ellipse(dl, p.spots[i].center, p.spots[i].radius, p.spots[i].tint,
                      p.spots[i].peak);
+}
+
+// ----------------------------------------------------------------------
+// Shader backdrop
+//
+// The ImGui primitive path stacks a 4-corner wash and dozens of translucent
+// ellipses. That is fine on an IPS panel but OLED near-black response makes
+// the 8-bit alpha/colour steps visible. This path draws one full-screen
+// triangle, evaluates the same wash/blooms in the fragment shader, and adds a
+// 1-LSB dither before output. It also removes the heavy ellipse overdraw.
+// ----------------------------------------------------------------------
+namespace
+{
+// The system GL 1.1 headers don't declare the GL 2/3 entry points we need, and
+// pulling in a full loader just for one pass is overkill. Resolve the handful
+// of functions through SDL; this works with both WGL and GLX.
+typedef GLuint(APIENTRY *PFN_CreateShader)(GLenum);
+typedef void(APIENTRY *PFN_ShaderSource)(GLuint, GLsizei, const GLchar *const *, const GLint *);
+typedef void(APIENTRY *PFN_CompileShader)(GLuint);
+typedef void(APIENTRY *PFN_GetShaderiv)(GLuint, GLenum, GLint *);
+typedef void(APIENTRY *PFN_GetShaderInfoLog)(GLuint, GLsizei, GLsizei *, GLchar *);
+typedef void(APIENTRY *PFN_DeleteShader)(GLuint);
+typedef GLuint(APIENTRY *PFN_CreateProgram)(void);
+typedef void(APIENTRY *PFN_AttachShader)(GLuint, GLuint);
+typedef void(APIENTRY *PFN_LinkProgram)(GLuint);
+typedef void(APIENTRY *PFN_GetProgramiv)(GLuint, GLenum, GLint *);
+typedef void(APIENTRY *PFN_GetProgramInfoLog)(GLuint, GLsizei, GLsizei *, GLchar *);
+typedef void(APIENTRY *PFN_DeleteProgram)(GLuint);
+typedef void(APIENTRY *PFN_UseProgram)(GLuint);
+typedef GLint(APIENTRY *PFN_GetUniformLocation)(GLuint, const GLchar *);
+typedef void(APIENTRY *PFN_Uniform1f)(GLint, GLfloat);
+typedef void(APIENTRY *PFN_Uniform2f)(GLint, GLfloat, GLfloat);
+typedef void(APIENTRY *PFN_Uniform3f)(GLint, GLfloat, GLfloat, GLfloat);
+typedef void(APIENTRY *PFN_Uniform4f)(GLint, GLfloat, GLfloat, GLfloat, GLfloat);
+typedef void(APIENTRY *PFN_Uniform1fv)(GLint, GLsizei, const GLfloat *);
+typedef void(APIENTRY *PFN_Uniform2fv)(GLint, GLsizei, const GLfloat *);
+typedef void(APIENTRY *PFN_Uniform3fv)(GLint, GLsizei, const GLfloat *);
+typedef void(APIENTRY *PFN_GenVertexArrays)(GLsizei, GLuint *);
+typedef void(APIENTRY *PFN_BindVertexArray)(GLuint);
+typedef void(APIENTRY *PFN_DrawArrays)(GLenum, GLint, GLsizei);
+
+PFN_CreateShader p_glCreateShader = nullptr;
+PFN_ShaderSource p_glShaderSource = nullptr;
+PFN_CompileShader p_glCompileShader = nullptr;
+PFN_GetShaderiv p_glGetShaderiv = nullptr;
+PFN_GetShaderInfoLog p_glGetShaderInfoLog = nullptr;
+PFN_DeleteShader p_glDeleteShader = nullptr;
+PFN_CreateProgram p_glCreateProgram = nullptr;
+PFN_AttachShader p_glAttachShader = nullptr;
+PFN_LinkProgram p_glLinkProgram = nullptr;
+PFN_GetProgramiv p_glGetProgramiv = nullptr;
+PFN_GetProgramInfoLog p_glGetProgramInfoLog = nullptr;
+PFN_DeleteProgram p_glDeleteProgram = nullptr;
+PFN_UseProgram p_glUseProgram = nullptr;
+PFN_GetUniformLocation p_glGetUniformLocation = nullptr;
+PFN_Uniform1f p_glUniform1f = nullptr;
+PFN_Uniform2f p_glUniform2f = nullptr;
+PFN_Uniform3f p_glUniform3f = nullptr;
+PFN_Uniform4f p_glUniform4f = nullptr;
+PFN_Uniform1fv p_glUniform1fv = nullptr;
+PFN_Uniform2fv p_glUniform2fv = nullptr;
+PFN_Uniform3fv p_glUniform3fv = nullptr;
+PFN_GenVertexArrays p_glGenVertexArrays = nullptr;
+PFN_BindVertexArray p_glBindVertexArray = nullptr;
+PFN_DrawArrays p_glDrawArrays = nullptr;
+
+template <typename T>
+bool load_gl_fn(T &fn, const char *name)
+{
+    fn = reinterpret_cast<T>(SDL_GL_GetProcAddress(name));
+    return fn != nullptr;
+}
+
+GLuint g_shader_program = 0;
+GLuint g_shader_vao = 0;
+struct ShaderUniforms
+{
+    GLint resolution = -1;
+    GLint background = -1;
+    GLint tint = -1;
+    GLint tint_soft = -1;
+    GLint wash = -1;
+    GLint wash_corners = -1;
+    GLint centers = -1;
+    GLint radii = -1;
+    GLint spot_tints = -1;
+    GLint peaks = -1;
+} g_shader_uniforms;
+
+GLuint compile_shader(GLenum type, const char *source)
+{
+    GLuint shader = p_glCreateShader(type);
+    p_glShaderSource(shader, 1, &source, nullptr);
+    p_glCompileShader(shader);
+    GLint ok = GL_FALSE;
+    p_glGetShaderiv(shader, GL_COMPILE_STATUS, &ok);
+    if (!ok)
+    {
+        char log[1024] = {0};
+        p_glGetShaderInfoLog(shader, sizeof(log) - 1, nullptr, log);
+        std::fprintf(stderr, "Backdrop shader compile failed: %s\n", log);
+        p_glDeleteShader(shader);
+        return 0;
+    }
+    return shader;
+}
+
+bool init_backdrop_shader()
+{
+    if (g_shader_program != 0)
+        return true;
+    if (g_backdrop.shader_failed)
+        return false;
+
+    if (!load_gl_fn(p_glCreateShader, "glCreateShader") ||
+        !load_gl_fn(p_glShaderSource, "glShaderSource") ||
+        !load_gl_fn(p_glCompileShader, "glCompileShader") ||
+        !load_gl_fn(p_glGetShaderiv, "glGetShaderiv") ||
+        !load_gl_fn(p_glGetShaderInfoLog, "glGetShaderInfoLog") ||
+        !load_gl_fn(p_glDeleteShader, "glDeleteShader") ||
+        !load_gl_fn(p_glCreateProgram, "glCreateProgram") ||
+        !load_gl_fn(p_glAttachShader, "glAttachShader") ||
+        !load_gl_fn(p_glLinkProgram, "glLinkProgram") ||
+        !load_gl_fn(p_glGetProgramiv, "glGetProgramiv") ||
+        !load_gl_fn(p_glGetProgramInfoLog, "glGetProgramInfoLog") ||
+        !load_gl_fn(p_glDeleteProgram, "glDeleteProgram") ||
+        !load_gl_fn(p_glUseProgram, "glUseProgram") ||
+        !load_gl_fn(p_glGetUniformLocation, "glGetUniformLocation") ||
+        !load_gl_fn(p_glUniform1f, "glUniform1f") ||
+        !load_gl_fn(p_glUniform2f, "glUniform2f") ||
+        !load_gl_fn(p_glUniform3f, "glUniform3f") ||
+        !load_gl_fn(p_glUniform4f, "glUniform4f") ||
+        !load_gl_fn(p_glUniform1fv, "glUniform1fv") ||
+        !load_gl_fn(p_glUniform2fv, "glUniform2fv") ||
+        !load_gl_fn(p_glUniform3fv, "glUniform3fv") ||
+        !load_gl_fn(p_glGenVertexArrays, "glGenVertexArrays") ||
+        !load_gl_fn(p_glBindVertexArray, "glBindVertexArray") ||
+        !load_gl_fn(p_glDrawArrays, "glDrawArrays"))
+    {
+        std::fprintf(stderr, "Backdrop shader requires GL 3 entry points\n");
+        g_backdrop.shader_failed = true;
+        return false;
+    }
+
+    static const char *kVertex = R"GLSL(#version 130
+out vec2 v_uv;
+void main()
+{
+    vec2 p = vec2(gl_VertexID == 1 ? 3.0 : -1.0,
+                  gl_VertexID == 2 ? 3.0 : -1.0);
+    v_uv = (p + 1.0) * 0.5;
+    gl_Position = vec4(p, 0.0, 1.0);
+}
+)GLSL";
+
+    static const char *kFragment = R"GLSL(#version 130
+in vec2 v_uv;
+out vec4 frag_color;
+
+uniform vec2 u_resolution;
+uniform vec3 u_background;
+uniform vec3 u_tint;
+uniform vec3 u_tint_soft;
+uniform float u_wash;
+uniform vec4 u_wash_corners;
+uniform vec2 u_centers[4];
+uniform vec2 u_radii[4];
+uniform vec3 u_spot_tints[4];
+uniform float u_peaks[4];
+
+void main()
+{
+    // The full-screen triangle is in OpenGL clip space (y = -1 at the
+    // bottom), while the wash weights and bloom centers are in ImGui screen
+    // coordinates (y = 0 at the top). Flip once so the glow lands where the
+    // CPU sampler says it should.
+    vec2 uv = vec2(v_uv.x, 1.0 - v_uv.y);
+    vec2 px = uv * u_resolution;
+
+    vec3 tl = u_tint;
+    vec3 tr = u_tint_soft;
+    vec3 br = u_tint;
+    vec3 bl = u_tint;
+    float atl = u_wash * u_wash_corners.x;
+    float atr = u_wash * u_wash_corners.y;
+    float abr = u_wash * u_wash_corners.z;
+    float abl = u_wash * u_wash_corners.w;
+
+    vec3 top = mix(tl, tr, uv.x);
+    float atop = mix(atl, atr, uv.x);
+    vec3 bottom = mix(bl, br, uv.x);
+    float abot = mix(abl, abr, uv.x);
+    vec3 col = mix(u_background, mix(top, bottom, uv.y),
+                   mix(atop, abot, uv.y));
+
+    for (int i = 0; i < 4; ++i)
+    {
+        float peak = u_peaks[i];
+        if (peak <= 0.0001)
+            continue;
+        vec2 d = (px - u_centers[i]) / u_radii[i];
+        float dist = length(d);
+        if (dist < 1.0)
+        {
+            // Continuous form of the old 22-ring falloff.
+            float t = pow(clamp((1.0 - dist) / 0.94, 0.0, 1.0), 1.0 / 0.72);
+            float cov = 1.0 - exp(-peak * t);
+            col = mix(col, u_spot_tints[i], cov);
+        }
+    }
+
+    // One LSB of static dither. Enough to break 8-bit contour lines without
+    // looking like grain.
+    float n = fract(sin(dot(gl_FragCoord.xy, vec2(12.9898, 78.233))) * 43758.5453);
+    col += (n - 0.5) / 255.0;
+    frag_color = vec4(col, 1.0);
+}
+)GLSL";
+
+    const GLuint vs = compile_shader(GL_VERTEX_SHADER, kVertex);
+    const GLuint fs = compile_shader(GL_FRAGMENT_SHADER, kFragment);
+    if (!vs || !fs)
+    {
+        if (vs) p_glDeleteShader(vs);
+        if (fs) p_glDeleteShader(fs);
+        g_backdrop.shader_failed = true;
+        return false;
+    }
+
+    g_shader_program = p_glCreateProgram();
+    p_glAttachShader(g_shader_program, vs);
+    p_glAttachShader(g_shader_program, fs);
+    p_glLinkProgram(g_shader_program);
+    p_glDeleteShader(vs);
+    p_glDeleteShader(fs);
+
+    GLint linked = GL_FALSE;
+    p_glGetProgramiv(g_shader_program, GL_LINK_STATUS, &linked);
+    if (!linked)
+    {
+        char log[1024] = {0};
+        p_glGetProgramInfoLog(g_shader_program, sizeof(log) - 1, nullptr, log);
+        std::fprintf(stderr, "Backdrop shader link failed: %s\n", log);
+        p_glDeleteProgram(g_shader_program);
+        g_shader_program = 0;
+        g_backdrop.shader_failed = true;
+        return false;
+    }
+
+    g_shader_uniforms.resolution = p_glGetUniformLocation(g_shader_program, "u_resolution");
+    g_shader_uniforms.background = p_glGetUniformLocation(g_shader_program, "u_background");
+    g_shader_uniforms.tint = p_glGetUniformLocation(g_shader_program, "u_tint");
+    g_shader_uniforms.tint_soft = p_glGetUniformLocation(g_shader_program, "u_tint_soft");
+    g_shader_uniforms.wash = p_glGetUniformLocation(g_shader_program, "u_wash");
+    g_shader_uniforms.wash_corners = p_glGetUniformLocation(g_shader_program, "u_wash_corners");
+    g_shader_uniforms.centers = p_glGetUniformLocation(g_shader_program, "u_centers[0]");
+    g_shader_uniforms.radii = p_glGetUniformLocation(g_shader_program, "u_radii[0]");
+    g_shader_uniforms.spot_tints = p_glGetUniformLocation(g_shader_program, "u_spot_tints[0]");
+    g_shader_uniforms.peaks = p_glGetUniformLocation(g_shader_program, "u_peaks[0]");
+
+    p_glGenVertexArrays(1, &g_shader_vao);
+    return true;
+}
+} // namespace
+
+void ui_backdrop_render_shader()
+{
+    if (!g_backdrop.use_shader || g_backdrop.shader_failed)
+        return;
+    if (ui_backdrop_visibility() <= 0.001f)
+        return;
+
+    const BackdropParams p = backdrop_params();
+    if (p.intensity <= 0.0005f || p.wash <= 0.0005f)
+        return;
+    if (!init_backdrop_shader())
+        return;
+
+    const ImVec2 display = ImGui::GetIO().DisplaySize;
+    const GLfloat w = (GLfloat)display.x;
+    const GLfloat h = (GLfloat)display.y;
+    if (w <= 1.0f || h <= 1.0f)
+        return;
+
+    GLfloat centers[8] = {0};
+    GLfloat radii[8] = {1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f};
+    GLfloat tints[12] = {0};
+    GLfloat peaks[4] = {0};
+    const int n = std::min(4, p.spot_count);
+    for (int i = 0; i < n; ++i)
+    {
+        centers[i * 2 + 0] = p.spots[i].center.x;
+        centers[i * 2 + 1] = p.spots[i].center.y;
+        radii[i * 2 + 0] = std::max(1.0f, p.spots[i].radius.x);
+        radii[i * 2 + 1] = std::max(1.0f, p.spots[i].radius.y);
+        tints[i * 3 + 0] = p.spots[i].tint.x;
+        tints[i * 3 + 1] = p.spots[i].tint.y;
+        tints[i * 3 + 2] = p.spots[i].tint.z;
+        peaks[i] = p.spots[i].peak;
+    }
+
+    glDisable(GL_BLEND);
+    glDisable(GL_DEPTH_TEST);
+    glDisable(GL_CULL_FACE);
+    glDisable(GL_SCISSOR_TEST);
+    glViewport(0, 0, (GLsizei)w, (GLsizei)h);
+
+    p_glUseProgram(g_shader_program);
+    p_glUniform2f(g_shader_uniforms.resolution, w, h);
+    p_glUniform3f(g_shader_uniforms.background, ui_c().bg.x, ui_c().bg.y, ui_c().bg.z);
+    p_glUniform3f(g_shader_uniforms.tint, p.tint.x, p.tint.y, p.tint.z);
+    p_glUniform3f(g_shader_uniforms.tint_soft, p.tint_soft.x, p.tint_soft.y, p.tint_soft.z);
+    p_glUniform1f(g_shader_uniforms.wash, p.wash);
+    p_glUniform4f(g_shader_uniforms.wash_corners, p.wash_c[0], p.wash_c[1],
+                  p.wash_c[2], p.wash_c[3]);
+    p_glUniform2fv(g_shader_uniforms.centers, 4, centers);
+    p_glUniform2fv(g_shader_uniforms.radii, 4, radii);
+    p_glUniform3fv(g_shader_uniforms.spot_tints, 4, tints);
+    p_glUniform1fv(g_shader_uniforms.peaks, 4, peaks);
+
+    p_glBindVertexArray(g_shader_vao);
+    p_glDrawArrays(GL_TRIANGLES, 0, 3);
+    p_glBindVertexArray(0);
+    p_glUseProgram(0);
 }
 
 ImVec4 ui_backdrop_tint()
@@ -508,11 +854,31 @@ ImVec4 ui_backdrop_sample(const ImVec2 &screen_pos)
     const float v = clampf(screen_pos.y / h, 0.0f, 1.0f);
     color = blend_over(color, wash_color_at(p, u, v));
 
-    // Blooms, in the same order they are drawn.
+    // Blooms, in the same order they are drawn. The shader uses a continuous
+    // exponential falloff; the primitive path uses stacked ellipses. Match the
+    // active path so list/lyrics edge fades dissolve into the real backdrop.
     for (int i = 0; i < p.spot_count; ++i)
     {
-        const float a = ellipse_coverage(screen_pos, p.spots[i].center,
-                                         p.spots[i].radius, p.spots[i].peak);
+        float a = 0.0f;
+        if (g_backdrop.use_shader)
+        {
+            const float nx = (screen_pos.x - p.spots[i].center.x) /
+                             std::max(1.0f, p.spots[i].radius.x);
+            const float ny = (screen_pos.y - p.spots[i].center.y) /
+                             std::max(1.0f, p.spots[i].radius.y);
+            const float dist = std::sqrt(nx * nx + ny * ny);
+            if (dist < 1.0f)
+            {
+                const float t = std::pow(clampf((1.0f - dist) / 0.94f, 0.0f, 1.0f),
+                                         1.0f / 0.72f);
+                a = 1.0f - std::exp(-p.spots[i].peak * t);
+            }
+        }
+        else
+        {
+            a = ellipse_coverage(screen_pos, p.spots[i].center,
+                                 p.spots[i].radius, p.spots[i].peak);
+        }
         if (a > 0.0f)
             color = blend_over(color, with_alpha(p.spots[i].tint, a));
     }

@@ -189,6 +189,16 @@ static void discord_apply_client_id()
     discord_rpc_start(env && *env ? env : g_state.settings.discord_client_id);
 }
 
+// While a crossfade runs, the incoming track lives on the helper player.
+// UI/MPRIS/Discord should describe that player, not the one fading out.
+static MpvPlayer *display_player()
+{
+    if ((g_crossfade_pending.load() || g_crossfade_active.load()) && g_fade_player &&
+        g_state.crossfade_progress >= 0.5f)
+        return g_fade_player.get();
+    return g_player.get();
+}
+
 static void update_discord_presence()
 {
     DiscordPresence p;
@@ -198,8 +208,9 @@ static void update_discord_presence()
     p.image_url = g_state.current_thumbnail_url;
     if (p.active)
     {
-        const double dur = g_player->cached_duration();
-        const double pos = std::max(0.0, g_player->cached_time_pos());
+        MpvPlayer *dp = display_player();
+        const double dur = dp ? dp->cached_duration() : 0.0;
+        const double pos = dp ? std::max(0.0, dp->cached_time_pos()) : 0.0;
         if (dur > 0.0)
         {
             const long long now_ts = (long long)time(nullptr);
@@ -1500,6 +1511,16 @@ static bool select_next_track(bool allow_refill, bool consume, NextPick &out)
 static void adopt_fade_track(const Track &consumed, int consumed_index)
 {
     g_state.loading = false;
+    // Keep the outgoing track around for the first half of the fade. Lyrics
+    // and their metadata stay in sync with the bottom bar's midpoint switch.
+    g_state.crossfade_from_track = Track{};
+    g_state.crossfade_from_track.id = g_state.current_track_id;
+    g_state.crossfade_from_track.title = g_state.current_title;
+    g_state.crossfade_from_track.artist = g_state.current_artist;
+    g_state.crossfade_from_track.thumbnail_url = g_state.current_thumbnail_url;
+    g_state.crossfade_from_track.url = g_state.current_track_url;
+    g_state.crossfade_from_track.album_id = g_state.current_album_id;
+    g_state.crossfade_from_track.artist_id = g_state.current_artist_id;
     g_state.current_title = consumed.title;
     g_state.current_artist = consumed.artist;
     g_state.current_thumbnail_url = consumed.thumbnail_url;
@@ -1512,8 +1533,8 @@ static void adopt_fade_track(const Track &consumed, int consumed_index)
     g_state.listen_track_id = consumed.id;
     g_state.listen_seconds = 0.0;
     g_state.listen_counted = false;
-    g_state.lyrics_requested_id = consumed.id;
-    g_state.lyrics_dirty = true;
+    // Lyrics stay on the outgoing track until the visual midpoint; the render
+    // loop queues the incoming lyrics when crossfade_progress crosses 0.5.
 
     // History/notification bookkeeping, mirroring the main "start" path.
     g_history_dirty = true;
@@ -1599,6 +1620,12 @@ static void promote_fade_player_to_main()
     g_crossfade_track = Track{};
     g_crossfade_index = -1;
     g_state.playing = true;
+    if (!g_state.current_track_id.empty() &&
+        g_state.lyrics_requested_id != g_state.current_track_id)
+    {
+        g_state.lyrics_requested_id = g_state.current_track_id;
+        g_state.lyrics_dirty = true;
+    }
     g_state.repaint_requested = true;
 }
 
@@ -2323,6 +2350,12 @@ int main(int, char **)
                 g_fade_player->set_volume(0);
                 g_crossfade_track = Track{};
                 g_crossfade_index = -1;
+                if (!g_state.current_track_id.empty() &&
+                    g_state.lyrics_requested_id != g_state.current_track_id)
+                {
+                    g_state.lyrics_requested_id = g_state.current_track_id;
+                    g_state.lyrics_dirty = true;
+                }
                 g_state.repaint_requested = true;
                 if (g_state.sleep_at_end_of_track)
                 {
@@ -2801,10 +2834,17 @@ int main(int, char **)
                     }
                     else if (key == SDLK_UP || key == SDLK_DOWN)
                     {
-                        const double cur = g_player->get_property_double("volume");
+                        const bool fading =
+                            g_crossfade_pending.load() || g_crossfade_active.load();
+                        const double cur = fading
+                                               ? (double)g_fade_user_vol
+                                               : g_player->get_property_double("volume");
                         const double vol = key == SDLK_UP ? std::min(100.0, cur + (shift ? 10.0 : 5.0))
                                                           : std::max(0.0, cur - (shift ? 10.0 : 5.0));
-                        g_player->set_volume((int)vol);
+                        if (fading)
+                            g_fade_user_vol = (float)vol;
+                        else
+                            g_player->set_volume((int)vol);
                         g_state.repaint_requested = true;
                     }
                 }
@@ -2907,10 +2947,12 @@ int main(int, char **)
             {
                 // Cached values (mpv observers drained above) -- no sync API
                 // round-trip per frame.
-                double pos = g_player->cached_time_pos();
+                MpvPlayer *dp = display_player();
+                const double pos = dp ? dp->cached_time_pos() : -1.0;
                 if (pos >= 0)
                     mpris->update_position(pos);
-                mpris->update_volume(g_player->cached_volume() / 100.0);
+                if (dp)
+                    mpris->update_volume(dp->cached_volume() / 100.0);
             }
 
             // Append endless-radio tracks to Up Next without changing tabs.
@@ -3142,6 +3184,18 @@ int main(int, char **)
                 }
             }
 
+            // UI volume edits: during a fade this updates the target used by
+            // both players' ramp, so the slider never fights the gain curve.
+            if (g_state.volume_request >= 0)
+            {
+                const int v = std::clamp(g_state.volume_request, 0, 100);
+                g_state.volume_request = -1;
+                g_fade_user_vol = (float)v;
+                if (!(g_crossfade_pending.load() || g_crossfade_active.load()))
+                    g_player->set_volume(v);
+                g_state.repaint_requested = true;
+            }
+
             // Next / Prev
             if (g_state.next_requested)
             {
@@ -3296,7 +3350,8 @@ int main(int, char **)
                     maybe_sweep_missing_covers();
                 }
 
-                const double pos = g_player->get_property_double("time-pos");
+                MpvPlayer *dp = display_player();
+                const double pos = dp ? dp->get_property_double("time-pos") : 0.0;
                 const int vol = (g_crossfade_pending || g_crossfade_active)
                                     ? (int)g_fade_user_vol
                                     : (int)g_player->get_property_double("volume");
@@ -3313,7 +3368,7 @@ int main(int, char **)
                 static int s_last_vol = -1;
                 if (sess_sig != s_last_sess_sig || s_last_vol != vol)
                 {
-                    save_session(g_state, *g_player,
+                    save_session(g_state, *display_player(),
                                  (g_crossfade_pending || g_crossfade_active)
                                      ? (int)g_fade_user_vol
                                      : -1);
@@ -3389,10 +3444,31 @@ int main(int, char **)
                 const double elapsed = std::chrono::duration<double>(now - g_fade_start).count();
                 g_state.crossfade_progress =
                     (float)std::clamp(elapsed / std::max(g_fade_seconds, 0.1), 0.0, 1.0);
+                g_state.crossfade_user_volume = (int)std::lround(g_fade_user_vol);
+                if (g_fade_player)
+                {
+                    g_state.crossfade_position =
+                        std::max(0.0, g_fade_player->cached_time_pos());
+                    g_state.crossfade_duration =
+                        std::max(0.0, g_fade_player->cached_duration());
+                }
+                if (g_state.crossfade_duration <= 0.0 && g_crossfade_track.duration_sec > 0)
+                    g_state.crossfade_duration = (double)g_crossfade_track.duration_sec;
+
+                // Lyrics switch at the same midpoint as the bottom bar.
+                if (g_state.crossfade_progress >= 0.5f &&
+                    g_state.lyrics_requested_id != g_state.current_track_id)
+                {
+                    g_state.lyrics_requested_id = g_state.current_track_id;
+                    g_state.lyrics_dirty = true;
+                    g_state.lyrics_loading = true;
+                }
             }
             else
             {
                 g_state.crossfade_progress = 0.0f;
+                g_state.crossfade_position = 0.0;
+                g_state.crossfade_duration = 0.0;
             }
 
             ui_backdrop_update(g_state);
@@ -3450,6 +3526,7 @@ int main(int, char **)
             glViewport(0, 0, (int)io.DisplaySize.x, (int)io.DisplaySize.y);
             glClearColor(ui_c().bg.x, ui_c().bg.y, ui_c().bg.z, 1.0f);
             glClear(GL_COLOR_BUFFER_BIT);
+            ui_backdrop_render_shader();
             ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
             SDL_GL_SwapWindow(window);
             last_render_time = std::chrono::steady_clock::now();

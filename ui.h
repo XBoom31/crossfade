@@ -201,6 +201,9 @@ struct Settings
     // tracks. `album_backdrop_strength` scales the glow (0.1 - 1.0).
     bool album_backdrop = false;
     float album_backdrop_strength = 0.65f;
+    // Render the ambient wash with a single full-screen shader pass and
+    // in-shader dithering instead of stacked ImGui ellipses.
+    bool backdrop_shader = true;
     // Glowing separators: a soft album-coloured light streak under each
     // section header, plus album-tinted structural hairlines. Uses the same
     // dominant-colour tint as the backdrop, but works with the backdrop off.
@@ -272,6 +275,7 @@ struct Settings
                day_mode == o.day_mode && accent_color == o.accent_color &&
                album_backdrop == o.album_backdrop &&
                album_backdrop_strength == o.album_backdrop_strength &&
+               backdrop_shader == o.backdrop_shader &&
                glow_separators == o.glow_separators &&
                glow_separator_strength == o.glow_separator_strength &&
                backdrop_drift == o.backdrop_drift &&
@@ -466,6 +470,10 @@ struct AppState
     std::string artist_thumbnail_url;
     std::vector<Track> artist_songs;
     std::vector<SavedAlbum> artist_albums;
+    std::string artist_songs_browse_id;
+    bool artist_songs_loading = false;
+    bool artist_songs_has_more = false;
+    int artist_songs_offset = 0;
     bool artist_loading = false;
     // Set when the artist fetch failed with no cached copy to show.
     bool artist_failed = false;
@@ -544,11 +552,23 @@ struct AppState
     std::atomic<bool> playing{false};
 
     // Mirror of the main loop's crossfade state, refreshed each frame so UI
-    // effects (the ambient backdrop) can stretch their own transition to the
-    // exact length of an in-flight crossfade. `crossfade_progress` is 0..1.
+    // effects (the ambient backdrop, bottom-bar metadata/progress) can stretch
+    // their own transition to the exact length of an in-flight crossfade.
+    // `crossfade_progress` is 0..1. Position/duration describe the incoming
+    // player while the fade runs; the volume is the user's target, not the
+    // temporary fade gain.
     bool crossfade_active = false;
     float crossfade_seconds = 0.0f;
     float crossfade_progress = 0.0f;
+    double crossfade_position = 0.0;
+    double crossfade_duration = 0.0;
+    int crossfade_user_volume = 100;
+    // Outgoing track snapshot, captured when a crossfade starts. The lyrics
+    // panel keeps showing this track (and its lyrics) until the midpoint.
+    Track crossfade_from_track;
+    // UI volume edits are applied by the main loop so they update both
+    // players during a crossfade. -1 means no pending change.
+    int volume_request = -1;
 
     // Listening stats (persisted to ~/.config/p100/play_counts.json)
     std::unordered_map<std::string, int> play_counts;
@@ -911,6 +931,10 @@ float ui_anim_texture_alpha(const std::string &url);
 // Soft top/bottom gradients on a scrollable list child. Call just before
 // EndChild() so the gradients sit above the rows but inside the child clip.
 void draw_scroll_edge_fades();
+// Alpha multiplier for a piece of scroll content at the top/bottom edge of
+// the current window. Fades the content itself (rows, cards, lyric lines)
+// instead of painting a background-coloured overlay over it.
+float ui_content_edge_alpha(float top_y, float bottom_y);
 
 // ----------------------------------------------------------------------
 // UI drawing functions

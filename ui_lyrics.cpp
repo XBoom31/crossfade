@@ -297,43 +297,6 @@ struct LyricsAnim
 };
 LyricsAnim g_anim;
 
-// Fade the scroll region into the panel background at its top and bottom
-// edges. Drawn as a foreground overlay after the lyric lines. Uses the
-// current window (the inner scroll child) rect.
-void draw_edge_fades()
-{
-    ImVec2 wp = ImGui::GetWindowPos();
-    ImVec2 ws = ImGui::GetWindowSize();
-    float span = ws.y;
-    if (span < 24.0f)
-        return;
-    float fade = ui_px(kEdgeFade);
-    if (fade > span * 0.4f)
-        fade = span * 0.4f;
-
-    float x0 = wp.x + 2.0f;
-    float x1 = wp.x + ws.x - 2.0f;
-    const float vis = ui_backdrop_visibility();
-    const float inner_alpha = (60.0f / 255.0f) * (1.0f - vis);
-    auto endpoint = [](const ImVec2 &p, float alpha) {
-        ImVec4 c = ui_backdrop_sample(p);
-        c.w = alpha;
-        return ImGui::GetColorU32(c);
-    };
-    ImDrawList *dl = ImGui::GetWindowDrawList();
-    dl->AddRectFilledMultiColor(
-        ImVec2(x0, wp.y), ImVec2(x1, wp.y + fade),
-        endpoint(ImVec2(x0, wp.y), 1.0f),
-        endpoint(ImVec2(x1, wp.y), 1.0f),
-        endpoint(ImVec2(x1, wp.y + fade), inner_alpha),
-        endpoint(ImVec2(x0, wp.y + fade), inner_alpha));
-    dl->AddRectFilledMultiColor(
-        ImVec2(x0, wp.y + ws.y - fade), ImVec2(x1, wp.y + ws.y),
-        endpoint(ImVec2(x0, wp.y + ws.y - fade), inner_alpha),
-        endpoint(ImVec2(x1, wp.y + ws.y - fade), inner_alpha),
-        endpoint(ImVec2(x1, wp.y + ws.y), 1.0f),
-        endpoint(ImVec2(x0, wp.y + ws.y), 1.0f));
-}
 } // namespace
 
 void draw_lyrics_panel(AppState &state, MpvPlayer &player, float width, float height)
@@ -347,7 +310,27 @@ void draw_lyrics_panel(AppState &state, MpvPlayer &player, float width, float he
     const float content_w = std::max(1.0f, ImGui::GetContentRegionAvail().x);
 
     auto snap = std::atomic_load(&state.lyrics);
-    const std::string &current_id = state.current_track_id;
+
+    // Keep the outgoing track on screen until the midpoint of a crossfade,
+    // matching the bottom bar. `crossfade_from_track` is captured by the main
+    // loop when the fade starts; lyrics are only requested for the incoming
+    // track once the visual hand-off happens.
+    const bool show_incoming = !state.crossfade_active ||
+                               state.crossfade_progress >= 0.5f;
+    Track display;
+    if (!show_incoming && !state.crossfade_from_track.id.empty())
+        display = state.crossfade_from_track;
+    else
+    {
+        display.id = state.current_track_id;
+        display.title = state.current_title;
+        display.artist = state.current_artist;
+        display.thumbnail_url = state.current_thumbnail_url;
+        display.url = state.current_track_url;
+        display.album_id = state.current_album_id;
+        display.artist_id = state.current_artist_id;
+    }
+    const std::string &current_id = display.id;
     const bool has_payload = snap && snap->track_id == current_id;
 
     // Reset the per-track animation/layout state.
@@ -394,7 +377,7 @@ void draw_lyrics_panel(AppState &state, MpvPlayer &player, float width, float he
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing,
                         ImVec2(ImGui::GetStyle().ItemSpacing.x, ui_px(6.0f)));
 
-    if (!state.current_thumbnail_url.empty())
+    if (!display.thumbnail_url.empty())
     {
         float art = ui_elem("lyrics_art", 220.0f);
         art = std::min(art, std::max(96.0f, height * 0.32f));
@@ -405,7 +388,7 @@ void draw_lyrics_panel(AppState &state, MpvPlayer &player, float width, float he
             x = ImGui::GetCursorPosX();
         ImGui::SetCursorPosX(x);
 
-        TextureInfo ti = texture_info(state.current_thumbnail_url);
+        TextureInfo ti = texture_info(display.thumbnail_url);
         if (ti.id)
         {
             float u0, v0, u1, v1;
@@ -423,39 +406,39 @@ void draw_lyrics_panel(AppState &state, MpvPlayer &player, float width, float he
         }
     }
 
-    std::string title = state.current_title.empty() ? "Lyrics" : state.current_title;
+    std::string title = display.title.empty() ? "Lyrics" : display.title;
     std::string title_str = ui_ellipsize(state.title_font, 34.0f, title, content_w);
     ImGui::PushFont(state.title_font);
     if (centered_link("##lyrics_album_link", title_str.c_str(),
-                      !state.current_track_id.empty(), "Open album"))
+                      !display.id.empty(), "Open album"))
     {
         Track t;
-        t.id = state.current_track_id;
-        t.title = state.current_title;
-        t.artist = state.current_artist;
-        t.thumbnail_url = state.current_thumbnail_url;
-        t.url = state.current_track_url;
-        t.album_id = state.current_album_id;
-        t.artist_id = state.current_artist_id;
+        t.id = display.id;
+        t.title = display.title;
+        t.artist = display.artist;
+        t.thumbnail_url = display.thumbnail_url;
+        t.url = display.url;
+        t.album_id = display.album_id;
+        t.artist_id = display.artist_id;
         open_album_from_track(state, t);
     }
     ImGui::PopFont();
-    if (!state.current_artist.empty())
+    if (!display.artist.empty())
     {
         std::string artist_str = ui_ellipsize(g_ui_fonts.body, 26.0f,
-                                             state.current_artist, content_w);
+                                             display.artist, content_w);
         ImGui::PushStyleColor(ImGuiCol_Text, ui_c().text_dim);
         if (centered_link("##lyrics_artist_link", artist_str.c_str(),
-                          !state.current_track_id.empty(), "Open artist"))
+                          !display.id.empty(), "Open artist"))
         {
             Track t;
-            t.id = state.current_track_id;
-            t.title = state.current_title;
-            t.artist = state.current_artist;
-            t.thumbnail_url = state.current_thumbnail_url;
-            t.url = state.current_track_url;
-            t.album_id = state.current_album_id;
-            t.artist_id = state.current_artist_id;
+            t.id = display.id;
+            t.title = display.title;
+            t.artist = display.artist;
+            t.thumbnail_url = display.thumbnail_url;
+            t.url = display.url;
+            t.album_id = display.album_id;
+            t.artist_id = display.artist_id;
             open_artist_from_track(state, t);
         }
         ImGui::PopStyleColor();
@@ -627,9 +610,10 @@ void draw_lyrics_panel(AppState &state, MpvPlayer &player, float width, float he
                 // shown later), negative advances it. The same offset is added
                 // back when a line is clicked, so a click lands on its own
                 // highlight straight away.
-                float t = (float)player.cached_time_pos();
-                if (t < 0.0f)
-                    t = 0.0f;
+                const bool incoming =
+                    state.crossfade_active && state.crossfade_progress >= 0.5f;
+                float t = incoming ? (float)state.crossfade_position
+                                   : (float)player.cached_time_pos();
                 if (t < 0.0f)
                     t = 0.0f;
                 t -= state.settings.lyrics_offset;
@@ -695,7 +679,10 @@ void draw_lyrics_panel(AppState &state, MpvPlayer &player, float width, float he
                         morphing = true;
 
                     ImVec4 col = ls.col;
-                    col.w *= alpha * panel_alpha;
+                    const float line_top = ImGui::GetCursorScreenPos().y;
+                    const float line_edge = ui_content_edge_alpha(
+                        line_top, line_top + ImGui::GetTextLineHeightWithSpacing() * 1.8f);
+                    col.w *= alpha * panel_alpha * line_edge;
 
                     float top_y = ImGui::GetCursorPosY();
                     // ImGui rounds font sizes to whole pixels, so animating
@@ -741,9 +728,15 @@ void draw_lyrics_panel(AppState &state, MpvPlayer &player, float width, float he
                 g_anim.last_active = -2;
 
                 // Unsynced lyrics: a plain, evenly dimmed block (no highlight).
-                ImU32 ucol = ui_with_alpha(ui_text_dim_u32(), alpha * panel_alpha * 0.85f);
                 for (const auto &line : lx.lines)
+                {
+                    const float line_top = ImGui::GetCursorScreenPos().y;
+                    const float line_edge = ui_content_edge_alpha(
+                        line_top, line_top + ImGui::GetTextLineHeightWithSpacing());
+                    const ImU32 ucol = ui_with_alpha(
+                        ui_text_dim_u32(), alpha * panel_alpha * 0.85f * line_edge);
                     centered_wrapped_text(line.c_str(), ucol, 0.0f, content_w);
+                }
             }
 
             ImGui::Dummy(ImVec2(0.0f, pad)); // symmetric bottom padding
@@ -837,7 +830,6 @@ void draw_lyrics_panel(AppState &state, MpvPlayer &player, float width, float he
                 ImGui::SetScrollY(g_anim.scroll_target);
             }
 
-            draw_edge_fades();
             ImGui::EndChild();
             ImGui::PopStyleVar(); // WindowPadding
 

@@ -142,11 +142,16 @@ void draw_bottom_bar(AppState &state, MpvPlayer &player)
     // under-damped, so it overshoots and settles with a bounce) and a sine
     // wave ripples along the line while the strip is hovered.
     {
-        float edge_pos = (float)player.get_property_double("time-pos");
-        float edge_dur = (float)player.get_property_double("duration");
+        const bool fading = state.crossfade_active;
+        const bool show_incoming = fading && state.crossfade_progress >= 0.5f;
+        float edge_pos = show_incoming ? (float)state.crossfade_position
+                                       : (float)player.get_property_double("time-pos");
+        float edge_dur = show_incoming ? (float)state.crossfade_duration
+                                       : (float)player.get_property_double("duration");
         if (edge_pos < 0.0f)
             edge_pos = 0.0f;
         const bool have_dur = edge_dur > 0.0f;
+        const bool seekable = !state.crossfade_active;
         const float edge_frac = have_dur ? std::clamp(edge_pos / edge_dur, 0.0f, 1.0f) : 0.0f;
 
         static bool s_edge_seeking = false;
@@ -158,8 +163,13 @@ void draw_bottom_bar(AppState &state, MpvPlayer &player)
         static double s_hold_until = 0.0;   // after a seek: trust the seeked frac until mpv catches up
         static float s_hold_frac = 0.0f;
 
+        if (!seekable)
+        {
+            s_edge_seeking = false;
+            s_hold_until = 0.0;
+        }
         const float edge_hover_h = 12.0f * m.layout_scale;
-        const bool edge_hover = have_dur && ImGui::IsMouseHoveringRect(
+        const bool edge_hover = have_dur && seekable && ImGui::IsMouseHoveringRect(
             ImVec2(wp.x, wp.y), ImVec2(wp.x + ws.x, wp.y + edge_hover_h));
         if (edge_hover)
         {
@@ -364,16 +374,23 @@ void draw_bottom_bar(AppState &state, MpvPlayer &player)
     }
     else if (state.current_track_id != s_last_track_id)
     {
-        s_old_title = s_cur_title;
-        s_old_artist = s_cur_artist;
-        s_old_thumb = s_cur_thumb;
-        s_last_track_id = state.current_track_id;
-        s_cur_title = state.current_title;
-        s_cur_artist = state.current_artist;
-        s_cur_thumb = state.current_thumbnail_url;
-        s_change_time = now_time;
-        s_flash_timer = ui_animations_enabled() ? kFlashDuration : 0.0f;
-        s_pulse = ui_animations_enabled() ? 1.0f : 0.0f;
+        // During a crossfade, hold the outgoing metadata until the midpoint,
+        // then use the exact same quick hand-off as a manual track click.
+        const bool wait_for_mid =
+            state.crossfade_active && state.crossfade_progress < 0.5f;
+        if (!wait_for_mid)
+        {
+            s_old_title = s_cur_title;
+            s_old_artist = s_cur_artist;
+            s_old_thumb = s_cur_thumb;
+            s_last_track_id = state.current_track_id;
+            s_cur_title = state.current_title;
+            s_cur_artist = state.current_artist;
+            s_cur_thumb = state.current_thumbnail_url;
+            s_change_time = now_time;
+            s_flash_timer = ui_animations_enabled() ? kFlashDuration : 0.0f;
+            s_pulse = ui_animations_enabled() ? 1.0f : 0.0f;
+        }
     }
     else
     {
@@ -399,6 +416,7 @@ void draw_bottom_bar(AppState &state, MpvPlayer &player)
         const float out_dur = std::max(0.001f, ui_anim_duration(0.17f));
         in_t = ui_anim_ease_out((float)((now_time - s_change_time) / in_dur));
         out_t = 1.0f - ui_anim_ease_out((float)((now_time - s_change_time) / out_dur));
+
         if (in_t < 1.0f || out_t > 0.0f)
             ui_anim_request();
     }
@@ -471,7 +489,26 @@ void draw_bottom_bar(AppState &state, MpvPlayer &player)
     const float artist_line = artist_base * m.text_scale * 1.25f;
     const float text_block = title_line + m.space_1 + artist_line;
     const float text_y = (bar_h - text_block) * 0.5f;
-    const bool liked = !state.current_track_id.empty() && is_track_liked(state, state.current_track_id);
+    // The displayed row can be the outgoing track during the first half of a
+    // crossfade. Keep the heart/link hit-boxes bound to what is actually on
+    // screen instead of the already-published incoming metadata.
+    Track display_track;
+    if (state.crossfade_active && state.crossfade_progress < 0.5f &&
+        !state.crossfade_from_track.id.empty())
+    {
+        display_track = state.crossfade_from_track;
+    }
+    else
+    {
+        display_track.id = s_last_track_id;
+        display_track.title = s_cur_title;
+        display_track.artist = s_cur_artist;
+        display_track.thumbnail_url = s_cur_thumb;
+        display_track.url = state.current_track_url;
+        display_track.album_id = state.current_album_id;
+        display_track.artist_id = state.current_artist_id;
+    }
+    const bool liked = !display_track.id.empty() && is_track_liked(state, display_track.id);
     const float heart_size = m.control_h;
     const bool show_heart = info_w - heart_size - m.space_2 >= 110.0f;
     const float text_limit = std::max(0.0f, info_w - (show_heart ? heart_size + m.space_2 : 0.0f));
@@ -505,7 +542,7 @@ void draw_bottom_bar(AppState &state, MpvPlayer &player)
         const float artist_y = wp.y + text_y + title_line + m.space_1 + new_dy;
         ImGui::SetCursorScreenPos(ImVec2(info_x, title_y));
         ImGui::InvisibleButton("##bottom_album_link", ImVec2(std::max(1.0f, title_w), title_line));
-        const bool title_hovered = !state.current_track_id.empty() && ImGui::IsItemHovered();
+        const bool title_hovered = !display_track.id.empty() && ImGui::IsItemHovered();
         const bool title_clicked = title_hovered && ImGui::IsItemClicked();
         if (title_hovered)
         {
@@ -514,8 +551,8 @@ void draw_bottom_bar(AppState &state, MpvPlayer &player)
         }
         ImGui::SetCursorScreenPos(ImVec2(info_x, artist_y));
         ImGui::InvisibleButton("##bottom_artist_link", ImVec2(std::max(1.0f, artist_w), artist_line));
-        const bool artist_hovered = !state.current_track_id.empty() &&
-                                    !state.current_artist.empty() && ImGui::IsItemHovered();
+        const bool artist_hovered = !display_track.id.empty() &&
+                                    !display_track.artist.empty() && ImGui::IsItemHovered();
         const bool artist_clicked = artist_hovered && ImGui::IsItemClicked();
         if (artist_hovered)
         {
@@ -541,18 +578,10 @@ void draw_bottom_bar(AppState &state, MpvPlayer &player)
 
         if (title_clicked || artist_clicked)
         {
-            Track t;
-            t.id = state.current_track_id;
-            t.title = s_cur_title;
-            t.artist = s_cur_artist;
-            t.thumbnail_url = s_cur_thumb;
-            t.url = state.current_track_url;
-            t.album_id = state.current_album_id;
-            t.artist_id = state.current_artist_id;
             if (title_clicked)
-                open_album_from_track(state, t);
+                open_album_from_track(state, display_track);
             else
-                open_artist_from_track(state, t);
+                open_artist_from_track(state, display_track);
         }
 
         float heart_x = info_x + text_w + m.space_2;
@@ -563,13 +592,7 @@ void draw_bottom_bar(AppState &state, MpvPlayer &player)
             if (ui_icon_button("##bottom_like", UiIcon::Heart, heart_size, liked, liked ? ui_accent_text_u32() : 0,
                                liked ? "Unlike" : "Like"))
             {
-                Track t;
-                t.id = state.current_track_id;
-                t.title = state.current_title;
-                t.artist = state.current_artist;
-                t.thumbnail_url = state.current_thumbnail_url;
-                t.url = state.current_track_url;
-                toggle_like(state, t);
+                toggle_like(state, display_track);
             }
         }
     }
@@ -625,8 +648,12 @@ void draw_bottom_bar(AppState &state, MpvPlayer &player)
     // Cached observer values: a sync mpv round-trip here ran every frame.
     // -1 means "unknown" (no file / not started); the sync getter used to
     // return 0 there, so clamp to keep the slider identical.
-    float current = (float)player.cached_time_pos();
-    float duration = (float)player.cached_duration();
+    const bool fading = state.crossfade_active;
+    const bool show_incoming = fading && state.crossfade_progress >= 0.5f;
+    float current = show_incoming ? (float)state.crossfade_position
+                                  : (float)player.cached_time_pos();
+    float duration = show_incoming ? (float)state.crossfade_duration
+                                   : (float)player.cached_duration();
     if (current < 0.0f)
         current = 0.0f;
     if (duration < 0.0f)
@@ -644,17 +671,24 @@ void draw_bottom_bar(AppState &state, MpvPlayer &player)
                 ImVec2(center_x, wp.y + seek_y + (seek_h - 15.0f * m.text_scale * 1.2f) * 0.5f),
                 ui_text_muted_u32(), fmt_time((int)current).c_str());
     ImGui::SetCursorScreenPos(ImVec2(center_x + time_w + m.space_2, wp.y + seek_y));
-    if (draw_progress_bar("##seek", &seek_value01, seek_bar_w, seek_h,
+    ImGui::BeginDisabled(fading);
+    const bool seek_changed =
+        draw_progress_bar("##seek", &seek_value01, seek_bar_w, seek_h,
                           ui_accent_u32(1.0f), ui_overlay_u32(0.14f),
-                          [&](float t) { return have_duration ? fmt_time((int)(t * duration)) : std::string(); }))
+                          [&](float t) { return have_duration ? fmt_time((int)(t * duration)) : std::string(); });
+    ImGui::EndDisabled();
+    if (seek_changed && have_duration && !fading)
     {
-        if (have_duration)
-        {
-            seek_target = seek_value01 * duration;
-            current = seek_target;
-        }
+        seek_target = seek_value01 * duration;
+        current = seek_target;
     }
-    if (have_duration && !ImGui::IsItemActive() && seek_target >= 0.0f)
+    if (fading)
+    {
+        // The displayed track lives on the incoming helper player; seeking it
+        // here would target the outgoing player instead.
+        seek_target = -1.0f;
+    }
+    else if (have_duration && !ImGui::IsItemActive() && seek_target >= 0.0f)
     {
         player.seek(seek_target);
         seek_target = -1.0f;
@@ -824,7 +858,9 @@ void draw_bottom_bar(AppState &state, MpvPlayer &player)
         }
     }
 
-    const int vol = (int)player.get_property_double("volume");
+    const int vol = state.crossfade_active
+                        ? state.crossfade_user_volume
+                        : (int)player.get_property_double("volume");
     float vol_value01 = vol / 100.0f;
     const float pct_line = 15.0f * m.text_scale * 1.2f;
     const float speed_line = 14.0f * m.text_scale * 1.2f;
@@ -842,7 +878,9 @@ void draw_bottom_bar(AppState &state, MpvPlayer &player)
                               ui_accent_u32(1.0f), ui_overlay_u32(0.14f),
                               [&](float t) { return std::to_string((int)(t * 100.0f)) + "%"; }))
         {
-            player.set_volume((int)(vol_value01 * 100.0f));
+            // Let the main loop apply it so a fade updates both players and
+            // the user's target volume, not just the outgoing one.
+            state.volume_request = (int)(vol_value01 * 100.0f);
         }
 
         const std::string pct_label = std::to_string((int)(vol_value01 * 100.0f)) + "%";
@@ -892,6 +930,15 @@ void draw_bottom_bar(AppState &state, MpvPlayer &player)
             ImGui::PopID();
         }
     }
+
+    // Right-click anywhere over the now-playing block for the same actions
+    // as a track row (like, queue, add to playlist, album/artist, radio).
+    if (!display_track.id.empty() && ImGui::IsWindowHovered() &&
+        ImGui::IsMouseHoveringRect(ImVec2(wp.x, wp.y),
+                                   ImVec2(info_x + info_w, wp.y + bar_h)) &&
+        ImGui::IsMouseClicked(ImGuiMouseButton_Right))
+        ImGui::OpenPopup("TrackContextMenu");
+    ui_track_context_menu(state, display_track, false);
 
     ImGui::End();
 }

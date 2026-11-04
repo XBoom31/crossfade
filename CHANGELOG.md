@@ -4,6 +4,30 @@ All notable changes to crossfade are documented here.
 
 ## Unreleased
 
+## 0.1.10 - 2026-11-04
+
+### Added
+
+- Artist pages now keep the original five top songs and offer a **Load 5 more
+  songs** button, paging through the artist's full songs shelf. The backend
+  caches the full list per artist, and expanded lists persist in the artist
+  cache.
+
+### Changed
+
+- Crossfade visuals now switch the bottom bar metadata, progress, lyrics and
+  backdrop around the visual midpoint. The volume slider stays at the user
+  volume instead of showing the temporary fade gain.
+- Added the optional **Smooth backdrop shader**: one full-screen pass with
+  in-shader dithering, replacing the layered ImGui ellipses. It is toggleable
+  in Settings and syncs its colour wash with the crossfade midpoint.
+- Removed the dark panel-wide tab-switch fade; scroll edges now fade the
+  content itself (track rows, media cards and lyric lines) so the backdrop is
+  never covered by a sampled colour band.
+- Radio seed cards keep their entrance pop but no longer fade their cover
+  images, and the Station Tracks list waits for the seed cards to settle.
+- README Party-mode docs refreshed with new host and Present QR screenshots.
+
 ## 0.1.9 - 2026-11-04
 
 ### Added

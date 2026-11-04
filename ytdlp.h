@@ -209,6 +209,7 @@ struct ArtistInfo
     std::string monthly_listeners;
     std::string thumbnail_url;
     std::vector<Track> songs;
+    std::string songs_browse_id; // full songs shelf (pass to artist_songs)
     std::vector<ArtistAlbum> albums;
 };
 
@@ -238,6 +239,8 @@ struct SearchAllResult
 };
 
 bool fetch_artist(const std::string &browse_id, ArtistInfo &out);
+bool fetch_artist_songs(const std::string &songs_browse_id, int offset, int count,
+                        std::vector<Track> &out);
 bool fetch_artist_for_track(const std::string &video_id, std::string &artist_id, std::string &artist_name);
 std::vector<ArtistSummary> fetch_artist_search(const std::string &query);
 bool fetch_search_all(const std::string &query, SearchAllResult &out);

@@ -611,6 +611,17 @@ void draw_radio_panel(AppState &state)
         (float)(anim.now - anim.start) < ui_anim_delay(1.0f) + ui_anim_duration(0.9f))
         ui_anim_request();
 
+    // Keep the station list behind the seed-card intro. The last tile starts
+    // at 0.30 + (n-1)*0.035 and takes 0.48s; add a small breath before the
+    // list header appears. On a later seed click the page clock is old, so
+    // this delay is already in the past and new tracks do not feel laggy.
+    const float seed_last_delay = seeds.empty()
+                                      ? 0.0f
+                                      : 0.30f + (float)(seeds.size() - 1) * 0.035f;
+    const float seed_done_base = seeds.empty()
+                                     ? 0.44f
+                                     : seed_last_delay + 0.10f;
+
     auto header = [&](const char *title, const char *meta, const char *action, float delay) {
         const ImVec2 p = ImGui::GetCursorPos();
         const float sy = ImGui::GetCursorScreenPos().y;
@@ -972,7 +983,13 @@ void draw_radio_panel(AppState &state)
             const float thumb = 44.0f * m.layout_scale;
             const ImVec2 amin(rmin.x + m.space_2, rmin.y + (tile_h - thumb) * 0.5f);
             const ImVec2 amax(amin.x + thumb, amin.y + thumb);
-            ui_draw_cover(dl, seed.track.thumbnail_url, amin, amax, m.radius_sm, alpha, UiIcon::Album);
+            // Seed cards appear with the tile's pop, not with a second cover
+            // fade that briefly exposes the placeholder beneath them.
+            // The card pops in as before, but the cover itself must not fade:
+            // it arrives at full opacity on the first visible frame.
+            ui_draw_cover(dl, seed.track.thumbnail_url, amin, amax, m.radius_sm,
+                          t > 0.001f ? 1.0f : 0.0f,
+                          UiIcon::Album, "radio", false, true);
             if (hv > 0.01f)
             {
                 dl->AddRectFilled(amin, amax, IM_COL32(0, 0, 0, (int)(110.0f * hv * alpha)),
@@ -1065,7 +1082,7 @@ void draw_radio_panel(AppState &state)
         if (avail < need)
             refresh_label = nullptr;
     }
-    if (header("Station Tracks", list_meta.c_str(), refresh_label, 0.44f))
+    if (header("Station Tracks", list_meta.c_str(), refresh_label, seed_done_base))
     {
         Track seed = seed_from_state(state);
         if (!seed.id.empty())
@@ -1084,7 +1101,8 @@ void draw_radio_panel(AppState &state)
     {
         const ImVec2 origin = ImGui::GetCursorScreenPos();
         const float h = 150.0f * m.layout_scale;
-        const float t = anim.stagger(0.50f, 0.5f) * anim.in_view(origin.y, 100.0f);
+        const float t = anim.stagger(seed_done_base + 0.02f, 0.5f) *
+                        anim.in_view(origin.y, 100.0f);
         ImGui::Dummy(ImVec2(avail, h));
         const ImVec2 rmax(origin.x + avail, origin.y + h);
         dl->AddRectFilled(origin, rmax,
@@ -1124,7 +1142,13 @@ void draw_radio_panel(AppState &state)
     {
         const std::string reveal_key = "radio:" + state.radio_seed_id;
         const uint64_t token = (uint64_t)std::hash<std::string>{}(state.radio_seed_id);
-        const double reveal_start = ui_anim_track_list_reveal(reveal_key.c_str(), *tracks, token);
+        double reveal_start = ui_anim_track_list_reveal(reveal_key.c_str(), *tracks, token);
+        const double seed_gate = s_start + (double)ui_anim_delay(seed_done_base);
+        if (seed_gate > reveal_start)
+        {
+            reveal_start = seed_gate;
+            ui_anim_request();
+        }
 
         for (int i = 0; i < (int)tracks->size(); ++i)
         {

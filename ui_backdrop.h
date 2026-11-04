@@ -17,6 +17,12 @@ struct AppState;
 void ui_backdrop_update(const AppState &state);
 void ui_backdrop_draw();
 
+// Optional full-screen shader path. Call after glClear() and before
+// ImGui_ImplOpenGL3_RenderDrawData(); it is a no-op unless the setting is on
+// and the album backdrop is visible. Using a shader lets the gradient be
+// dithered before 8-bit output, removing the bands OLED panels expose.
+void ui_backdrop_render_shader();
+
 // 0 = fully hidden (panels opaque), 1 = fully visible (panels transparent).
 float ui_backdrop_visibility();
 

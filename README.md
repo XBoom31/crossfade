@@ -101,6 +101,10 @@ keeps going.
 |:---:|:---:|:---:|
 | ![Albums](docs/screenshots/albums.png) | ![Track actions](docs/screenshots/track-actions.png) | ![Settings](docs/screenshots/settings.png) |
 
+| Party | Present QR |
+|:---:|:---:|
+| ![Party](docs/screenshots/party.png) | ![Present QR](docs/screenshots/party-qr.png) |
+
 ## Install (Linux)
 
 ### Prebuilt packages (recommended)
@@ -414,25 +418,32 @@ Local-only use is fully supported.
 ## Party mode
 
 Open **Party** (or press `P`) and choose **Start party**. The QR code appears
-right in the tab; anyone on the same Wi-Fi can scan it, paste a YouTube /
-YouTube Music link, and add a song. Nothing leaves the local network: the
+right in the tab, ready to scan; anyone on the same Wi-Fi can join, search
+YouTube or paste a link, and add a song. Nothing leaves the local network: the
 server is part of crossfade, uses the existing Python backend for metadata, and
 never writes guest names or links to disk.
 
 - **Setup in Settings.** Party name, network address, port, approval, limits and
   guest options live in **Settings → Party**. **Party settings** in the Party
   tab jumps straight there. Changes apply the next time you start a party.
+- **One global queue.** Guest requests, your playlist and anything you queue
+  manually share the same Up Next. Guest songs are interleaved round-robin,
+  below explicit **Play next** pins but ahead of your playlist, so next/previous
+  always follows the queue you can see.
 - **Approval.** Turn on **Host approves every request** to review songs in the
   Party tab before they join Up Next.
-- **Fair queueing.** Guest songs are interleaved round-robin, below explicit
-  **Play next** pins but ahead of your playlist, so one guest cannot fill the
-  queue.
-- **Limits.** Set songs per guest, add cooldown, max video length and a queue
-  cap. Rate limits are enforced per guest on the server.
+- **Limits.** Set songs per guest, add cooldown, max video length and a guest
+  queue cap. Rate limits are enforced per guest on the server; your own playlist
+  does not use the guest cap.
 - **Guest page.** One self-contained mobile page (light/dark, no external
-  requests) with now-playing progress, Up Next, search and undo.
+  requests) with now-playing progress, album art, the next 40 queue rows,
+  YouTube search, paste-a-link, guest names and undo.
 - **Present QR.** Open a top-most fullscreen QR for a TV or projector, with a
-  **Copy link** button; `Esc` or the close button returns to the app.
+  **Copy link** button; `Esc` or the close button returns to the app. Starting a
+  party does not take over the screen automatically.
+- **Connection help.** The Party tab includes a same-Wi-Fi/hotspot/client
+  isolation reminder and a `/healthz` test link. On Android 16+, Chrome may need
+  **Nearby devices** permission before it can open a LAN address.
 - **Privacy.** The party token lives only in the QR URL, guest ids are in memory
   only, and the party never auto-starts or persists live state.
 
