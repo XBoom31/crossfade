@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Create/refresh the browser-cookie auth file in crossfade's config directory.
 set -euo pipefail
+umask 077
 
 CONFIG_DIR="${P100_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/crossfade}"
 SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
