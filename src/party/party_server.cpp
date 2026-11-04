@@ -2,7 +2,6 @@
 
 #include "party.h"
 #include "party_util.h"
-#include "guest_page.h"
 
 #include <algorithm>
 #include <cctype>

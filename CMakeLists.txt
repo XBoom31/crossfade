@@ -110,6 +110,15 @@ endif()
 
 add_executable(crossfade ${SOURCES})
 
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    set(CROSSFADE_WARNINGS -Wall -Wextra -Wno-unused-parameter)
+    if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+        list(APPEND CROSSFADE_WARNINGS -Wno-ignored-attributes)
+    endif()
+    target_compile_options(crossfade PRIVATE
+        $<$<COMPILE_LANGUAGE:CXX>:${CROSSFADE_WARNINGS}>)
+endif()
+
 # Bake in the source directory so the Python backend / venv can still be
 # found when the binary is copied elsewhere (e.g. /bin) or run from build/.
 target_compile_definitions(crossfade PRIVATE
@@ -180,7 +189,7 @@ install(DIRECTORY assets/fonts DESTINATION ${CMAKE_INSTALL_DATADIR}/crossfade/as
 install(PROGRAMS scripts/crossfade-login DESTINATION ${CMAKE_INSTALL_BINDIR})
 
 # ---- Party mode unit tests (off by default; ./mk stays unchanged) ----
-option(CROSSFADE_BUILD_TESTS "Build crossfade unit tests" OFF)
+option(CROSSFADE_BUILD_TESTS "Build crossfade unit tests" ON)
 if(CROSSFADE_BUILD_TESTS)
     enable_testing()
     foreach(party_test party_link party_queue party_util)
@@ -332,6 +341,14 @@ if(CROSSFADE_BUILD_TESTS)
     target_link_libraries(party_smoke_server Threads::Threads)
     if(WIN32)
         target_link_libraries(party_smoke_server ws2_32 iphlpapi bcrypt)
+    endif()
+
+    if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+        foreach(tgt test_party_link test_party_queue test_party_util test_library
+                    test_crossfade test_cache test_json test_session test_playlists
+                    test_settings)
+            target_compile_options(${tgt} PRIVATE ${CROSSFADE_WARNINGS})
+        endforeach()
     endif()
 endif()
 

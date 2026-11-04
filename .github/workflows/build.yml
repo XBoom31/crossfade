@@ -51,9 +51,16 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y build-essential cmake pkg-config \
             libsdl2-dev libgl1-mesa-dev libmpv-dev libglib2.0-dev \
-            libnotify-dev python3 python3-venv curl libjack0
+            libnotify-dev python3 python3-venv curl libjack0 ccache
+      - name: Cache ccache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ccache
+          key: ${{ runner.os }}-ccache-${{ github.ref }}-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-ccache-
       - name: Configure
-        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCROSSFADE_BUILD_TESTS=ON
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCROSSFADE_BUILD_TESTS=ON -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
       - name: Build
         run: |
           code=0
@@ -87,6 +94,13 @@ jobs:
           ctest --test-dir build-asan --output-on-failure
       - name: Verify binary exists
         run: test -x ./build/crossfade
+      - name: Upload PR binary
+        if: github.event_name == 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: crossfade-linux-pr
+          path: build/crossfade
+          if-no-files-found: error
         # No runtime smoke test yet: the app has no CLI flags, blocks in its
         # event loop once up, and currently ignores SIGTERM (needs a signal
         # handler), so a headless run cannot be terminated cleanly.
@@ -99,6 +113,7 @@ jobs:
           cp build/crossfade "dist/${PKG}/"
           cp scripts/crossfade-login "dist/${PKG}/"
           cp p100-backend.py p100-backend-oauth.py requirements.txt "dist/${PKG}/"
+          cp -r py "dist/${PKG}/"
           cp -r assets/fonts "dist/${PKG}/assets-fonts"
           cp packaging/crossfade.desktop "dist/${PKG}/"
           cp README.md LICENSE "dist/${PKG}/"
@@ -113,6 +128,8 @@ jobs:
           cp build/crossfade "$STAGE/usr/bin/"
           cp scripts/crossfade-login "$STAGE/usr/bin/"
           cp p100-backend.py p100-backend-oauth.py requirements.txt "$STAGE/usr/share/crossfade/"
+          mkdir -p "$STAGE/usr/share/crossfade/py"
+          cp -r py/cf_backend "$STAGE/usr/share/crossfade/py/"
           cp -r assets/fonts "$STAGE/usr/share/crossfade/assets/"
           cp packaging/crossfade.desktop "$STAGE/usr/share/applications/"
           cp assets/crossfade.svg "$STAGE/usr/share/icons/hicolor/scalable/apps/"
@@ -135,6 +152,8 @@ jobs:
           cp packaging/linux/crossfade-appimage-wrapper.sh AppDir/usr/bin/crossfade
           chmod +x AppDir/usr/bin/crossfade
           cp p100-backend.py p100-backend-oauth.py requirements.txt AppDir/usr/share/crossfade/
+          mkdir -p AppDir/usr/share/crossfade/py
+          cp -r py/cf_backend AppDir/usr/share/crossfade/py/
           cp -r assets/fonts AppDir/usr/share/crossfade/assets/
           cp packaging/crossfade.desktop AppDir/usr/share/applications/
           cp assets/crossfade.svg AppDir/usr/share/icons/hicolor/scalable/apps/
@@ -162,6 +181,42 @@ jobs:
             dist/*.AppImage
           if-no-files-found: error
 
+  linux-clang:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang cmake pkg-config \
+            libsdl2-dev libgl1-mesa-dev libmpv-dev libglib2.0-dev \
+            libnotify-dev python3 python3-venv curl libjack0
+      - name: Configure
+        env:
+          CC: clang
+          CXX: clang++
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+      - name: Build
+        run: cmake --build build -j2
+      - name: Run unit tests
+        run: ctest --test-dir build --output-on-failure
+
+  python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install linters
+        run: python -m pip install --upgrade pip ruff
+      - name: Compile backends
+        run: python -m py_compile p100-backend.py p100-backend-oauth.py py/cf_backend/core.py tests/test_backend_protocol.py
+      - name: Lint (syntax/undefined names)
+        run: ruff check --select E9,F63,F7,F82 p100-backend.py p100-backend-oauth.py py/cf_backend tests/test_backend_protocol.py
+      - name: Protocol regression test
+        run: python tests/test_backend_protocol.py
+
   windows:
     runs-on: windows-latest
     defaults:
@@ -182,7 +237,7 @@ jobs:
             mingw-w64-ucrt-x86_64-python
             curl
       - name: Configure
-        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCROSSFADE_BUILD_TESTS=ON
       - name: Build
         run: |
           code=0
@@ -193,6 +248,8 @@ jobs:
               while IFS= read -r line; do echo "::error::${line:0:400}"; done
             exit "$code"
           fi
+      - name: Run unit tests
+        run: ctest --test-dir build --output-on-failure
       - name: Bundle runtime DLLs
         run: |
           # UCRT64 ships libmpv's codecs as separate DLLs (avcodec, avformat,

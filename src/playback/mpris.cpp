@@ -89,13 +89,13 @@ static GVariant *build_metadata_gvariant(const Track &track, double duration_sec
 // ------------------------------------------------------------
 // MPRIS implementation using GDBus
 // ------------------------------------------------------------
-class MprisPlayer::Impl
+struct MprisPlayer::Impl
 {
 public:
     Impl(AppState &state, MpvPlayer *&player)
         : m_state(state), m_player(player),
-          m_playing(false), m_position(0), m_volume(1.0), m_duration(0),
-          m_connection(nullptr), m_root_registration_id(0), m_player_registration_id(0)
+          m_connection(nullptr), m_root_registration_id(0), m_player_registration_id(0),
+          m_playing(false), m_position(0), m_volume(1.0), m_duration(0)
     {
         GError *error = nullptr;
         m_connection = g_bus_get_sync(G_BUS_TYPE_SESSION, nullptr, &error);
@@ -117,6 +117,7 @@ public:
             .method_call = nullptr,
             .get_property = root_get_property,
             .set_property = nullptr,
+            .padding = {},
         };
         m_root_registration_id = g_dbus_connection_register_object(
             m_connection,
@@ -139,6 +140,7 @@ public:
             .method_call = player_method_call,
             .get_property = player_get_property,
             .set_property = player_set_property,
+            .padding = {},
         };
         m_player_registration_id = g_dbus_connection_register_object(
             m_connection,

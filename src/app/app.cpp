@@ -273,7 +273,6 @@ static constexpr float kWheelFlingMin = 5.0f;
 static constexpr float kWheelFlingMax = 5000.0f;
 static constexpr Uint32 kWheelReleaseMs = 80;
 static constexpr Uint32 kWheelGestureGapMs = 120;
-static constexpr int kWheelFlingMinEvents = 1;
 
 // Horizontal two-finger swipe (back/forward navigation). See the
 // SDL_MOUSEWHEEL handler for the threshold semantics.
@@ -725,6 +724,9 @@ static void resolve_audio(const std::string &video_id, const std::string &video_
                           const std::string &thumb, bool fresh = false,
                           std::uint64_t gen = 0)
 {
+    (void)title;
+    (void)artist;
+    (void)thumb;
     PlayRequest req;
     req.id = video_id;
     req.gen = gen;

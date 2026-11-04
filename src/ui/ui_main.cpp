@@ -285,7 +285,7 @@ static void draw_recent_searches(AppState &state)
     if (hidden > 0 && x + gap_x <= avail)
     {
         // "+N" overflow chip: lists the hidden queries in a tooltip.
-        char ovfl[16];
+        char ovfl[32];
         std::snprintf(ovfl, sizeof(ovfl), "+%zu", hidden);
         const float fs = 16.0f * m.text_scale;
         const ImVec2 ts = g_ui_fonts.body->CalcTextSizeA(fs, FLT_MAX, 0.0f, ovfl);
@@ -830,7 +830,7 @@ static bool draw_list_hero(AppState &state, const std::vector<Track> &tracks,
     return clear;
 }
 
-static void draw_list_page(AppState &state, MpvPlayer &player, const AppLayout &layout, float width)
+static void draw_list_page(AppState &state, const AppLayout &layout, float width)
 {
     const UiMetrics &m = ui_m();
     std::string page_key = "list_page_" + std::to_string((int)state.current_tab);
@@ -1665,7 +1665,7 @@ void draw_main_ui(AppState &state, MpvPlayer &player, bool show_recommendations)
     }
     else if (!lyrics_only)
     {
-        draw_list_page(state, player, layout, list_w);
+        draw_list_page(state, layout, list_w);
     }
 
     if (layout.lyrics_open)

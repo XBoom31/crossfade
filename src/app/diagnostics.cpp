@@ -39,19 +39,6 @@ constexpr size_t kMaxLines = 400;
 std::string g_crash_dir;
 char g_crash_dir_buf[1024] = {0};
 
-std::string stamp()
-{
-    std::time_t t = std::time(nullptr);
-    std::tm tm{};
-#ifdef _WIN32
-    localtime_s(&tm, &t);
-#else
-    localtime_r(&t, &tm);
-#endif
-    char buf[32];
-    std::strftime(buf, sizeof(buf), "%Y%m%d-%H%M%S", &tm);
-    return buf;
-}
 
 std::string version()
 {

@@ -594,6 +594,7 @@ static const char *view_title(const AppState &s)
     case Tab::Album: return "Album";
     case Tab::Artist: return "Artist";
     case Tab::Settings: return "Settings";
+    case Tab::Smart: return "Smart";
     }
     return "crossfade";
 }

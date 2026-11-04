@@ -81,10 +81,6 @@ bool commit_tx()
 {
     return exec_locked("COMMIT");
 }
-void rollback_tx()
-{
-    sqlite3_exec(g_db, "ROLLBACK", nullptr, nullptr, nullptr);
-}
 
 bool upsert_track(const Track &t)
 {

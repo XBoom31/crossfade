@@ -157,17 +157,6 @@ void draw_live_dot(ImDrawList *dl, ImVec2 centre, float alpha, bool live, double
         dl->AddCircle(centre, r * 2.5f, ui_accent_u32(alpha * 0.18f), 20, 1.2f);
 }
 
-void draw_eyebrow(ImDrawList *dl, const char *text, ImVec2 pos, float alpha, bool live,
-                  double now)
-{
-    const float fs = 12.0f * ui_m().text_scale;
-    const float dot_gap = 12.0f * ui_m().layout_scale;
-    draw_live_dot(dl, ImVec2(pos.x + 3.5f * ui_m().layout_scale,
-                             pos.y + fs * 0.5f),
-                  alpha, live, now);
-    dl->AddText(g_ui_fonts.medium, fs, ImVec2(pos.x + dot_gap, pos.y),
-                ui_with_alpha(ui_accent_text_u32(), 0.86f * alpha), text);
-}
 
 void draw_party_orb(ImDrawList *dl, ImVec2 centre, float size, float alpha, double now)
 {
@@ -225,6 +214,7 @@ void draw_hero_shell(ImDrawList *dl, ImVec2 origin, float avail, float hero_h, f
 
 void draw_stopped_hero(AppState &state, const PartyAnim &a, const PartyStatus &st)
 {
+    (void)state;
     const UiMetrics &m = ui_m();
     const float avail = ImGui::GetContentRegionAvail().x;
     const bool narrow = avail < 560.0f * m.layout_scale;
@@ -262,7 +252,6 @@ void draw_stopped_hero(AppState &state, const PartyAnim &a, const PartyStatus &s
     const float sub_base = 15.0f;
     const float sub_line = sub_base * m.text_scale * 1.30f;
     const float chips_y = sub_y + sub_line * 2.0f + m.space_3;
-    const float chip_h = 24.0f * m.layout_scale;
     const float btn_h = m.button_h;
     const float btn_y = origin.y + hero_h - pad - btn_h + lift;
 
@@ -448,7 +437,6 @@ void draw_running_hero(AppState &state, const PartyAnim &a, const PartyStatus &s
     const float sub_line = sub_base * m.text_scale * 1.30f;
     const float url_y = sub_y + sub_line + 3.0f * m.layout_scale;
     const float chips_y = url_y + sub_line + m.space_3;
-    const float chip_h = 24.0f * m.layout_scale;
     const float btn_h = m.button_h;
     const float btn_y = origin.y + hero_h - pad - btn_h + lift;
 
