@@ -134,13 +134,15 @@ uint32_t ipv4_key(const std::string &ip)
 }
 
 int score_for(const std::string &name, const std::string &ip, bool is_virtual,
-              bool is_preferred)
+              bool is_preferred, bool is_secondary)
 {
     int score = 0;
     if (is_private_ip(ip))
         score += 100;
     if (is_preferred)
         score += 60;
+    if (is_secondary)
+        score -= 40;
     if (is_link_local(ip))
         score -= 80;
     if (is_virtual)
@@ -183,7 +185,7 @@ std::string narrow_w(const wchar_t *w)
 #endif
 
 Interface make_interface(const std::string &name, const std::string &ip,
-                         const std::string &preferred)
+                         const std::string &preferred, bool secondary)
 {
     Interface i;
     i.name = name;
@@ -191,7 +193,8 @@ Interface make_interface(const std::string &name, const std::string &ip,
     i.is_private = is_private_ip(ip);
     i.is_virtual = virtual_name(name);
     i.is_preferred = !preferred.empty() && ip == preferred;
-    i.score = score_for(name, ip, i.is_virtual, i.is_preferred);
+    i.is_secondary = secondary;
+    i.score = score_for(name, ip, i.is_virtual, i.is_preferred, i.is_secondary);
     return i;
 }
 
@@ -242,7 +245,7 @@ std::vector<Interface> list()
             char ip[INET_ADDRSTRLEN] = {0};
             if (!inet_ntop(AF_INET, &sin->sin_addr, ip, sizeof(ip)))
                 continue;
-            out.push_back(make_interface(name, ip, preferred));
+            out.push_back(make_interface(name, ip, preferred, false));
         }
     }
 #else
@@ -259,10 +262,35 @@ std::vector<Interface> list()
         struct sockaddr_in *sin = (struct sockaddr_in *)ifa->ifa_addr;
         if (!inet_ntop(AF_INET, &sin->sin_addr, ip, sizeof(ip)))
             continue;
-        out.push_back(make_interface(ifa->ifa_name ? ifa->ifa_name : "", ip, preferred));
+#ifdef IFA_F_SECONDARY
+        const bool secondary = (ifa->ifa_flags & IFA_F_SECONDARY) != 0;
+#else
+        const bool secondary = false;
+#endif
+        out.push_back(make_interface(ifa->ifa_name ? ifa->ifa_name : "", ip, preferred,
+                                     secondary));
     }
     freeifaddrs(ifaddr);
 #endif
+    // getifaddrs() exposes interface flags, not netlink address flags, so a
+    // stale DHCP alias is not marked secondary for us. Treat any non-preferred
+    // address on an interface that also has the preferred address as an
+    // alternate: it is still usable, but should not win automatic selection.
+    for (Interface &a : out)
+    {
+        if (a.is_preferred)
+            continue;
+        for (const Interface &b : out)
+        {
+            if (b.is_preferred && b.name == a.name)
+            {
+                a.is_secondary = true;
+                a.score -= 40;
+                break;
+            }
+        }
+    }
+
     // Score first, then numeric IPv4 order. A plain string comparison puts
     // 10.0.0.100 before 10.0.0.99, which can select a stale DHCP alias.
     std::stable_sort(out.begin(), out.end(), [](const Interface &a, const Interface &b) {

@@ -50,6 +50,7 @@ struct PartyInterfaceInfo
     std::string label;
     bool is_private = false;
     bool is_preferred = false;
+    bool is_secondary = false;
 };
 
 struct PartyPendingRequest

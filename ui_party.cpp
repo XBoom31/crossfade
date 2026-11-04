@@ -223,6 +223,7 @@ void draw_live_controls(AppState &state)
             state.repaint_requested = true;
         }
         party_help("Guests keep the page open, but requests stop working as soon as the party ends. The link and guest names are discarded; only the settings below are saved.");
+        party_help("If a phone can't open the link, make sure both devices are on the same Wi-Fi. Hotspots and public networks often isolate clients, which blocks phone-to-laptop traffic.");
     }
     end_party_card();
 }
@@ -362,6 +363,8 @@ void draw_setup(AppState &state)
             std::string label = ifaces[i].label;
             if (ifaces[i].is_preferred)
                 label += "  (recommended)";
+            if (ifaces[i].is_secondary)
+                label += "  (alternate address)";
             if (!ifaces[i].is_private)
                 label += "  (public address)";
             labels.push_back(label);

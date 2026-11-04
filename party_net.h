@@ -14,6 +14,10 @@ struct Interface
     // True for the address the kernel would use as the source for outbound
     // traffic; this avoids stale DHCP aliases on the same interface.
     bool is_preferred = false;
+    // Another address on an interface that also has the preferred address
+    // (for example a stale DHCP lease left behind). It still answers locally
+    // but may not be reachable from other devices.
+    bool is_secondary = false;
     int score = 0;
 };
 
