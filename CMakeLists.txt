@@ -123,6 +123,7 @@ target_include_directories(crossfade PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_CURRENT_BINARY_DIR}/generated
     ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/core
     ${CMAKE_CURRENT_SOURCE_DIR}/src/ui
     ${CMAKE_CURRENT_SOURCE_DIR}/src/party
     ${CMAKE_CURRENT_SOURCE_DIR}/src/data
@@ -197,6 +198,7 @@ if(CROSSFADE_BUILD_TESTS)
         src/playback/crossfade.cpp)
     target_include_directories(test_crossfade PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src/playback
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/core
         ${CMAKE_CURRENT_SOURCE_DIR}/src/ui
         ${CMAKE_CURRENT_SOURCE_DIR}/src/net
         ${CMAKE_CURRENT_SOURCE_DIR}/src/party
@@ -210,6 +212,7 @@ if(CROSSFADE_BUILD_TESTS)
     target_include_directories(test_library PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}
         ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/core
         ${CMAKE_CURRENT_SOURCE_DIR}/src/ui
         ${CMAKE_CURRENT_SOURCE_DIR}/src/party
         ${CMAKE_CURRENT_SOURCE_DIR}/src/data
