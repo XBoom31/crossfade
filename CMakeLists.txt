@@ -173,6 +173,9 @@ install(FILES
     requirements.txt
     DESTINATION ${CMAKE_INSTALL_DATADIR}/crossfade
 )
+install(DIRECTORY py/cf_backend
+    DESTINATION ${CMAKE_INSTALL_DATADIR}/crossfade/py
+)
 install(DIRECTORY assets/fonts DESTINATION ${CMAKE_INSTALL_DATADIR}/crossfade/assets)
 install(PROGRAMS scripts/crossfade-login DESTINATION ${CMAKE_INSTALL_BINDIR})
 

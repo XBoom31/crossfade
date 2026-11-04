@@ -297,8 +297,9 @@ An OAuth token is long-lived and refreshes automatically instead of expiring lik
 
 1. Create an OAuth client in the [Google Cloud Console](https://console.cloud.google.com/)
    → **APIs & Services → Credentials**, type **“TVs and Limited Input devices”**.
-2. Put the client ID and secret into `CLIENT_ID` / `CLIENT_SECRET` at the top of
-   `p100-backend-oauth.py` (replace the bundled credentials).
+2. Set `P100_OAUTH_CLIENT_ID` and `P100_OAUTH_CLIENT_SECRET` (or edit
+   `CLIENT_ID` / `CLIENT_SECRET` at the top of `p100-backend-oauth.py`). No
+   credentials are bundled with the repo.
 3. Switch **Settings → YouTube Music → Authentication → OAuth** and restart crossfade.
 4. On first start the backend opens a browser login once and saves `browseroauth.json`.
 
@@ -584,6 +585,8 @@ A copy is enough:
 | `P100_AUTH_FILE` | Custom auth file path |
 | `P100_SHARE_DIR` / `P100_ASSETS` | Override installed data/asset directories |
 | `P100_DISCORD_CLIENT_ID` | Discord Rich Presence app ID (same as the Settings field) |
+| `P100_OAUTH_CLIENT_ID` / `P100_OAUTH_CLIENT_SECRET` | OAuth client credentials for `p100-backend-oauth.py` |
+| `P100_BROWSER` | Browser yt-dlp may read cookies from for restricted tracks |
 | `P100_IMPORT_TMP` | Scratch directory for `crossfade-import.sh` on a large filesystem |
 
 ### Useful scripts

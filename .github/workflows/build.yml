@@ -210,6 +210,7 @@ jobs:
             build/*.dll
             p100-backend.py
             p100-backend-oauth.py
+            py/cf_backend/**
             requirements.txt
             packaging/windows/crossfade-login.cmd
             packaging/windows/make_browser_json.py
@@ -233,6 +234,8 @@ jobs:
           Copy-Item packaging/windows/install-crossfade.cmd "$root/bin/"
           Copy-Item p100-backend.py, p100-backend-oauth.py, requirements.txt, `
             packaging/windows/make_browser_json.py "$root/share/crossfade/"
+          New-Item -ItemType Directory -Path "$root/share/crossfade/py" -Force | Out-Null
+          Copy-Item py/cf_backend "$root/share/crossfade/py/cf_backend" -Recurse
           Copy-Item assets/fonts "$root/share/crossfade/assets/fonts" -Recurse
           Copy-Item README.md, LICENSE "$root/"
           # The one-click installer downloads this exact filename from the
