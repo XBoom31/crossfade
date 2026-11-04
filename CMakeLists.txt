@@ -58,6 +58,7 @@ set(SOURCES
     src/data/paths.cpp
     src/net/ytdlp.cpp
     src/playback/crossfade.cpp
+    src/playback/session.cpp
     src/playback/mpvplayer.cpp
     src/ui/ui_helpers.cpp
     src/ui/ui_theme.cpp
