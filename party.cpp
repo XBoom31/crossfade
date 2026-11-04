@@ -277,14 +277,26 @@ std::string build_state_json(AppState &state, const std::vector<Track> &queue,
 
     j += "\"queue\":[";
     bool first = true;
+    // The global queue can hold an entire playlist. Phones only need the
+    // immediate run of songs; cap the snapshot so a long host playlist does
+    // not bloat every poll or thumbnail fetch.
+    constexpr int kGuestQueueMax = 40;
+    int shown = 0;
+    int hidden = 0;
     for (const Track &t : queue)
     {
+        if (shown >= kGuestQueueMax)
+        {
+            ++hidden;
+            continue;
+        }
         if (!first)
             j += ",";
         first = false;
         std::string by = g_settings.show_names ? t.requested_by : "";
         j += item_json(t, "queued", (int)std::lround(eta_cursor), by);
         eta_cursor += std::max(0, t.duration_sec);
+        ++shown;
     }
     for (const PendingRequest &p : pending)
     {
@@ -294,7 +306,7 @@ std::string build_state_json(AppState &state, const std::vector<Track> &queue,
         std::string by = g_settings.show_names ? p.track.requested_by : "";
         j += item_json(p.track, "pending", 0, by);
     }
-    j += "],";
+    j += "],\"queueMore\":" + std::to_string(hidden) + ",";
 
     j += "\"limits\":{\"maxPerGuest\":" + std::to_string(g_settings.max_per_guest) +
          ",\"cooldownSec\":" + std::to_string(g_settings.cooldown_sec) +
@@ -383,12 +395,20 @@ party_api::AddResult process_add(AppState &state, InboxAdd item)
             return r;
         }
     }
-    if (g_settings.max_queue > 0 &&
-        (int)(state.play_queue.size() + g_pending.size()) >= g_settings.max_queue)
+    if (g_settings.max_queue > 0)
     {
-        r = error_result(503, "busy", "The queue is full right now. Try again in a bit.");
-        finish_waiter(item.waiter, std::move(r));
-        return r;
+        // The global queue now also holds the host's playlist, so the cap
+        // applies to guest requests waiting in it rather than to every row.
+        int guest_items = 0;
+        for (const Track &t : state.play_queue)
+            if (t.from_party)
+                ++guest_items;
+        if (guest_items + (int)g_pending.size() >= g_settings.max_queue)
+        {
+            r = error_result(503, "busy", "The queue is full right now. Try again in a bit.");
+            finish_waiter(item.waiter, std::move(r));
+            return r;
+        }
     }
     if (g_settings.max_per_guest > 0)
     {

@@ -77,11 +77,14 @@ phone ──HTTP──> party_server.cpp (httplib worker threads)
 songs they already have in the queue. New songs are inserted:
 
 1. after leading host-pinned items (so "Play next" keeps its priority),
-2. before the first guest item with a higher round,
-3. FIFO within a round.
+2. before the host's playlist/source rows (global-queue tracks are marked
+   `from_queue_source` and are not treated as pins),
+3. interleaved round-robin with other guest items, FIFO within a round.
 
 This gives round-robin interleaving between guests without starving anyone and
-without ever overriding the host's explicit ordering.
+without ever overriding the host's explicit ordering. The guest snapshot is
+capped at 40 upcoming rows so a long host playlist does not bloat every poll;
+the guest page shows an "and N more" line for the remainder.
 
 ## Backend protocol
 

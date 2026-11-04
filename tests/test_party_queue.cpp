@@ -81,6 +81,28 @@ int main()
         check(ids(q) == "a1,host2,a2" || ids(q) == "a1,a2,host2",
               "guest + host insertion stays coherent");
     }
+    {
+        std::vector<Track> q;
+        Track pl1 = make("pl1", "");
+        pl1.from_queue_source = true;
+        Track pl2 = make("pl2", "");
+        pl2.from_queue_source = true;
+        q.push_back(pl1);
+        q.push_back(pl2);
+        party_queue::insert_fair(q, make("a1", "a"));
+        party_queue::insert_fair(q, make("b1", "b"));
+        check(ids(q) == "a1,b1,pl1,pl2", "guest requests go ahead of playlist tracks");
+    }
+
+    {
+        std::vector<Track> q;
+        q.push_back(make("pin", ""));
+        Track pl1 = make("pl1", "");
+        pl1.from_queue_source = true;
+        q.push_back(pl1);
+        party_queue::insert_fair(q, make("a1", "a"));
+        check(ids(q) == "pin,a1,pl1", "play-next pins stay ahead of guests and playlist");
+    }
 
     {
         std::vector<Track> q;

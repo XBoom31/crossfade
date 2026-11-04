@@ -22,6 +22,10 @@ struct Track
     std::string guest_id;     // ephemeral per-party guest id (never persisted server-side)
     bool from_party = false;
     int party_round = 0;      // fair-queue round assigned at insertion
+    // True for tracks materialized from the host's active source list (a
+    // playlist, album, etc.). Guest requests insert before these, but after
+    // explicit "Play next" host items.
+    bool from_queue_source = false;
 };
 
 // Lyrics for one track. `ok` is false when the fetch failed (backend /

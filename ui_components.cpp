@@ -91,8 +91,6 @@ void ui_play_track(AppState &state, const Track &track, int index)
     state.current_album_id = track.album_id;
     state.current_artist_id = track.artist_id;
     state.current_track_index = index;
-    if (!state.play_queue.empty())
-        state.queue_return_index = index;
     state.loading = true;
  
     if (state.current_tab == Tab::Home)
@@ -115,6 +113,8 @@ void ui_play_track(AppState &state, const Track &track, int index)
         state.current_playlist_source = PlaylistSource::STATS;
     else if (state.current_tab == Tab::YouTube)
         state.current_playlist_source = PlaylistSource::YOUTUBE_PLAYLIST;
+    else if (state.current_tab == Tab::Smart)
+        state.current_playlist_source = PlaylistSource::SMART;
     else
         state.current_playlist_source = PlaylistSource::HOME;
 
@@ -134,6 +134,11 @@ void ui_play_track(AppState &state, const Track &track, int index)
             }
         }
     }
+
+    state.current_track_index = index;
+    state.queue_replace_from_source = true;
+    state.queue_replace_index = index;
+    state.queue_replace_id = track.id;
 
     state.pending_play_url = track.url;
     state.current_track_url = track.url;

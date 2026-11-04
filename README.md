@@ -351,9 +351,13 @@ query or press **Esc** to go back.
 - **Double-click** a row to play it (single tap on touchscreens).
 - **Right-click** any track for **Like, Play next, Add to queue, Start Radio, View album,
   View artist, Add to playlist**.
-- The bottom-bar **Up Next** button opens the queue; **Play next** inserts at the front,
-  **Add to queue** appends.
-- **Shuffle** is available on the list views; **Play all** starts from the top.
+- **Up Next is one global queue.** Starting a playlist, album, artist or radio list
+  replaces it with that list (the clicked track plays now, the rest follows);
+  **Play next** inserts at the front and **Add to queue** appends.
+- **Next/Previous** always follow that queue, so pressing Next never skips past
+  guest requests or other queued songs.
+- **Shuffle** is available on the list views; **Play all** starts the list and
+  queues the rest.
 - **Endless music** (Settings) keeps a radio going when the list and queue run out.
 
 ### Downloads and the cache
@@ -410,8 +414,9 @@ never writes guest names or links to disk.
   tab jumps straight there. Changes apply the next time you start a party.
 - **Approval.** Turn on **Host approves every request** to review songs in the
   Party tab before they join Up Next.
-- **Fair queueing.** Guest songs are interleaved round-robin, below anything you
-  queued yourself, so one guest cannot fill the queue.
+- **Fair queueing.** Guest songs are interleaved round-robin, below explicit
+  **Play next** pins but ahead of your playlist, so one guest cannot fill the
+  queue.
 - **Limits.** Set songs per guest, add cooldown, max video length and a queue
   cap. Rate limits are enforced per guest on the server.
 - **Guest page.** One self-contained mobile page (light/dark, no external
@@ -444,6 +449,7 @@ the network. The full design and security notes are in
 | Focus search | `/` or `Ctrl+F` |
 | Toggle lyrics panel | `L` |
 | Toggle sidebar | `S` |
+| Open Up Next queue | `Q` |
 | Open party mode | `P` |
 | Back / clear search / close fullscreen QR | `Esc` |
 | Shortcut help | `?` |

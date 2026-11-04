@@ -209,7 +209,9 @@ void queue_add_next(AppState &state, const Track &track)
 {
     if (track.id.empty())
         return;
-    state.play_queue.insert(state.play_queue.begin(), track);
+    Track pinned = track;
+    pinned.from_queue_source = false;
+    state.play_queue.insert(state.play_queue.begin(), pinned);
     state.queue_dirty = true;
     state.repaint_requested = true;
 }
@@ -218,7 +220,9 @@ void queue_add_end(AppState &state, const Track &track)
 {
     if (track.id.empty())
         return;
-    state.play_queue.push_back(track);
+    Track added = track;
+    added.from_queue_source = false;
+    state.play_queue.push_back(added);
     state.queue_dirty = true;
     state.repaint_requested = true;
 }

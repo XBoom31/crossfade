@@ -4,6 +4,23 @@ All notable changes to crossfade are documented here.
 
 ## Unreleased
 
+## 0.1.7 - 2026-11-04
+
+### Added
+
+- `Q` opens the Up Next queue, matching the bottom-bar queue button.
+
+### Fixed
+
+- **One global Up Next queue.** Starting a playlist/album/artist/radio now
+  replaces the queue with that list, and both manual Next and natural
+  end-of-track pop the same queue. Previously manual Next skipped the queue,
+  so guest party requests (and other queued songs) only played when a track
+  ended by itself.
+- Guest requests still outrank the host playlist but stay below explicit
+  **Play next** pins; the party queue cap now counts guest requests instead of
+  the whole host playlist.
+
 ## 0.1.6 - 2026-11-04
 
 ### Changed

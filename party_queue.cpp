@@ -28,17 +28,25 @@ int insert_fair(std::vector<Track> &queue, Track item)
     item.party_round = round_for_guest(queue, item.guest_id);
     item.from_party = true;
 
-    // Leading host items are the "Play next" pins. Guest requests go below
-    // them, never above the host's explicit intent.
-    size_t start = 0;
-    while (start < queue.size() && queue[start].guest_id.empty())
-        ++start;
+    // Leading host items are the "Play next" pins: guest requests go below
+    // them, never above the host's explicit intent. Tracks materialized from
+    // the host's playlist are not pins, so guests queue ahead of the playlist.
+    size_t pin_end = 0;
+    while (pin_end < queue.size() && queue[pin_end].guest_id.empty() &&
+           !queue[pin_end].from_queue_source)
+        ++pin_end;
 
-    size_t pos = queue.size();
-    for (size_t i = start; i < queue.size(); ++i)
+    // The guest block runs from the pins to the first regular source/host
+    // track. Interleave round-robin inside that block and insert before the
+    // source list when it is empty.
+    size_t guest_end = pin_end;
+    while (guest_end < queue.size() && !queue[guest_end].guest_id.empty())
+        ++guest_end;
+
+    size_t pos = guest_end;
+    for (size_t i = pin_end; i < guest_end; ++i)
     {
-        const Track &t = queue[i];
-        if (!t.guest_id.empty() && t.party_round > item.party_round)
+        if (queue[i].party_round > item.party_round)
         {
             pos = i;
             break;

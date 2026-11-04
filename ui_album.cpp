@@ -76,8 +76,9 @@ static void play_album_track(AppState &state, int index)
     state.current_artist_id = t.artist_id;
     state.current_track_url = t.url;
     state.current_track_index = index;
-    if (!state.play_queue.empty())
-        state.queue_return_index = index;
+    state.queue_replace_from_source = true;
+    state.queue_replace_index = index;
+    state.queue_replace_id = t.id;
     state.current_playlist_source = PlaylistSource::ALBUM;
     state.is_search_active = false;
 

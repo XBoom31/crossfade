@@ -639,12 +639,80 @@ static TrackListPtr get_playlist()
     case PlaylistSource::ARTIST:
         return alias_of(g_state.artist_songs);
     case PlaylistSource::HISTORY:
+        if (g_state.history_view && !g_state.history_view->empty())
+            return g_state.history_view;
         return alias_of(g_state.playback_history);
     case PlaylistSource::STATS:
         return alias_of(g_state.stats.tracks);
+    case PlaylistSource::SMART:
+        return std::atomic_load(&g_state.smart_view);
     default:
         return nullptr;
     }
+}
+
+// Materialize the active source list into the single global queue. A UI play
+// action sets queue_replace_from_source; this runs once before the pending
+// track is resolved. The current track is played directly and the rest of the
+// list becomes Up Next, so manual skips and natural advances share one order.
+static void rebuild_queue_from_source()
+{
+    if (!g_state.queue_replace_from_source)
+        return;
+    g_state.queue_replace_from_source = false;
+
+    const std::string want_id = g_state.queue_replace_id;
+    g_state.queue_replace_id.clear();
+    int start = g_state.queue_replace_index;
+    g_state.queue_replace_index = 0;
+
+    g_state.play_queue.clear();
+    g_state.queue_cycle.clear();
+
+    auto playlist = get_playlist();
+    if (!playlist || playlist->empty())
+    {
+        g_state.queue_dirty = true;
+        return;
+    }
+
+    if (!want_id.empty())
+    {
+        // Row indices can drift (History is a snapshot), so trust the track
+        // id first and use the index only as a fallback.
+        for (int i = 0; i < (int)playlist->size(); ++i)
+        {
+            if ((*playlist)[i].id == want_id)
+            {
+                start = i;
+                break;
+            }
+        }
+    }
+    if (start < 0 || start >= (int)playlist->size())
+        start = 0;
+
+    g_state.queue_cycle = *playlist;
+    for (Track &t : g_state.queue_cycle)
+        t.from_queue_source = true;
+
+    g_state.play_queue.reserve(playlist->size() - (size_t)start);
+    for (int i = start + 1; i < (int)playlist->size(); ++i)
+    {
+        Track t = (*playlist)[i];
+        t.from_queue_source = true;
+        g_state.play_queue.push_back(std::move(t));
+    }
+
+    if (g_state.settings.shuffle_enabled && g_state.play_queue.size() > 1)
+    {
+        static std::mt19937 rng(
+            (unsigned)std::chrono::steady_clock::now().time_since_epoch().count());
+        std::shuffle(g_state.play_queue.begin(), g_state.play_queue.end(), rng);
+    }
+
+    g_state.queue_dirty = true;
+    g_state.repaint_requested = true;
 }
 
 // ----------------------------------------------------------------------
@@ -820,22 +888,14 @@ void prefetch_urls_for_serial(const std::vector<Track> &tracks, size_t count,
     }).detach();
 }
 
-// The tracks playback will touch next: the user queue first, then the entry
-// after the current index in the active playlist.
+// The tracks playback will touch next: the head of the single global queue.
 static std::vector<Track> upcoming_tracks()
 {
     std::vector<Track> out;
-    if (!g_state.play_queue.empty())
-        out.push_back(g_state.play_queue.front());
-    auto playlist = get_playlist();
-    if (playlist && !playlist->empty())
-    {
-        int cur = g_state.current_track_index;
-        if (cur < 0)
-            cur = g_state.queue_return_index;
-        if (cur >= 0 && cur < (int)playlist->size())
-            out.push_back((*playlist)[(cur + 1) % playlist->size()]);
-    }
+    const size_t n = std::min<size_t>(3, g_state.play_queue.size());
+    out.reserve(n);
+    for (size_t i = 0; i < n; ++i)
+        out.push_back(g_state.play_queue[i]);
     return out;
 }
 
@@ -1245,7 +1305,26 @@ static void begin_play_track(const Track &t, int index)
     g_state.current_artist_id = t.artist_id;
     g_state.current_track_url = t.url; // <-- persistent
     g_state.status_text = "Loading...";
-    g_state.current_track_index = index;
+    int resolved_index = index;
+    if (resolved_index < 0)
+    {
+        // Queue entries do not carry a source index. Re-find the row when the
+        // active list still contains this track so list highlighting survives
+        // a skip.
+        auto playlist = get_playlist();
+        if (playlist)
+        {
+            for (int i = 0; i < (int)playlist->size(); ++i)
+            {
+                if ((*playlist)[i].id == t.id)
+                {
+                    resolved_index = i;
+                    break;
+                }
+            }
+        }
+    }
+    g_state.current_track_index = resolved_index;
 
     g_state.pending_manual_play = true;
     g_state.pending_play_url = t.url;
@@ -1254,18 +1333,6 @@ static void begin_play_track(const Track &t, int index)
     g_state.pending_play_thumbnail_url = t.thumbnail_url;
     g_state.pending_video_id = t.id;
     g_state.pending_video_url = t.url;
-}
-
-static void play_track_at_index(int index)
-{
-    auto playlist = get_playlist();
-    if (!playlist || index < 0 || index >= (int)playlist->size())
-        return;
-    // If a queue is active, remember where the source list should resume
-    // after the queue drains. Explicitly playing a list row re-anchors it.
-    if (!g_state.play_queue.empty())
-        g_state.queue_return_index = index;
-    begin_play_track((*playlist)[index], index);
 }
 
 static void replay_current_track()
@@ -1304,13 +1371,7 @@ static bool maybe_start_endless_refill()
     if (g_state.play_queue.size() >= 100)
         return false;
 
-    int remaining = (int)g_state.play_queue.size();
-    auto playlist = get_playlist();
-    int base = g_state.current_track_index;
-    if (base < 0)
-        base = g_state.queue_return_index;
-    if (playlist && base >= 0 && base + 1 < (int)playlist->size())
-        remaining += (int)playlist->size() - base - 1;
+    const int remaining = (int)g_state.play_queue.size();
     if (remaining > 3)
         return false;
 
@@ -1388,73 +1449,47 @@ static void consume_endless_results()
     }
 }
 
-// Decide what plays next without starting it: the up-next queue first (when
-// allowed), then the active source list. Shuffle picks a random different
-// row; repeat mode controls what happens at the end of the list. Returns
-// false when playback should stop (repeat off at the end of the source
-// list). With consume, the queue entry is popped and queue bookkeeping is
-// updated exactly like a real advance.
+// Refill the single global queue from the source-list snapshot used for
+// repeat-all / shuffle. Manual "Play next" pins and guest requests already in
+// the queue are not part of the cycle; they were one-shot entries.
+static void refill_queue_from_cycle()
+{
+    if (g_state.queue_cycle.empty())
+        return;
+    g_state.play_queue = g_state.queue_cycle;
+    if (g_state.settings.shuffle_enabled && g_state.play_queue.size() > 1)
+    {
+        static std::mt19937 rng(
+            (unsigned)std::chrono::steady_clock::now().time_since_epoch().count());
+        std::shuffle(g_state.play_queue.begin(), g_state.play_queue.end(), rng);
+    }
+    g_state.queue_dirty = true;
+}
+
+// Decide what plays next without starting it: the head of the global queue.
+// `allow_refill` lets natural/manual advance wrap the source cycle when repeat
+// is on. Returns false when playback should stop.
 struct NextPick
 {
     Track track;
-    int index = -1; // -1 for a queue item
+    int index = -1; // always -1: entries in the global queue have no source index
 };
-static bool select_next_track(bool use_queue, bool consume, NextPick &out)
+static bool select_next_track(bool allow_refill, bool consume, NextPick &out)
 {
-    if (use_queue && !g_state.play_queue.empty())
-    {
-        out.track = g_state.play_queue.front();
-        out.index = -1;
-        if (consume)
-        {
-            if (g_state.queue_return_index < 0 && g_state.current_track_index >= 0)
-                g_state.queue_return_index = g_state.current_track_index;
-            g_state.play_queue.erase(g_state.play_queue.begin());
-            g_state.queue_dirty = true;
-        }
-        return true;
-    }
+    if (g_state.play_queue.empty() && allow_refill &&
+        g_state.settings.repeat_mode != 0)
+        refill_queue_from_cycle();
 
-    auto playlist = get_playlist();
-    if (!playlist || playlist->empty())
+    if (g_state.play_queue.empty())
         return false;
 
-    int base = g_state.current_track_index;
-    if (base < 0)
-        base = g_state.queue_return_index;
-
-    int next = -1;
-    if (g_state.settings.shuffle_enabled && playlist->size() > 1)
-    {
-        static std::mt19937 rng((unsigned)std::chrono::steady_clock::now().time_since_epoch().count());
-        std::uniform_int_distribution<int> dist(0, (int)playlist->size() - 1);
-        next = dist(rng);
-        if (base >= 0)
-        {
-            for (int tries = 0; tries < 8 && next == base; ++tries)
-                next = dist(rng);
-            if (next == base)
-                next = (base + 1) % (int)playlist->size();
-        }
-    }
-    else
-    {
-        next = base + 1;
-        if (next >= (int)playlist->size())
-        {
-            if (g_state.settings.repeat_mode == 0)
-            {
-                if (consume)
-                    g_state.queue_return_index = -1;
-                return false;
-            }
-            next = 0;
-        }
-    }
-    out.track = (*playlist)[next];
-    out.index = next;
+    out.track = g_state.play_queue.front();
+    out.index = -1;
     if (consume)
-        g_state.queue_return_index = -1;
+    {
+        g_state.play_queue.erase(g_state.play_queue.begin());
+        g_state.queue_dirty = true;
+    }
     return true;
 }
 
@@ -1808,7 +1843,7 @@ static void maybe_start_crossfade()
         return;
 
     NextPick pick;
-    if (!select_next_track(true, false, pick))
+    if (!select_next_track(false, false, pick))
         return;
     // Crossfade only plays the next track from the local cache (the
     // predownload worker usually has it ready): playing a resolved remote
@@ -1819,26 +1854,14 @@ static void maybe_start_crossfade()
     if (src.empty())
         return;
 
-    // Consume exactly the peeked pick (a second select_next_track() call
-    // would re-roll shuffle and pick a different track).
-    if (pick.index < 0)
-    {
-        // Queue item: pop it, mirroring the queue bookkeeping of a real
-        // advance.
-        if (g_state.play_queue.empty() ||
-            g_state.play_queue.front().id != pick.track.id)
-            return; // queue changed underneath us
-        if (g_state.queue_return_index < 0 && g_state.current_track_index >= 0)
-            g_state.queue_return_index = g_state.current_track_index;
-        g_state.play_queue.erase(g_state.play_queue.begin());
-        g_state.queue_dirty = true;
-    }
-    else
-    {
-        g_state.queue_return_index = -1;
-    }
+    // Consume exactly the peeked pick.
+    if (g_state.play_queue.empty() ||
+        g_state.play_queue.front().id != pick.track.id)
+        return; // queue changed underneath us
+    g_state.play_queue.erase(g_state.play_queue.begin());
+    g_state.queue_dirty = true;
     const Track &consumed = pick.track;
-    const int consumed_index = pick.index;
+    const int consumed_index = -1;
 
     g_crossfade_track = consumed;
     g_crossfade_index = consumed_index;
@@ -1863,14 +1886,13 @@ static void maybe_start_crossfade()
     maybe_start_endless_refill();
 }
 
-// Advance playback: drain the up-next queue first, then walk the active
-// source list. Shuffle picks a random different row; repeat mode controls
-// what happens at the end of the list. Returns false when playback should
-// stop (repeat off at the end of the source list).
+// Advance playback: pop the head of the single global queue. Manual skips and
+// natural end-of-track use exactly the same order, so guest requests can no
+// longer be stranded by pressing Next.
 static bool advance_playback(bool manual)
 {
     NextPick pick;
-    if (select_next_track(!manual, true, pick))
+    if (select_next_track(true, true, pick))
     {
         if (manual && try_start_manual_crossfade(pick.track, pick.index))
             return true;
@@ -1895,6 +1917,11 @@ int main(int, char **)
 
     // ---- Load up-next queue and recent searches ----
     g_state.play_queue = load_play_queue();
+    // Persisted rows came from the single global queue; keep guest requests
+    // ahead of them instead of treating the whole restored list as "Play
+    // next" pins.
+    for (Track &t : g_state.play_queue)
+        t.from_queue_source = true;
     g_state.search_recent = load_search_recent();
 
     // ---- Accent colour (custom setting, system portal or daily fallback) ----
@@ -2705,6 +2732,16 @@ int main(int, char **)
                         g_state.sidebar_collapsed = !g_state.sidebar_collapsed;
                         g_state.repaint_requested = true;
                     }
+                    else if (key == SDLK_q && !ctrl && !shift)
+                    {
+                        if (g_state.current_tab != Tab::Queue)
+                        {
+                            g_state.pre_queue_tab = g_state.current_tab;
+                            ui_invalidate_forward(g_state);
+                        }
+                        g_state.current_tab = Tab::Queue;
+                        g_state.repaint_requested = true;
+                    }
                     else if (key == SDLK_p && !ctrl && !shift)
                     {
                         g_state.current_tab = Tab::Party;
@@ -2916,6 +2953,10 @@ int main(int, char **)
                     g_recording_duration = d;
             }
 
+            // A UI play action replaces Up Next with the new source list
+            // before any pending resolve or crossfade decision.
+            rebuild_queue_from_source();
+
             // Crossfade: when the current track is about to end, append
             // the next (cached) one to mpv's playlist so audio-crossfade
             // can overlap the two. Also applies the settings value.
@@ -3079,10 +3120,11 @@ int main(int, char **)
                 g_state.queue_play_index = -1;
                 if (qi >= 0 && qi < (int)g_state.play_queue.size())
                 {
-                    if (g_state.queue_return_index < 0 && g_state.current_track_index >= 0)
-                        g_state.queue_return_index = g_state.current_track_index;
                     Track next = g_state.play_queue[qi];
-                    g_state.play_queue.erase(g_state.play_queue.begin() + qi);
+                    // Starting a queue row consumes it and everything before
+                    // it; those entries were skipped by the host.
+                    g_state.play_queue.erase(g_state.play_queue.begin(),
+                                             g_state.play_queue.begin() + qi + 1);
                     g_state.queue_dirty = true;
                     if (g_state.settings.skip_crossfade_enabled &&
                         g_state.settings.skip_crossfade_scope >= 2 &&
@@ -3107,30 +3149,23 @@ int main(int, char **)
             if (g_state.prev_requested)
             {
                 g_state.prev_requested = false;
-                auto playlist = get_playlist();
-                if (playlist && !playlist->empty())
+                // Previous walks actual playback history now that the queue
+                // is the only ordering source. The current track sits at the
+                // front of that history, so play the first different entry.
+                Track prev;
+                bool found = false;
+                for (const Track &h : g_state.playback_history)
                 {
-                    int base = g_state.current_track_index;
-                    if (base < 0)
-                        base = g_state.queue_return_index;
-                    if (base >= 0)
-                    {
-                        int prev_idx = base - 1;
-                        if (prev_idx < 0)
-                            prev_idx = (int)playlist->size() - 1;
-                        g_state.queue_return_index = -1;
-                        const Track prev = (*playlist)[prev_idx];
-                        if (try_start_manual_crossfade(prev, prev_idx))
-                        {
-                            // Mirror play_track_at_index()'s queue re-anchor.
-                            if (!g_state.play_queue.empty())
-                                g_state.queue_return_index = prev_idx;
-                        }
-                        else
-                        {
-                            play_track_at_index(prev_idx);
-                        }
-                    }
+                    if (h.id.empty() || h.id == g_state.current_track_id)
+                        continue;
+                    prev = h;
+                    found = true;
+                    break;
+                }
+                if (found)
+                {
+                    if (!try_start_manual_crossfade(prev, -1))
+                        begin_play_track(prev, -1);
                 }
             }
 
@@ -3398,6 +3433,7 @@ int main(int, char **)
                 ImGui::Spacing();
                 ImGui::Text("L                Toggle lyrics panel");
                 ImGui::Text("S  Toggle sidebar");
+                ImGui::Text("Q  Up Next queue");
                 ImGui::Text("P  Party mode");
                 ImGui::Spacing();
                 ImGui::TextColored(ui_c().text_muted, "Navigation");

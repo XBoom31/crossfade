@@ -1043,7 +1043,7 @@ void draw_settings_panel(AppState &state)
                      ps.max_queue == 0 ? "Queue cap  unlimited" : "Queue cap  %d songs");
     if (ImGui::IsItemDeactivatedAfterEdit())
         save = true;
-    settings_help("Limits apply per guest. Queue cap counts every song waiting in Up Next.");
+    settings_help("Limits apply per guest. Queue cap counts guest requests waiting in Up Next; your own playlist does not use it.");
 
     ImGui::Dummy(ImVec2(0.0f, m.space_2));
     ImGui::TextColored(ui_c().text_muted, "Guest experience");

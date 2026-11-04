@@ -179,14 +179,15 @@ function updateProgress(){var n=S.now;if(!n||!n.durationSec){$("prog").style.wid
 var p=(n.positionSec||0);if(!n.paused&&S.recvAt)p+=(mono()-S.recvAt);p=Math.max(0,Math.min(n.durationSec,p));
 var pct=Math.min(100,(p/n.durationSec)*100);$("prog").style.width=pct+"%";$("progWrap").setAttribute("aria-valuenow",String(Math.round(pct)));$("pos").textContent=fmt(p);$("dur").textContent=fmt(n.durationSec);}
 function queueSig(q){var s="";q.forEach(function(it){s+=it.id+"|"+it.status+"|"+it.by+"|"+(S.myIds.has(it.id)?"1":"0")+";";});return s;}
-function renderQueue(d){var q=d.queue||[];var sig=queueSig(q);if(sig===S.queueSig)return;S.queueSig=sig;
+function renderQueue(d){var q=d.queue||[];var more=d.queueMore||0;var sig=queueSig(q)+"|"+more;if(sig===S.queueSig)return;S.queueSig=sig;
 var box=$("queue");box.textContent="";
 if(!q.length){var e=el("li",{class:"empty"},"Nothing queued yet. Be the first to add a song!");box.appendChild(e);return;}
 q.forEach(function(it){var li=el("li",{class:"item"});li.appendChild(artFor(it.id,"art"));
 var m=el("div",{class:"meta"});m.appendChild(el("div",{class:"title"},it.title||"Unknown title"));m.appendChild(el("div",{class:"artist"},it.artist||"Unknown artist"));li.appendChild(m);
 var r=el("div",{class:"right"});var eta=it.status==="pending"?"waiting for host":(it.etaSec>0?mins(it.etaSec):"next up");r.appendChild(el("div",{class:"eta"},eta));
 if(S.myIds.has(it.id))r.appendChild(el("span",{class:"badge",title:"Added by you"},"you"));
-var b=badge(it.by,it.status==="pending");if(b)r.appendChild(b);li.appendChild(r);box.appendChild(li);});}
+var b=badge(it.by,it.status==="pending");if(b)r.appendChild(b);li.appendChild(r);box.appendChild(li);});
+if(more>0)box.appendChild(el("li",{class:"empty"},"and "+more+" more song"+(more===1?"":"s")));}
 function updateAddButton(){var v=$("addInput").value.trim();var b=$("addBtn");b.textContent=isUrl(v)?"Add":"Search";b.setAttribute("aria-label",b.textContent);}
 function setResultsMsg(text){var box=$("results");box.textContent="";if(text){var li=el("li",{class:"msg"},text);box.appendChild(li);}}
 function render(d){if(!d||d.unchanged)return;S.data=d;S.v=d.v;S.myIds=new Set((d.you&&d.you.ids)||[]);var p=d.party||{};if(p.name)$("partyTitle").textContent=p.name;var g=(d.guests!=null?d.guests:0);$("guestTag").textContent=g+(g===1?" guest":" guests");if(p.accent&&/^#[0-9a-fA-F]{6}$/.test(p.accent))document.documentElement.style.setProperty("--accent",p.accent);

@@ -568,14 +568,21 @@ struct AppState
     std::string pending_video_url;
     std::atomic<bool> pending_manual_play{false};
 
-    // Playback queue. `play_queue` holds only upcoming tracks; the current
-    // track lives in the normal current_* fields. `queue_return_index` is
-    // the source-list position to resume from once the queue drains.
+    // Playback queue. `play_queue` is the single global Up Next list: it
+    // contains both host source tracks and guest requests, and playback only
+    // ever advances by popping its front. `queue_cycle` is the source-list
+    // snapshot used to refill the queue for repeat-all/shuffle. The current
+    // track lives in the normal current_* fields.
     std::vector<Track> play_queue;
-    int queue_return_index = -1;
+    std::vector<Track> queue_cycle;
     std::atomic<bool> queue_dirty{false};
     // Set by the Queue panel to start a specific queue row now.
     int queue_play_index = -1;
+    // Set by a UI play action: rebuild the global queue from the active source
+    // list, starting at this index (or this track id when index is -1).
+    bool queue_replace_from_source = false;
+    int queue_replace_index = 0;
+    std::string queue_replace_id;
     int current_track_index = -1;
     bool is_search_active = false;
     Tab pre_queue_tab = Tab::Home;
