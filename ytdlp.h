@@ -16,6 +16,12 @@ struct Track
     std::string thumbnail_url;
     int duration_sec = 0;
     std::string url; // full YouTube URL
+    // Party mode provenance. Optional and always defaulted for tracks that
+    // did not come from a guest, so old saved queues/lists keep working.
+    std::string requested_by; // guest display name ("" when not from a party)
+    std::string guest_id;     // ephemeral per-party guest id (never persisted server-side)
+    bool from_party = false;
+    int party_round = 0;      // fair-queue round assigned at insertion
 };
 
 // Lyrics for one track. `ok` is false when the fetch failed (backend /
@@ -90,6 +96,11 @@ std::vector<Track> parse_track_array(const std::string &json);
 std::vector<Track> fetch_recommendations(bool force_fresh = false, int limit = 40);
 std::vector<Track> fetch_search(const std::string &query);
 std::vector<Track> fetch_radio(const std::string &video_id);
+
+// Party mode: resolve one video id to metadata on the main backend channel.
+// Never used for stream resolution, so guest traffic cannot delay a host
+// click on the play channel. Returns false and fills `error` on failure.
+bool fetch_track_meta(const std::string &video_id, Track &out, std::string &error);
 
 struct YouTubePlaylist
 {

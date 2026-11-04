@@ -49,5 +49,7 @@ void ensure_cache_dir();
 
 // Returns the local file path of a cached thumbnail, downloads if missing.
 std::string get_cached_thumbnail_path(const std::string &url);
+// Same lookup without touching the network: "" when not already cached.
+std::string thumbnail_cache_path(const std::string &url);
 // True if the thumbnail is already present in the on-disk cache (no download).
 bool thumbnail_is_cached(const std::string &url);

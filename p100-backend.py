@@ -181,6 +181,55 @@ def track_to_dict(track):
     }
 
 
+def get_track_meta(yt, video_id):
+    """Metadata-only lookup for party mode. Never resolves a stream."""
+    vid = (video_id or '').strip()
+    if not re.fullmatch(r'[A-Za-z0-9_-]{11}', vid):
+        return _err('Invalid video id', kind='backend')
+    details = {}
+    try:
+        song = yt.get_song(vid)
+        details = (song or {}).get('videoDetails') or {}
+    except Exception:
+        details = {}
+    if not details:
+        try:
+            for item in yt.search(vid, filter='songs', limit=5) or []:
+                if (item.get('videoId') or item.get('id') or '') == vid:
+                    d = track_to_dict(item)
+                    return {
+                        'ok': True,
+                        'id': vid,
+                        'title': d['title'],
+                        'artist': d['artist'],
+                        'durationSec': d['duration_sec'],
+                        'thumbUrl': d['thumbnail_url'],
+                    }
+        except Exception as e:
+            return _err(str(e))
+        return _err('Video not found', kind='not_found')
+    title = details.get('title') or ''
+    artist = details.get('author') or ''
+    try:
+        length = int(details.get('lengthSeconds') or 0)
+    except (TypeError, ValueError):
+        length = 0
+    thumbs = ((details.get('thumbnail') or {}).get('thumbnails') or [])
+    thumb = thumbs[-1].get('url', '') if thumbs else f'https://i.ytimg.com/vi/{vid}/hqdefault.jpg'
+    if not title:
+        return _err('Video not found', kind='not_found')
+    if details.get('isLive'):
+        return _err('Live streams are not supported', kind='backend')
+    return {
+        'ok': True,
+        'id': vid,
+        'title': title,
+        'artist': artist,
+        'durationSec': length,
+        'thumbUrl': thumb,
+    }
+
+
 def get_album_data(yt, browse_id):
     """Fetch an album header + its ordered track list by browse id (MPRE...)."""
     if not browse_id:
@@ -1308,6 +1357,8 @@ def main():
                 result = get_stream_url(arg, fresh=True) if arg else {'error': 'Missing video_id'}
             elif cmd == 'lyrics':
                 result = get_lyrics(yt, arg) if arg else {'error': 'Missing video_id'}
+            elif cmd == 'meta':
+                result = get_track_meta(yt, arg) if arg else {'error': 'Missing video_id'}
             elif cmd == 'liked':
                 result = yt.get_liked_songs(limit=200)
             elif cmd == 'library_playlists':

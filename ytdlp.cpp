@@ -935,6 +935,12 @@ static void parse_track_object(const std::string &obj, Track &t)
         t.duration_sec = json_get_int(obj, "duration_seconds");
     if (t.duration_sec == 0)
         t.duration_sec = json_get_int(obj, "duration");
+    // Optional party provenance. Missing in older files, hence the defaults.
+    t.requested_by = json_get_string(obj, "requested_by");
+    t.guest_id = json_get_string(obj, "guest_id");
+    t.from_party = json_get_string(obj, "from_party") == "true" ||
+                   obj.find("\"from_party\":true") != std::string::npos;
+    t.party_round = json_get_int(obj, "party_round");
     if (!t.id.empty())
         t.url = "https://www.youtube.com/watch?v=" + t.id;
 }
@@ -1372,6 +1378,49 @@ std::vector<Track> fetch_search(const std::string &query)
     if (response.find("\"error\"") != std::string::npos)
         return {};
     return parse_track_array(response);
+}
+
+bool fetch_track_meta(const std::string &video_id, Track &out, std::string &error)
+{
+    error.clear();
+    if (video_id.empty())
+    {
+        error = "missing video id";
+        return false;
+    }
+    std::string response = send_command("meta " + video_id);
+    if (response.empty())
+    {
+        error = "backend not running";
+        return false;
+    }
+    if (response.find("\"error\"") != std::string::npos)
+    {
+        error = json_get_string(response, "error");
+        if (error.empty())
+            error = "lookup failed";
+        return false;
+    }
+    Track t;
+    t.id = json_get_string(response, "id");
+    if (t.id.empty())
+        t.id = video_id;
+    t.title = json_get_string(response, "title");
+    t.artist = json_get_string(response, "artist");
+    t.thumbnail_url = json_get_string(response, "thumbUrl");
+    if (t.thumbnail_url.empty())
+        t.thumbnail_url = json_get_string(response, "thumbnail_url");
+    t.duration_sec = json_get_int(response, "durationSec");
+    if (t.duration_sec == 0)
+        t.duration_sec = json_get_int(response, "duration_sec");
+    t.url = "https://www.youtube.com/watch?v=" + t.id;
+    if (t.title.empty())
+    {
+        error = "no metadata";
+        return false;
+    }
+    out = std::move(t);
+    return true;
 }
 
 std::vector<Track> fetch_radio(const std::string &video_id)

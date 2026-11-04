@@ -728,6 +728,17 @@ static bool download_thumbnail(const std::string &url, std::vector<uint8_t> &dat
     return false;
 }
 
+std::string thumbnail_cache_path(const std::string &url)
+{
+    if (url.empty())
+        return "";
+    std::string fname = cache_filename(url);
+    struct stat st;
+    if (stat(fname.c_str(), &st) == 0 && S_ISREG(st.st_mode))
+        return fname;
+    return "";
+}
+
 std::string get_cached_thumbnail_path(const std::string &url)
 {
     if (url.empty())

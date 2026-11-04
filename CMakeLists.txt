@@ -71,6 +71,13 @@ set(SOURCES
     ui_stats.cpp
     texture.cpp
     writeback.cpp
+    party.cpp
+    party_link.cpp
+    party_queue.cpp
+    party_util.cpp
+    party_net.cpp
+    party_server.cpp
+    external/qrcodegen.cpp
 )
 
 if(P100_WIN)
@@ -90,19 +97,23 @@ target_compile_definitions(crossfade PRIVATE
 )
 
 if(P100_WIN)
-    target_include_directories(crossfade PRIVATE ${MPV_INCLUDE_DIR})
+    target_include_directories(crossfade PRIVATE ${MPV_INCLUDE_DIR} external)
     target_link_libraries(crossfade
         imgui
         SDL2::SDL2main
         ${MPV_LIBRARY}
         Threads::Threads
         winmm
+        ws2_32
+        iphlpapi
+        bcrypt
     )
 else()
     target_include_directories(crossfade PRIVATE
         ${MPV_INCLUDE_DIRS}
         ${NOTIFY_INCLUDE_DIRS}
         ${GLIB_INCLUDE_DIRS}
+        external
     )
     target_link_libraries(crossfade
         imgui
