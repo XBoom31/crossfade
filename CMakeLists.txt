@@ -72,12 +72,12 @@ set(SOURCES
     src/ui/ui_party.cpp
     texture.cpp
     writeback.cpp
-    party.cpp
-    party_link.cpp
-    party_queue.cpp
-    party_util.cpp
-    party_net.cpp
-    party_server.cpp
+    src/party/party.cpp
+    src/party/party_link.cpp
+    src/party/party_queue.cpp
+    src/party/party_util.cpp
+    src/party/party_net.cpp
+    src/party/party_server.cpp
     updater.cpp
     library.cpp
     diagnostics.cpp
@@ -109,6 +109,7 @@ target_include_directories(crossfade PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/src
     ${CMAKE_CURRENT_SOURCE_DIR}/src/ui
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/party
     ${CMAKE_CURRENT_SOURCE_DIR}/external/sqlite
 )
 
@@ -161,9 +162,10 @@ if(CROSSFADE_BUILD_TESTS)
     enable_testing()
     foreach(party_test party_link party_queue party_util)
         add_executable(test_${party_test} tests/test_${party_test}.cpp
-            ${party_test}.cpp)
+            src/party/${party_test}.cpp)
         target_include_directories(test_${party_test} PRIVATE
-            ${CMAKE_CURRENT_SOURCE_DIR})
+            ${CMAKE_CURRENT_SOURCE_DIR}
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/party)
         target_link_libraries(test_${party_test} Threads::Threads)
         add_test(NAME ${party_test} COMMAND test_${party_test})
     endforeach()
@@ -177,6 +179,7 @@ if(CROSSFADE_BUILD_TESTS)
         ${CMAKE_CURRENT_SOURCE_DIR}
         ${CMAKE_CURRENT_SOURCE_DIR}/src
         ${CMAKE_CURRENT_SOURCE_DIR}/src/ui
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/party
         ${CMAKE_CURRENT_SOURCE_DIR}/external/sqlite
         ${CMAKE_CURRENT_SOURCE_DIR}/external/imgui
         ${CMAKE_CURRENT_SOURCE_DIR}/external)
@@ -191,11 +194,13 @@ if(CROSSFADE_BUILD_TESTS)
     # Headless HTTP harness used by scripts/party-smoke-test.sh.
     add_executable(party_smoke_server
         tests/party_smoke_server.cpp
-        party_server.cpp
-        party_util.cpp
+        src/party/party_server.cpp
+        src/party/party_util.cpp
     )
     target_include_directories(party_smoke_server PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR} external)
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/party
+        external)
     target_link_libraries(party_smoke_server Threads::Threads)
     if(WIN32)
         target_link_libraries(party_smoke_server ws2_32 iphlpapi bcrypt)
