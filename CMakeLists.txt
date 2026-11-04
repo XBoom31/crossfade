@@ -50,26 +50,26 @@ set(SOURCES
     paths.cpp
     ytdlp.cpp
     mpvplayer.cpp
-    ui_helpers.cpp
-    ui_theme.cpp
-    ui_backdrop.cpp
-    ui_layout.cpp
-    ui_components.cpp
-    ui_icons.cpp
-    ui_top.cpp
-    ui_main.cpp
-    ui_playlists.cpp
-    ui_youtube.cpp
-    ui_album.cpp
-    ui_artists.cpp
-    ui_bottom.cpp
-    ui_queue.cpp
-    ui_radio.cpp
-    ui_lyrics.cpp
-    ui_notify.cpp
-    ui_settings.cpp
-    ui_stats.cpp
-    ui_party.cpp
+    src/ui/ui_helpers.cpp
+    src/ui/ui_theme.cpp
+    src/ui/ui_backdrop.cpp
+    src/ui/ui_layout.cpp
+    src/ui/ui_components.cpp
+    src/ui/ui_icons.cpp
+    src/ui/ui_top.cpp
+    src/ui/ui_main.cpp
+    src/ui/ui_playlists.cpp
+    src/ui/ui_youtube.cpp
+    src/ui/ui_album.cpp
+    src/ui/ui_artists.cpp
+    src/ui/ui_bottom.cpp
+    src/ui/ui_queue.cpp
+    src/ui/ui_radio.cpp
+    src/ui/ui_lyrics.cpp
+    src/ui/ui_notify.cpp
+    src/ui/ui_settings.cpp
+    src/ui/ui_stats.cpp
+    src/ui/ui_party.cpp
     texture.cpp
     writeback.cpp
     party.cpp
@@ -106,6 +106,9 @@ target_compile_definitions(crossfade PRIVATE
 )
 
 target_include_directories(crossfade PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/ui
     ${CMAKE_CURRENT_SOURCE_DIR}/external/sqlite
 )
 
@@ -172,6 +175,8 @@ if(CROSSFADE_BUILD_TESTS)
         library.cpp ytdlp.cpp paths.cpp external/sqlite/sqlite3.c)
     target_include_directories(test_library PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/ui
         ${CMAKE_CURRENT_SOURCE_DIR}/external/sqlite
         ${CMAKE_CURRENT_SOURCE_DIR}/external/imgui
         ${CMAKE_CURRENT_SOURCE_DIR}/external)
