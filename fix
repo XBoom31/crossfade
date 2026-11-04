@@ -1,6 +1,0 @@
-#!/usr/bin/env bash
-# Refresh the browser-cookie auth file (writes ~/.config/p100/browser.json).
-set -euo pipefail
-
-ROOT="$(cd "$(dirname "$0")" && pwd)"
-exec "$ROOT/scripts/p100-login" "$@"

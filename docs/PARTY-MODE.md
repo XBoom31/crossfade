@@ -217,7 +217,7 @@ cmake --build build -j"$(nproc)"
 scripts/party-smoke-test.sh
 ```
 
-`./mk` is unchanged and does not build tests.
+`./mk` builds into `build/` and runs the app; unit tests are enabled by default but not executed automatically.
 
 ## Known limitations / deliberate deviations
 

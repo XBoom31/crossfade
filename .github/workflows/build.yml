@@ -46,6 +46,15 @@ jobs:
             echo "::error::packaging/windows/install-crossfade.cmd must download the latest installer"
             exit 1
           }
+      - name: Check for local/private files
+        run: |
+          BAD="$(git ls-files | grep -E '(^|/)(browser|browseroauth|oauth)\.json$|(^|/)imgui\.ini$|(^|/)library\.db($|-)|(^|/)backend\.log$' || true)"
+          if [ -n "$BAD" ]; then
+            echo "::error::Private/local files are tracked:"
+            echo "$BAD"
+            exit 1
+          fi
+
       - name: Install dependencies
         run: |
           sudo apt-get update

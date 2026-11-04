@@ -712,9 +712,19 @@ cmake --build build -j"$(nproc)"
 ctest --test-dir build --output-on-failure
 ```
 
-The test suite covers the party link/queue helpers and the SQLite library (legacy
-migration, CRUD, FTS5 search, integrity check, backup, second init, and a failed database
-open). CI also rebuilds the same tests with AddressSanitizer and UndefinedBehaviorSanitizer.
+The suite covers party link/queue fairness, crossfade decisions, SQLite migration/CRUD/
+FTS/backup, cache eviction, JSON/lyrics parsing, session save/restore, playlists and
+settings. CI runs it with AddressSanitizer/UndefinedBehaviorSanitizer and ThreadSanitizer.
+See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) and
+[`docs/THREADING.md`](docs/THREADING.md) for the module and threading map.
+
+Useful extras:
+
+```bash
+python3 tests/test_backend_protocol.py   # shared cookie/OAuth command loop
+./scripts/party-smoke-test.sh            # headless party HTTP checks
+./scripts/bench.sh                       # binary/source/test/idle resource table
+```
 
 ### Ground rules
 
