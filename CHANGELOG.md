@@ -4,6 +4,15 @@ All notable changes to crossfade are documented here.
 
 ## Unreleased
 
+### Changed
+
+- Guest party page: ambient accent glow and glassy cards that follow the app's
+  palette, clearer "Search YouTube or paste a link" copy, and an Add/Search
+  button that switches automatically.
+- Search result thumbnails retry the local art endpoint before falling back to
+  a music-note placeholder, so results no longer show broken images while the
+  host finishes caching artwork.
+
 ## 0.1.5 - 2026-11-04
 
 ### Added
