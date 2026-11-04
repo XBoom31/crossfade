@@ -98,4 +98,15 @@ expect_code 404 "unknown art id" -b "$JAR" "$BASE/api/art/aaaaaaaaaaa"
 expect_code 404 "art traversal" -b "$JAR" "$BASE/api/art/..%2f..%2fetc%2fpasswd"
 expect_code 404 "unknown route" -b "$JAR" "$BASE/api/nope"
 
+# An art miss must stay uncached so the page can retry after the download.
+MISS_HEADERS="$(curl -sS -D - -o /dev/null -b "$JAR" "$BASE/api/art/aaaaaaaaaaa")"
+echo "$MISS_HEADERS" | grep -qi '^Cache-Control: no-store' || fail "art miss caching"
+PASS=$((PASS + 1))
+
+# The guest page must keep its restrictive headers.
+PAGE_HEADERS="$(curl -sS -D - -o /dev/null -b "$JAR" "$BASE/")"
+echo "$PAGE_HEADERS" | grep -qi '^Content-Security-Policy:' || fail "page CSP"
+echo "$PAGE_HEADERS" | grep -qi '^X-Frame-Options: DENY' || fail "page frame guard"
+PASS=$((PASS + 2))
+
 echo "party smoke test: $PASS checks passed (port $ACTUAL)"

@@ -888,9 +888,14 @@ void party_tick(AppState &state, double position_sec, double duration_sec, bool 
 
         std::string sig = make_sig(state, g_pending);
         bool bump = sig != g_last_sig;
-        if (bump || (!g_guests.empty() && t - g_last_build >= 1.0))
+        // While guests are connected, refresh once a second and bump the
+        // version. That delivers seeks and dropped/restarted playback, and
+        // lets clients resync their progress instead of extrapolating from a
+        // stale snapshot indefinitely.
+        const bool periodic = !g_guests.empty() && t - g_last_build >= 1.0;
+        if (bump || periodic)
         {
-            publish_locked(state, position_sec, duration_sec, paused, bump);
+            publish_locked(state, position_sec, duration_sec, paused, bump || periodic);
         }
 
         // Prefetch warm stream URLs for guest songs at the head of Up Next.
