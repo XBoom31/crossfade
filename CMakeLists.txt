@@ -48,7 +48,7 @@ set(SOURCES
     src/data/config.cpp
     src/data/accent.cpp
     src/data/paths.cpp
-    ytdlp.cpp
+    src/net/ytdlp.cpp
     mpvplayer.cpp
     src/ui/ui_helpers.cpp
     src/ui/ui_theme.cpp
@@ -70,7 +70,7 @@ set(SOURCES
     src/ui/ui_settings.cpp
     src/ui/ui_stats.cpp
     src/ui/ui_party.cpp
-    texture.cpp
+    src/net/texture.cpp
     src/data/writeback.cpp
     src/party/party.cpp
     src/party/party_link.cpp
@@ -78,7 +78,7 @@ set(SOURCES
     src/party/party_util.cpp
     src/party/party_net.cpp
     src/party/party_server.cpp
-    updater.cpp
+    src/net/updater.cpp
     src/data/library.cpp
     diagnostics.cpp
     external/qrcodegen.cpp
@@ -90,7 +90,7 @@ if(P100_WIN)
     # keep the same class/function surface so main.cpp compiles untouched.
     list(APPEND SOURCES win32/mpris_stub.cpp win32/discord_rpc_stub.cpp)
 else()
-    list(APPEND SOURCES mpris.cpp discord_rpc.cpp)
+    list(APPEND SOURCES mpris.cpp src/net/discord_rpc.cpp)
 endif()
 
 add_executable(crossfade ${SOURCES})
@@ -111,6 +111,7 @@ target_include_directories(crossfade PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src/ui
     ${CMAKE_CURRENT_SOURCE_DIR}/src/party
     ${CMAKE_CURRENT_SOURCE_DIR}/src/data
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/net
     ${CMAKE_CURRENT_SOURCE_DIR}/external/sqlite
 )
 
@@ -166,7 +167,8 @@ if(CROSSFADE_BUILD_TESTS)
             src/party/${party_test}.cpp)
         target_include_directories(test_${party_test} PRIVATE
             ${CMAKE_CURRENT_SOURCE_DIR}
-            ${CMAKE_CURRENT_SOURCE_DIR}/src/party)
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/party
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/net)
         target_link_libraries(test_${party_test} Threads::Threads)
         add_test(NAME ${party_test} COMMAND test_${party_test})
     endforeach()
@@ -175,13 +177,15 @@ if(CROSSFADE_BUILD_TESTS)
     endif()
 
     add_executable(test_library tests/test_library.cpp
-        src/data/library.cpp ytdlp.cpp src/data/paths.cpp external/sqlite/sqlite3.c)
+        src/data/library.cpp src/net/ytdlp.cpp src/data/paths.cpp
+        external/sqlite/sqlite3.c)
     target_include_directories(test_library PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}
         ${CMAKE_CURRENT_SOURCE_DIR}/src
         ${CMAKE_CURRENT_SOURCE_DIR}/src/ui
         ${CMAKE_CURRENT_SOURCE_DIR}/src/party
         ${CMAKE_CURRENT_SOURCE_DIR}/src/data
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/net
         ${CMAKE_CURRENT_SOURCE_DIR}/external/sqlite
         ${CMAKE_CURRENT_SOURCE_DIR}/external/imgui
         ${CMAKE_CURRENT_SOURCE_DIR}/external)
@@ -202,6 +206,7 @@ if(CROSSFADE_BUILD_TESTS)
     target_include_directories(party_smoke_server PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}
         ${CMAKE_CURRENT_SOURCE_DIR}/src/party
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/net
         external)
     target_link_libraries(party_smoke_server Threads::Threads)
     if(WIN32)
