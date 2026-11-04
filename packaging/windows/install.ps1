@@ -5,12 +5,15 @@
 #   share\crossfade\p100-backend*.py + fonts
 #   share\crossfade\venv\  (Python 3.12 + ytmusicapi + yt-dlp)
 # and creates Start Menu shortcuts for the app and the login helper.
+#
+# It always pulls the newest published release, so re-running it upgrades an
+# existing install in place.
 
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
-$Release = "https://github.com/XBoom31/crossfade/releases/download/v0.1.2"
+$Release = "https://github.com/XBoom31/crossfade/releases/latest/download"
 $Root    = "$env:LOCALAPPDATA\crossfade"
 $Tmp     = "$env:TEMP\crossfade-install"
 $PyDir   = "$env:LOCALAPPDATA\Programs\crossfade-python"
@@ -30,9 +33,40 @@ try {
     exit 1
 }
 Write-Host "[1/4] Unpacking ..."
+Remove-Item "$Tmp\crossfade-windows" -Recurse -Force -ErrorAction SilentlyContinue
 Expand-Archive "$Tmp\app.zip" -DestinationPath $Tmp -Force
+$payload = "$Tmp\crossfade-windows"
+if (-not (Test-Path "$payload\bin\crossfade.exe")) {
+    Write-Host "Downloaded package is incomplete (crossfade.exe is missing)." -ForegroundColor Red
+    exit 1
+}
+$newVer = Get-Content "$payload\version.txt" -ErrorAction SilentlyContinue
+$oldVer = Get-Content "$Root\version.txt" -ErrorAction SilentlyContinue
+if ($newVer) {
+    if ($oldVer) {
+        Write-Host "[1/4] Updating crossfade $oldVer -> $newVer ..."
+    } else {
+        Write-Host "[1/4] Installing crossfade $newVer ..."
+    }
+}
+
+# A running copy locks crossfade.exe and its DLLs, so the in-place upgrade
+# cannot replace them. Close the app (and its backend/mpv children) first.
+$running = Get-Process -Name crossfade -ErrorAction SilentlyContinue
+if ($running) {
+    Write-Host "[1/4] Closing the running crossfade ..."
+    & taskkill.exe /IM crossfade.exe /T /F 2>$null | Out-Null
+    Start-Sleep -Milliseconds 700
+}
+
 New-Item -ItemType Directory -Force -Path $Root | Out-Null
-Copy-Item "$Tmp\crossfade-windows\*" $Root -Recurse -Force
+try {
+    Copy-Item "$payload\*" $Root -Recurse -Force
+} catch {
+    Write-Host "Could not update the installed files: $($_.Exception.Message)" -ForegroundColor Red
+    Write-Host "Close any running crossfade window and run the installer again."
+    exit 1
+}
 
 # ---- 2. Python runtime (per-user, silent) ---------------------------------
 if (-not (Test-Path $PyExe)) {
