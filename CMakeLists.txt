@@ -57,6 +57,7 @@ set(SOURCES
     src/data/accent.cpp
     src/data/paths.cpp
     src/net/ytdlp.cpp
+    src/playback/crossfade.cpp
     src/playback/mpvplayer.cpp
     src/ui/ui_helpers.cpp
     src/ui/ui_theme.cpp
@@ -185,6 +186,17 @@ if(CROSSFADE_BUILD_TESTS)
     if(WIN32)
         target_link_libraries(test_party_util bcrypt)
     endif()
+
+    add_executable(test_crossfade tests/test_crossfade.cpp
+        src/playback/crossfade.cpp)
+    target_include_directories(test_crossfade PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/playback
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/ui
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/net
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/party
+        ${CMAKE_CURRENT_SOURCE_DIR}/external/imgui)
+    target_link_libraries(test_crossfade Threads::Threads)
+    add_test(NAME crossfade COMMAND test_crossfade)
 
     add_executable(test_library tests/test_library.cpp
         src/data/library.cpp src/net/ytdlp.cpp src/data/paths.cpp

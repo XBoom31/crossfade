@@ -665,6 +665,7 @@ layout and GL redraw does not run every millisecond just because audio is playin
 | Global state, types, layout constants | `src/ui/ui.h` |
 | Backend process management, JSON parsing, audio cache | `src/net/ytdlp.h`, `src/net/ytdlp.cpp` |
 | mpv wrapper | `src/playback/mpvplayer.h`, `src/playback/mpvplayer.cpp` |
+| Crossfade state, fade decisions, gain ramp, audio filters | `src/playback/crossfade.h`, `src/playback/crossfade.cpp` |
 | Top bar / navigation / search | `src/ui/ui_top.cpp` |
 | Track lists and context menu | `src/ui/ui_main.cpp` |
 | Album and artist pages | `src/ui/ui_album.cpp`, `src/ui/ui_artists.cpp` |

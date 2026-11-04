@@ -29,6 +29,7 @@
 #include "paths.h"
 #include "ytdlp.h"
 #include "mpvplayer.h"
+#include "crossfade.h"
 #include "ui.h"
 #include "ui_backdrop.h"
 #include "texture.h"
@@ -144,27 +145,9 @@ static std::mutex g_prefetch_mutex;
 // published through AppState and consumed on the main thread.
 static bool g_endless_waiting = false;
 static std::string g_endless_seed;
-// Crossfade state. maybe_start_crossfade() appends the next track to mpv's
-// playlist shortly before the current one ends; mpv's audio-crossfade then
-// overlaps the two. The appended file's START_FILE arrives while the old
-// one still plays, and the old file's END_FILE follows once it fades out:
-// g_crossfade_pending marks "append issued", g_crossfade_active marks "the
-// appended file actually started" (only then does the old file's "end"
-// event skip the normal advance).
-static std::atomic<bool> g_crossfade_pending{false};
-static std::atomic<bool> g_crossfade_active{false};
-// True while the pending/active fade was started by a manual Next/Previous or
-// track selection rather than by the end-of-track watcher. Manual fades end on
-// a timer (the outgoing track is cut short) instead of on its EOF event.
-static std::atomic<bool> g_manual_fade{false};
-static float g_applied_crossfade = -1.0f;
-static Track g_crossfade_track;
-static int g_crossfade_index = -1;
-static std::chrono::steady_clock::time_point g_fade_start;
-static float g_fade_user_vol = 100.0f;
-// Fade length actually used by the running crossfade. Usually the setting,
-// but capped to half the track for songs shorter than the crossfade.
-static double g_fade_seconds = 0.0;
+// Crossfade state and pure decisions live in playback/crossfade.*. The mpv
+// role swap and event handling stay here with the rest of the playback loop.
+static crossfade::State g_cf;
 
 // Window visibility: when minimized/hidden the UI is not visible, so the
 // render path is skipped entirely and the loop only wakes for events and
@@ -195,7 +178,7 @@ static void discord_apply_client_id()
 // UI/MPRIS/Discord should describe that player, not the one fading out.
 static MpvPlayer *display_player()
 {
-    if ((g_crossfade_pending.load() || g_crossfade_active.load()) && g_fade_player &&
+    if ((g_cf.pending.load() || g_cf.active.load()) && g_fade_player &&
         g_state.crossfade_progress >= 0.5f)
         return g_fade_player.get();
     return g_player.get();
@@ -229,13 +212,13 @@ static void stop_fade()
 {
     if (!g_fade_player)
         return;
-    if (g_crossfade_pending || g_crossfade_active)
-        g_player->set_volume(g_fade_user_vol);
-    g_crossfade_pending = false;
-    g_crossfade_active = false;
-    g_manual_fade = false;
-    g_crossfade_track = Track{};
-    g_crossfade_index = -1;
+    if (g_cf.pending || g_cf.active)
+        g_player->set_volume(g_cf.user_volume);
+    g_cf.pending = false;
+    g_cf.active = false;
+    g_cf.manual = false;
+    g_cf.track = Track{};
+    g_cf.index = -1;
     g_fade_player->set_stream_record("");
     g_fade_player->stop();
     g_fade_player->set_volume(0);
@@ -1674,9 +1657,9 @@ static void promote_fade_player_to_main()
 {
     if (!g_fade_player)
         return;
-    g_crossfade_pending = false;
-    g_crossfade_active = false;
-    g_manual_fade = false;
+    g_cf.pending = false;
+    g_cf.active = false;
+    g_cf.manual = false;
 
     g_player.swap(g_fade_player);
     g_player_raw = g_player.get();
@@ -1684,13 +1667,13 @@ static void promote_fade_player_to_main()
     // Callbacks live on the objects, not the roles: move them with the swap.
     g_player->set_event_callback(g_main_event_cb);
     g_fade_player->set_event_callback(g_fade_event_cb);
-    g_player->set_volume(g_fade_user_vol);
+    g_player->set_volume(g_cf.user_volume);
     g_fade_player->set_volume(0);
     g_fade_player->set_stream_record("");
     g_fade_player->stop();
 
-    g_crossfade_track = Track{};
-    g_crossfade_index = -1;
+    g_cf.track = Track{};
+    g_cf.index = -1;
     g_state.playing = true;
     if (!g_state.current_track_id.empty() &&
         g_state.lyrics_requested_id != g_state.current_track_id)
@@ -1725,14 +1708,14 @@ static void settle_inflight_crossfade()
 {
     if (!g_fade_player)
         return;
-    if (g_crossfade_active.load())
+    if (g_cf.active.load())
     {
         // The faded-in track is already audible, so make it the outgoing
         // track for the new selection instead of letting the helper linger.
         discard_recording();
         promote_fade_player_to_main();
     }
-    else if (g_crossfade_pending.load())
+    else if (g_cf.pending.load())
     {
         // The incoming track never became audible: cancel it and keep the
         // current main player, which can switch to the new selection.
@@ -1755,19 +1738,19 @@ static void start_manual_crossfade(const Track &t, int index,
     g_state.pending_manual_play = false;
     g_state.pending_play_url.clear();
 
-    g_crossfade_track = t;
-    g_crossfade_index = index;
+    g_cf.track = t;
+    g_cf.index = index;
     adopt_fade_track(t, index);
 
-    g_fade_user_vol = (float)g_player->get_property_double("volume");
-    if (g_fade_user_vol <= 0.0f)
-        g_fade_user_vol = 100.0f;
+    g_cf.user_volume = (float)g_player->get_property_double("volume");
+    if (g_cf.user_volume <= 0.0f)
+        g_cf.user_volume = 100.0f;
     g_fade_player->set_stream_record("");
     g_fade_player->set_volume(0);
-    g_fade_seconds = seconds;
-    g_manual_fade = true;
-    g_crossfade_pending = true;
-    g_fade_start = std::chrono::steady_clock::now();
+    g_cf.seconds = seconds;
+    g_cf.manual = true;
+    g_cf.pending = true;
+    g_cf.start = std::chrono::steady_clock::now();
     g_fade_player->play(cached_path);
 
     prefetch_next_track();
@@ -1805,36 +1788,14 @@ static bool try_start_manual_crossfade(const Track &t, int index)
     return true;
 }
 
-// Compose the mpv audio filter chain from the audio settings: loudnorm when
-// volume normalization is on, plus the 5-band equalizer when enabled. An
-// empty string clears `af` entirely.
-static std::string compose_af(const Settings &s)
-{
-    std::string af;
-    if (s.volume_normalization)
-        af = "loudnorm=I=-16:TP=-1.5:LRA=11";
-    if (s.eq_enabled)
-    {
-        static const float kBandHz[5] = {60.0f, 230.0f, 910.0f, 3600.0f, 14000.0f};
-        for (int i = 0; i < 5; ++i)
-        {
-            char band[64];
-            snprintf(band, sizeof(band), "%sequalizer=f=%.0f:t=q:w=1:g=%.1f",
-                     af.empty() ? "" : ",", kBandHz[i], (double)s.eq_gains[i]);
-            af += band;
-        }
-    }
-    return af;
-}
-
 static void maybe_start_crossfade()
 {
     // Keep mpv's crossfade option in sync with the settings slider (unused
     // by mpv 0.41+, which has no crossfade support, but harmless).
-    if (g_applied_crossfade != g_state.settings.crossfade_duration)
+    if (g_cf.applied_duration != g_state.settings.crossfade_duration)
     {
-        g_applied_crossfade = g_state.settings.crossfade_duration;
-        g_player->set_crossfade(g_applied_crossfade);
+        g_cf.applied_duration = g_state.settings.crossfade_duration;
+        g_player->set_crossfade(g_cf.applied_duration);
     }
 
     // Playback speed: applied to BOTH instances so it survives the crossfade
@@ -1850,7 +1811,7 @@ static void maybe_start_crossfade()
     // Audio filters (normalization + EQ): one chain on both instances.
     static std::string g_applied_af;
     static bool g_af_first = true;
-    std::string af = compose_af(g_state.settings);
+    std::string af = crossfade::audio_filter(g_state.settings);
     if (g_af_first || af != g_applied_af)
     {
         g_af_first = false;
@@ -1861,32 +1822,35 @@ static void maybe_start_crossfade()
 
     // Manual skip fades are timer-driven: the outgoing file does not reach
     // EOF, so promote the helper once the ramp has run its course.
-    if (g_manual_fade.load())
+    if (g_cf.manual.load())
     {
         const double elapsed = std::chrono::duration<double>(
-                                   std::chrono::steady_clock::now() - g_fade_start)
+                                   std::chrono::steady_clock::now() - g_cf.start)
                                    .count();
-        if (!g_crossfade_pending && !g_crossfade_active)
+        switch (crossfade::plan_manual(g_cf.manual, g_cf.pending, g_cf.active, elapsed,
+                                       g_cf.seconds))
         {
-            g_manual_fade = false;
-        }
-        else if (g_crossfade_active && elapsed >= g_fade_seconds)
-        {
+        case crossfade::ManualAction::Cancel:
+            g_cf.manual = false;
+            break;
+        case crossfade::ManualAction::Finish:
             finish_manual_crossfade();
             return;
-        }
-        else if (!g_crossfade_active && elapsed >= 1.0)
+        case crossfade::ManualAction::StartFailed:
         {
             // The cached file never started (vanished, decoder error): fall
             // back to the normal switch instead of leaving silence.
-            Track target = g_crossfade_track;
-            const int target_index = g_crossfade_index;
-            g_crossfade_track = Track{};
-            g_crossfade_index = -1;
+            Track target = g_cf.track;
+            const int target_index = g_cf.index;
+            g_cf.track = Track{};
+            g_cf.index = -1;
             stop_fade();
             if (!target.id.empty())
                 begin_play_track(target, target_index);
             return;
+        }
+        case crossfade::ManualAction::None:
+            break;
         }
     }
 
@@ -1894,36 +1858,27 @@ static void maybe_start_crossfade()
     // players, and mirror the app's play/pause intent onto the helper.
     // The ramp runs at ~20 Hz -- plenty for a smooth loudness glide; writing
     // mpv properties on every 16 ms frame only burns wakeups.
-    if ((g_crossfade_pending || g_crossfade_active) && g_fade_player)
+    if ((g_cf.pending || g_cf.active) && g_fade_player)
     {
         static std::chrono::steady_clock::time_point s_last_ramp;
         const auto ramp_now = std::chrono::steady_clock::now();
         if (ramp_now - s_last_ramp < std::chrono::milliseconds(50))
             return;
         s_last_ramp = ramp_now;
-        const double cf = std::max(g_fade_seconds, 0.1);
+        const double cf = std::max(g_cf.seconds, 0.1);
         const double elapsed = std::chrono::duration<double>(
-                                   std::chrono::steady_clock::now() - g_fade_start)
+                                   std::chrono::steady_clock::now() - g_cf.start)
                                    .count();
         const double t = std::min(elapsed / cf, 1.0);
-        // Humans hear loudness roughly as amplitude^0.6 (Stevens' law), so an
-        // equal-gain ramp sounds like it is over after ~1/3 of its length --
-        // that's why a 10 s crossfade only "fades in" for about 3 s. Raising
-        // the incoming gain to t^(1/0.6) makes its perceived level rise
-        // linearly across the whole fade. The outgoing gain is then the
-        // constant-power complement (in^2 + out^2 == 1), so the two tracks'
-        // powers sum to one and the overall level doesn't sag in the middle
-        // the way an equal-gain crossfade does.
-        const double in_gain = std::pow(t, 1.0 / 0.6);
-        const double out_gain = std::sqrt(std::max(0.0, 1.0 - in_gain * in_gain));
-        g_fade_player->set_volume(in_gain * g_fade_user_vol);
-        g_player->set_volume(out_gain * g_fade_user_vol);
+        const crossfade::Gains g = crossfade::gains(t);
+        g_fade_player->set_volume(g.incoming * g_cf.user_volume);
+        g_player->set_volume(g.outgoing * g_cf.user_volume);
         g_fade_player->set_paused(!g_state.playing.load());
     }
 
     if (g_state.settings.crossfade_duration <= 0.0f)
         return;
-    if (g_crossfade_pending || g_crossfade_active)
+    if (g_cf.pending || g_cf.active)
         return;
     if (!g_state.playing.load() || g_state.loading)
         return;
@@ -1951,7 +1906,16 @@ static void maybe_start_crossfade()
     // 403s of stale googlevideo links. When it isn't cached yet, the
     // normal advance at end-of-file handles it without a fade.
     std::string src = find_cached_audio_path(pick.track.id);
-    if (src.empty())
+    crossfade::NaturalInputs fade_inputs;
+    fade_inputs.crossfade_duration = g_state.settings.crossfade_duration;
+    fade_inputs.track_duration = dur;
+    fade_inputs.position = pos;
+    fade_inputs.playing = g_state.playing;
+    fade_inputs.loading = g_state.loading;
+    fade_inputs.already_fading = g_cf.pending || g_cf.active;
+    fade_inputs.repeat_one = g_state.settings.repeat_mode == 2;
+    fade_inputs.target_cached = !src.empty();
+    if (!crossfade::should_start_natural(fade_inputs))
         return;
 
     // Consume exactly the peeked pick.
@@ -1963,22 +1927,22 @@ static void maybe_start_crossfade()
     const Track &consumed = pick.track;
     const int consumed_index = -1;
 
-    g_crossfade_track = consumed;
-    g_crossfade_index = consumed_index;
+    g_cf.track = consumed;
+    g_cf.index = consumed_index;
 
     adopt_fade_track(consumed, consumed_index);
 
     // Start the next track silently on the helper player; the per-frame
     // volume ramp below fades the two into each other.
-    g_fade_user_vol = (float)g_player->get_property_double("volume");
-    if (g_fade_user_vol <= 0.0f)
-        g_fade_user_vol = 100.0f;
+    g_cf.user_volume = (float)g_player->get_property_double("volume");
+    if (g_cf.user_volume <= 0.0f)
+        g_cf.user_volume = 100.0f;
     g_fade_player->set_stream_record("");
     g_fade_player->set_volume(0);
-    g_fade_seconds = cf;
-    g_manual_fade = false; // natural end-of-track fade
-    g_crossfade_pending = true;
-    g_fade_start = std::chrono::steady_clock::now();
+    g_cf.seconds = cf;
+    g_cf.manual = false; // natural end-of-track fade
+    g_cf.pending = true;
+    g_cf.start = std::chrono::steady_clock::now();
     g_fade_player->play(src);
 
     prefetch_next_track();
@@ -2174,7 +2138,7 @@ int main(int, char **)
     g_fade_event_cb = [](const std::string &event)
     {
         if (event == "start")
-            g_crossfade_active = g_crossfade_pending.exchange(false);
+            g_cf.active = g_cf.pending.exchange(false);
     };
     g_fade_player->set_event_callback(g_fade_event_cb);
 
@@ -2428,14 +2392,14 @@ int main(int, char **)
 
         } else if (event == "end") {
             DLOG("EVENT end");
-            if (g_crossfade_active.exchange(false)) {
+            if (g_cf.active.exchange(false)) {
                 // The helper player already faded the next track in; this
                 // EOF is just the outgoing file reaching its end. Finalize
                 // its recording, then promote the helper to be the main
                 // player (roles swap, so the next crossfade reuses the
                 // freshly retired instance).
                 finalize_recording();
-                g_manual_fade = false;
+                g_cf.manual = false;
                 g_player.swap(g_fade_player);
                 g_player_raw = g_player.get();
                 g_fade_player_raw = g_fade_player.get();
@@ -2444,10 +2408,10 @@ int main(int, char **)
                 // would keep swallowing its own end-of-file events.
                 g_player->set_event_callback(g_main_event_cb);
                 g_fade_player->set_event_callback(g_fade_event_cb);
-                g_player->set_volume(g_fade_user_vol);
+                g_player->set_volume(g_cf.user_volume);
                 g_fade_player->set_volume(0);
-                g_crossfade_track = Track{};
-                g_crossfade_index = -1;
+                g_cf.track = Track{};
+                g_cf.index = -1;
                 if (!g_state.current_track_id.empty() &&
                     g_state.lyrics_requested_id != g_state.current_track_id)
                 {
@@ -2471,11 +2435,11 @@ int main(int, char **)
             }
             // Fade was issued but the helper never started (e.g. its file
             // vanished): cancel it so the normal advance doesn't overlap.
-            if (g_crossfade_pending.exchange(false))
+            if (g_cf.pending.exchange(false))
             {
-                const bool manual = g_manual_fade.exchange(false);
-                Track target = g_crossfade_track;
-                const int target_index = g_crossfade_index;
+                const bool manual = g_cf.manual.exchange(false);
+                Track target = g_cf.track;
+                const int target_index = g_cf.index;
                 g_fade_player->set_stream_record("");
                 g_fade_player->stop();
                 if (manual)
@@ -2483,8 +2447,8 @@ int main(int, char **)
                     // The outgoing file ended before the helper started:
                     // finalize it and start the target through the normal
                     // path so the transition isn't lost.
-                    g_crossfade_track = Track{};
-                    g_crossfade_index = -1;
+                    g_cf.track = Track{};
+                    g_cf.index = -1;
                     finalize_recording();
                     if (!target.id.empty())
                         begin_play_track(target, target_index);
@@ -2660,7 +2624,7 @@ int main(int, char **)
 
         long long interval_ms = 1000;
         if (animating || g_state.loading || recently_active ||
-            g_crossfade_pending.load() || g_crossfade_active.load())
+            g_cf.pending.load() || g_cf.active.load())
             interval_ms = 16;
         else if (g_state.playing)
             interval_ms = 100;
@@ -2933,14 +2897,14 @@ int main(int, char **)
                     else if (key == SDLK_UP || key == SDLK_DOWN)
                     {
                         const bool fading =
-                            g_crossfade_pending.load() || g_crossfade_active.load();
+                            g_cf.pending.load() || g_cf.active.load();
                         const double cur = fading
-                                               ? (double)g_fade_user_vol
+                                               ? (double)g_cf.user_volume
                                                : g_player->get_property_double("volume");
                         const double vol = key == SDLK_UP ? std::min(100.0, cur + (shift ? 10.0 : 5.0))
                                                           : std::max(0.0, cur - (shift ? 10.0 : 5.0));
                         if (fading)
-                            g_fade_user_vol = (float)vol;
+                            g_cf.user_volume = (float)vol;
                         else
                             g_player->set_volume((int)vol);
                         g_state.repaint_requested = true;
@@ -3199,7 +3163,7 @@ int main(int, char **)
                     // flight (the non-cached target takes a network round-trip).
                     // Settle it first so the helper player doesn't keep playing
                     // a stale "next" track underneath this request.
-                    if (g_crossfade_pending.load() || g_crossfade_active.load())
+                    if (g_cf.pending.load() || g_cf.active.load())
                         settle_inflight_crossfade();
 
                     // Anything still recording here was skipped, not
@@ -3288,8 +3252,8 @@ int main(int, char **)
             {
                 const int v = std::clamp(g_state.volume_request, 0, 100);
                 g_state.volume_request = -1;
-                g_fade_user_vol = (float)v;
-                if (!(g_crossfade_pending.load() || g_crossfade_active.load()))
+                g_cf.user_volume = (float)v;
+                if (!(g_cf.pending.load() || g_cf.active.load()))
                     g_player->set_volume(v);
                 g_state.repaint_requested = true;
             }
@@ -3450,8 +3414,8 @@ int main(int, char **)
 
                 MpvPlayer *dp = display_player();
                 const double pos = dp ? dp->get_property_double("time-pos") : 0.0;
-                const int vol = (g_crossfade_pending || g_crossfade_active)
-                                    ? (int)g_fade_user_vol
+                const int vol = (g_cf.pending || g_cf.active)
+                                    ? (int)g_cf.user_volume
                                     : (int)g_player->get_property_double("volume");
                 std::string sess_sig = g_state.current_track_id + '|' +
                                        g_state.current_title + '|' +
@@ -3467,8 +3431,8 @@ int main(int, char **)
                 if (sess_sig != s_last_sess_sig || s_last_vol != vol)
                 {
                     save_session(g_state, *display_player(),
-                                 (g_crossfade_pending || g_crossfade_active)
-                                     ? (int)g_fade_user_vol
+                                 (g_cf.pending || g_cf.active)
+                                     ? (int)g_cf.user_volume
                                      : -1);
                     s_last_sess_sig = sess_sig;
                     s_last_vol = vol;
@@ -3519,8 +3483,8 @@ int main(int, char **)
             static auto last_render_time = std::chrono::steady_clock::now();
             const bool want_render =
                 (have_event || repaint_now || animating || g_state.loading ||
-                 recently_active || g_crossfade_pending.load() ||
-                 g_crossfade_active.load() || (g_state.playing) ||
+                 recently_active || g_cf.pending.load() ||
+                 g_cf.active.load() || (g_state.playing) ||
                  (now - last_render_time) > std::chrono::seconds(5)) &&
                 !g_window_hidden;
             if (want_render)
@@ -3535,14 +3499,14 @@ int main(int, char **)
 
             // Mirror crossfade state for the backdrop transition. The colour
             // wash eases over the same window as the audio blend.
-            g_state.crossfade_active = g_crossfade_pending.load() || g_crossfade_active.load();
-            g_state.crossfade_seconds = (float)g_fade_seconds;
+            g_state.crossfade_active = g_cf.pending.load() || g_cf.active.load();
+            g_state.crossfade_seconds = (float)g_cf.seconds;
             if (g_state.crossfade_active)
             {
-                const double elapsed = std::chrono::duration<double>(now - g_fade_start).count();
+                const double elapsed = std::chrono::duration<double>(now - g_cf.start).count();
                 g_state.crossfade_progress =
-                    (float)std::clamp(elapsed / std::max(g_fade_seconds, 0.1), 0.0, 1.0);
-                g_state.crossfade_user_volume = (int)std::lround(g_fade_user_vol);
+                    (float)std::clamp(elapsed / std::max(g_cf.seconds, 0.1), 0.0, 1.0);
+                g_state.crossfade_user_volume = (int)std::lround(g_cf.user_volume);
                 if (g_fade_player)
                 {
                     g_state.crossfade_position =
@@ -3550,8 +3514,8 @@ int main(int, char **)
                     g_state.crossfade_duration =
                         std::max(0.0, g_fade_player->cached_duration());
                 }
-                if (g_state.crossfade_duration <= 0.0 && g_crossfade_track.duration_sec > 0)
-                    g_state.crossfade_duration = (double)g_crossfade_track.duration_sec;
+                if (g_state.crossfade_duration <= 0.0 && g_cf.track.duration_sec > 0)
+                    g_state.crossfade_duration = (double)g_cf.track.duration_sec;
 
                 // Lyrics switch at the same midpoint as the bottom bar.
                 if (g_state.crossfade_progress >= 0.5f &&
@@ -3637,7 +3601,7 @@ int main(int, char **)
 
     // ---- Save session on shutdown ----
     save_session(g_state, *g_player,
-                 (g_crossfade_pending || g_crossfade_active) ? (int)g_fade_user_vol : -1);
+                 (g_cf.pending || g_cf.active) ? (int)g_cf.user_volume : -1);
     save_settings(g_state.settings); // catch edits made after the last widget blur
     save_playback_history(g_state.playback_history);
     save_play_counts(g_state.play_counts);
