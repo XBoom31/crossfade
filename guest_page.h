@@ -132,7 +132,7 @@ button{font:inherit;cursor:pointer;touch-action:manipulation}
 (function(){
 "use strict";
 var ACCENT="__ACCENT__";
-var S={v:-1,data:null,timer:null,hidden:document.hidden,unchanged:0,myIds:new Set(),lastAdd:0,searchTimer:null,searchSeq:0,adding:false};
+var S={v:-1,data:null,timer:null,hidden:document.hidden,unchanged:0,myIds:new Set(),queueSig:null,searchTimer:null,searchSeq:0,adding:false};
 var $=function(id){return document.getElementById(id);};
 function el(tag,attrs,text){var n=document.createElement(tag);if(attrs){for(var k in attrs){if(k==="class")n.className=attrs[k];else if(k==="src")n.src=attrs[k];else if(k==="alt")n.alt=attrs[k];else n.setAttribute(k,attrs[k]);}}if(text!==undefined&&text!==null)n.textContent=String(text);return n;}
 function fmt(s){s=Math.max(0,Math.floor(s||0));var m=Math.floor(s/60);var x=s%60;return m+":"+(x<10?"0":"")+x;}
@@ -141,42 +141,46 @@ function toast(msg,undoId){$("toastText").textContent=msg;var b=$("undoBtn");b.h
 function ended(){S.ended=true;document.getElementById("ended").classList.add("show");if(S.timer)clearTimeout(S.timer);S.timer=null;}
 function artFor(id,cls){var img=el("img",{class:cls||"art",alt:""});img.loading="lazy";img.src="/api/art/"+encodeURIComponent(id);return img;}
 function badge(by,pending){if(pending)return el("span",{class:"badge pending"},"waiting for host");if(by)return el("span",{class:"badge"},by);return null;}
-function renderNow(d){var n=d.now||{};var img=$("nowArt");if(n.id){img.src="/api/art/"+encodeURIComponent(n.id);img.style.visibility="visible";}else{img.removeAttribute("src");img.style.visibility="hidden";}
+function renderNow(d){var n=d.now||{};var img=$("nowArt");var src=n.id?"/api/art/"+encodeURIComponent(n.id):"";if(src){if(img.getAttribute("src")!==src)img.src=src;img.style.visibility="visible";}else{img.removeAttribute("src");img.style.visibility="hidden";}
 $("nowTitle").textContent=n.title||"Nothing playing";$("nowArtist").textContent=n.artist||"Waiting for the host";
 S.now=n;updateProgress();}
 function updateProgress(){var n=S.now;if(!n||!n.durationSec){$("prog").style.width="0%";$("pos").textContent="0:00";$("dur").textContent="0:00";return;}
 var p=(n.positionSec||0);if(!n.paused&&S.data&&S.data.serverTime){p+=(Date.now()/1000-S.data.serverTime);}p=Math.max(0,Math.min(n.durationSec,p));
 var pct=Math.min(100,(p/n.durationSec)*100);$("prog").style.width=pct+"%";$("progWrap").setAttribute("aria-valuenow",String(Math.round(pct)));$("pos").textContent=fmt(p);$("dur").textContent=fmt(n.durationSec);}
-function renderQueue(d){var q=d.queue||[];var box=$("queue");box.textContent="";
+function queueSig(q){var s="";q.forEach(function(it){s+=it.id+"|"+it.status+"|"+it.by+"|"+(S.myIds.has(it.id)?"1":"0")+";";});return s;}
+function renderQueue(d){var q=d.queue||[];var sig=queueSig(q);if(sig===S.queueSig)return;S.queueSig=sig;
+var box=$("queue");box.textContent="";
 if(!q.length){var e=el("li",{class:"empty"},"Nothing queued yet. Be the first to add a song!");box.appendChild(e);return;}
 q.forEach(function(it){var li=el("li",{class:"item"});li.appendChild(artFor(it.id,"art"));
 var m=el("div",{class:"meta"});m.appendChild(el("div",{class:"title"},it.title||"Unknown title"));m.appendChild(el("div",{class:"artist"},it.artist||"Unknown artist"));li.appendChild(m);
 var r=el("div",{class:"right"});var eta=it.status==="pending"?"waiting for host":(it.etaSec>0?mins(it.etaSec):"next up");r.appendChild(el("div",{class:"eta"},eta));
+if(S.myIds.has(it.id))r.appendChild(el("span",{class:"badge",title:"Added by you"},"you"));
 var b=badge(it.by,it.status==="pending");if(b)r.appendChild(b);li.appendChild(r);box.appendChild(li);});}
-function render(d){if(!d||d.unchanged)return;S.data=d;S.v=d.v;var p=d.party||{};if(p.name)$("partyTitle").textContent=p.name;var g=(d.guests!=null?d.guests:0);$("guestTag").textContent=g+(g===1?" guest":" guests");if(p.accent&&/^#[0-9a-fA-F]{6}$/.test(p.accent))document.documentElement.style.setProperty("--accent",p.accent);
+function render(d){if(!d||d.unchanged)return;S.data=d;S.v=d.v;S.myIds=new Set((d.you&&d.you.ids)||[]);var p=d.party||{};if(p.name)$("partyTitle").textContent=p.name;var g=(d.guests!=null?d.guests:0);$("guestTag").textContent=g+(g===1?" guest":" guests");if(p.accent&&/^#[0-9a-fA-F]{6}$/.test(p.accent))document.documentElement.style.setProperty("--accent",p.accent);
 if(p.allowSearch===false)$("addHint").textContent="Paste a YouTube link to add one song.";renderNow(d);renderQueue(d);}
 function poll(ms){if(S.hidden||S.ended)return;S.timer=setTimeout(doPoll,ms);}
 function doPoll(){S.timer=null;if(S.hidden||S.ended)return;var url="/api/state";if(S.v>=0)url+="?v="+encodeURIComponent(S.v);
 fetch(url,{credentials:"same-origin",cache:"no-store"}).then(function(r){if(r.status===401||r.status===403||r.status===410){ended();return null;}if(!r.ok)throw new Error("http");return r.json();}).then(function(d){if(!d)return;if(d.unchanged){S.unchanged++;poll(S.unchanged>10?5000:2000);return;}S.unchanged=0;render(d);poll(2000);}).catch(function(){poll(Math.min(15000,2000*Math.pow(2,Math.min(3,S.unchanged++))));});}
 function addSong(input){if(S.adding||!input.trim())return;S.adding=true;$("addBtn").disabled=true;
 var body=JSON.stringify({input:input.trim()});
-fetch("/api/add",{method:"POST",credentials:"same-origin",cache:"no-store",headers:{"Content-Type":"application/json","X-CF":"1"},body:body}).then(function(r){return r.json().then(function(j){return {s:r.status,j:j};});}).then(function(x){var j=x.j||{};if(x.s===200&&j.ok){var it=j.item||{};if(it.id)S.myIds.add(it.id);S.lastAdd=Date.now()/1000;if(navigator.vibrate)try{navigator.vibrate(18);}catch(e){}
+fetch("/api/add",{method:"POST",credentials:"same-origin",cache:"no-store",headers:{"Content-Type":"application/json","X-CF":"1"},body:body}).then(function(r){return r.json().then(function(j){return {s:r.status,j:j};});}).then(function(x){var j=x.j||{};if(x.s===200&&j.ok){var it=j.item||{};if(it.id)S.myIds.add(it.id);if(navigator.vibrate)try{navigator.vibrate(18);}catch(e){}
 toast(j.status==="pending"?"Waiting for host approval":"Added"+(it.title?" · "+it.title:""),it.id||"");$("addInput").value="";$("results").textContent="";S.v=-1;doPoll();}
 else if(x.s===401||x.s===403||x.s===410){ended();}
 else if(x.s===429){toast(j.message||"Slow down a little.",null);}
 else{toast(j.message||"Couldn't add that song.",null);}
 }).catch(function(){toast("Connection lost. Check the Wi-Fi and try again.",null);}).then(function(){S.adding=false;$("addBtn").disabled=false;});}
-function undo(id){if(!id)return;fetch("/api/add/"+encodeURIComponent(id),{method:"DELETE",credentials:"same-origin",headers:{"X-CF":"1"}}).then(function(r){if(r.ok){toast("Removed",null);S.lastAdd=0;S.v=-1;doPoll();}else toast("That song already started.",null);}).catch(function(){toast("Could not undo.",null);});}
+function undo(id){if(!id)return;fetch("/api/add/"+encodeURIComponent(id),{method:"DELETE",credentials:"same-origin",headers:{"X-CF":"1"}}).then(function(r){if(r.ok){toast("Removed",null);S.v=-1;doPoll();}else toast("That song already started.",null);}).catch(function(){toast("Could not undo.",null);});}
 function doSearch(q){var seq=++S.searchSeq;var url="/api/search?q="+encodeURIComponent(q);fetch(url,{credentials:"same-origin",cache:"no-store"}).then(function(r){if(r.status===429)throw new Error("slow");if(!r.ok)throw new Error("bad");return r.json();}).then(function(list){if(seq!==S.searchSeq)return;renderResults(Array.isArray(list)?list:[]);}).catch(function(e){if(seq!==S.searchSeq)return;renderResults([]);if(String(e.message)==="slow")toast("One search at a time, please.",null);});}
 function renderResults(list){var box=$("results");box.textContent="";list.slice(0,10).forEach(function(it){var li=el("li");var b=el("button",{type:"button"});b.appendChild(artFor(it.id,""));var t=el("span",{class:"rt"});t.appendChild(el("b",null,it.title||"Unknown"));t.appendChild(el("span",null,(it.artist||"")+(it.durationSec?" · "+fmt(it.durationSec):"")));b.appendChild(t);b.appendChild(el("span",{class:"plus"},"+"));b.addEventListener("click",function(){addSong(it.id);});li.appendChild(b);box.appendChild(li);});}
 function onInput(){var v=$("addInput").value;clearTimeout(S.searchTimer);if(!v.trim()||!/youtu\.?be|youtube\.com/i.test(v)){if(S.data&&S.data.party&&S.data.party.allowSearch!==false&&v.trim().length>1){S.searchTimer=setTimeout(function(){doSearch(v.trim());},300);}else{$("results").textContent="";}return;}S.searchTimer=setTimeout(function(){addSong(v);},250);}
 function boot(){if(!sessionStorage.getItem("cf_greet")){sessionStorage.setItem("cf_greet","1");$("nameDialog").hidden=false;}
 var saved=sessionStorage.getItem("cf_name");if(saved){$("nameInput").value=saved;}
 $("saveName").addEventListener("click",function(){var n=$("nameInput").value.trim();if(!n){$("nameDialog").hidden=true;return;}fetch("/api/name",{method:"POST",credentials:"same-origin",headers:{"Content-Type":"application/json","X-CF":"1"},body:JSON.stringify({name:n})}).then(function(){$("nameDialog").hidden=true;sessionStorage.setItem("cf_name",n);S.v=-1;doPoll();}).catch(function(){$("nameDialog").hidden=true;});});
+$("nameInput").addEventListener("keydown",function(e){if(e.key==="Enter"){e.preventDefault();$("saveName").click();}});
 $("skipName").addEventListener("click",function(){$("nameDialog").hidden=true;});
 $("addBtn").addEventListener("click",function(){addSong($("addInput").value);});
 $("addInput").addEventListener("input",onInput);
-$("addInput").addEventListener("keydown",function(e){if(e.key==="Enter"){e.preventDefault();clearTimeout(S.searchTimer);var v=$("addInput").value.trim();if(!v)return;if(/youtu\.?be|youtube\.com/i.test(v))addSong(v);else doSearch(v);}});
+$("addInput").addEventListener("keydown",function(e){if(e.key==="Enter"){e.preventDefault();clearTimeout(S.searchTimer);var v=$("addInput").value.trim();if(!v)return;if(/youtu\.?be|youtube\.com/i.test(v))addSong(v);else if(S.data&&S.data.party&&S.data.party.allowSearch===false)toast("Paste a YouTube link to add a song.",null);else doSearch(v);}});
 $("undoBtn").addEventListener("click",function(){undo(this.dataset.id);});
 document.addEventListener("visibilitychange",function(){S.hidden=document.hidden;if(!S.hidden&&!S.timer&&!document.getElementById("ended").classList.contains("show")){S.unchanged=0;doPoll();}});
 updateProgress();setInterval(updateProgress,1000);

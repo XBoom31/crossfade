@@ -201,8 +201,9 @@ scripts/party-smoke-test.sh
 - Re-scanning the QR code creates a **new guest id** rather than reusing the
   existing cookie. This makes a second phone or a cleared cookie behave
   predictably; an existing session is simply left to expire in memory.
-- A guest's own items are highlighted client-side from the cached `you.ids`
-  list, so one state snapshot is enough per poll.
+- A guest's own items get a "you" badge client-side from the `you.ids` list in
+  each snapshot; the queue DOM is only rebuilt when its identity/status/badge
+  signature changes, so the 1 s snapshot refresh does not restart animations.
 - IPv4 only (the QR URL and Host check are IPv4-based). IPv6 LANs are out of
   scope for this pass.
 - HTTP, not HTTPS. That is appropriate for a trusted home LAN; do not port
