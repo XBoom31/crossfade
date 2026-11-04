@@ -4,6 +4,8 @@ All notable changes to crossfade are documented here.
 
 ## Unreleased
 
+## 0.1.6 - 2026-11-04
+
 ### Changed
 
 - Guest party page: ambient accent glow and glassy cards that follow the app's
