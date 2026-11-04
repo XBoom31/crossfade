@@ -45,9 +45,9 @@ target_link_libraries(imgui PUBLIC SDL2::SDL2 OpenGL::GL)
 # ---- crossfade sources ----
 set(SOURCES
     main.cpp
-    config.cpp
-    accent.cpp
-    paths.cpp
+    src/data/config.cpp
+    src/data/accent.cpp
+    src/data/paths.cpp
     ytdlp.cpp
     mpvplayer.cpp
     src/ui/ui_helpers.cpp
@@ -71,7 +71,7 @@ set(SOURCES
     src/ui/ui_stats.cpp
     src/ui/ui_party.cpp
     texture.cpp
-    writeback.cpp
+    src/data/writeback.cpp
     src/party/party.cpp
     src/party/party_link.cpp
     src/party/party_queue.cpp
@@ -79,7 +79,7 @@ set(SOURCES
     src/party/party_net.cpp
     src/party/party_server.cpp
     updater.cpp
-    library.cpp
+    src/data/library.cpp
     diagnostics.cpp
     external/qrcodegen.cpp
     external/sqlite/sqlite3.c
@@ -110,6 +110,7 @@ target_include_directories(crossfade PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
     ${CMAKE_CURRENT_SOURCE_DIR}/src/ui
     ${CMAKE_CURRENT_SOURCE_DIR}/src/party
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/data
     ${CMAKE_CURRENT_SOURCE_DIR}/external/sqlite
 )
 
@@ -174,12 +175,13 @@ if(CROSSFADE_BUILD_TESTS)
     endif()
 
     add_executable(test_library tests/test_library.cpp
-        library.cpp ytdlp.cpp paths.cpp external/sqlite/sqlite3.c)
+        src/data/library.cpp ytdlp.cpp src/data/paths.cpp external/sqlite/sqlite3.c)
     target_include_directories(test_library PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}
         ${CMAKE_CURRENT_SOURCE_DIR}/src
         ${CMAKE_CURRENT_SOURCE_DIR}/src/ui
         ${CMAKE_CURRENT_SOURCE_DIR}/src/party
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/data
         ${CMAKE_CURRENT_SOURCE_DIR}/external/sqlite
         ${CMAKE_CURRENT_SOURCE_DIR}/external/imgui
         ${CMAKE_CURRENT_SOURCE_DIR}/external)
