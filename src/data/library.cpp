@@ -1202,7 +1202,7 @@ bool integrity_check(std::string &result)
     return ok;
 }
 
-void shutdown_for_tests()
+void shutdown()
 {
     std::lock_guard<std::recursive_mutex> lock(g_mu);
     if (g_db)
@@ -1214,6 +1214,11 @@ void shutdown_for_tests()
     g_imported = false;
     g_error.clear();
     g_backup_dir.clear();
+}
+
+void shutdown_for_tests()
+{
+    shutdown();
 }
 
 } // namespace library

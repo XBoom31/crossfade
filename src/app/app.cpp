@@ -3637,6 +3637,8 @@ int app_run()
     stop_backend();
     DLOG("shutdown: writeback");
     stop_writeback_worker();
+    DLOG("shutdown: library");
+    library::shutdown();
     DLOG("shutdown: tasks");
     tasks::shutdown();
     DLOG("shutdown: textures");

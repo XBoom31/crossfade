@@ -44,9 +44,10 @@ vectors.
 3. `party_stop()`.
 4. `stop_backend()` (closes the backend pipes and reaps the child).
 5. `stop_writeback_worker()`.
-6. `tasks::shutdown()` (drain tracked workers).
-7. Clear textures, reset both mpv players, reset MPRIS.
-8. Shut down ImGui/SDL and exit with `_Exit(0)` so GLib/GDBus static teardown
+6. `library::shutdown()` (checkpoint/close SQLite).
+7. `tasks::shutdown()` (drain tracked workers).
+8. Clear textures, reset both mpv players, reset MPRIS.
+9. Shut down ImGui/SDL and exit with `_Exit(0)` so GLib/GDBus static teardown
    cannot leave the process hanging on helper threads.
 
 ## Ownership notes

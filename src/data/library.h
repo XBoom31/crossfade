@@ -56,6 +56,8 @@ std::vector<SavedArtist> load_saved_artists();
 void save_downloads(const std::vector<Track> &tracks);
 long long download_count();
 
-// Test hook: close and reset the module (not used in the app).
+// Close the database and reset module state. The app calls this during
+// shutdown so SQLite can checkpoint the WAL cleanly.
+void shutdown();
 void shutdown_for_tests();
 } // namespace library
