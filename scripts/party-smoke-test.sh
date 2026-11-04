@@ -44,7 +44,8 @@ fi
 
 BASE="http://127.0.0.1:$ACTUAL"
 JAR="$(mktemp -t cf-party-jar.XXXXXX)"
-trap 'cleanup; rm -f "$JAR"' EXIT
+HEADER_FILE="$(mktemp -t cf-party-headers.XXXXXX)"
+trap 'cleanup; rm -f "$JAR" "$HEADER_FILE"' EXIT
 PASS=0
 
 fail() {
@@ -66,12 +67,21 @@ expect_code 200 "healthz" "$BASE/healthz"
 expect_code 403 "page without a guest cookie" "$BASE/"
 expect_code 404 "unknown party token" "$BASE/j/wrong-token"
 
-# Join sets an HttpOnly SameSite=Strict cookie and redirects to /.
-HEADERS="$(curl -sS -D - -o /dev/null -c "$JAR" "$BASE/j/smoke-token")"
-echo "$HEADERS" | grep -qi '^HTTP/1.1 302' || fail "join redirect"
-echo "$HEADERS" | grep -qi 'HttpOnly' || fail "cookie HttpOnly"
-echo "$HEADERS" | grep -qi 'SameSite=Strict' || fail "cookie SameSite"
+# Error responses must keep their explanatory bodies; the server used to blank
+# every 4xx, which made a missing cookie look like a white page on a phone.
+NO_COOKIE_BODY="$(curl -sS "$BASE/")"
+echo "$NO_COOKIE_BODY" | grep -qi 'Scan the QR code again' || fail "403 explanation body"
 PASS=$((PASS + 1))
+
+# Join serves the guest page directly (no redirect to /) and sets an HttpOnly
+# SameSite=Strict cookie in the same response. A redirect could lose the cookie
+# during a cross-site QR navigation and land on a cookie-less 403.
+JOIN_BODY="$(curl -sS -D "$HEADER_FILE" -c "$JAR" "$BASE/j/smoke-token")"
+grep -qi '^HTTP/1.1 200' "$HEADER_FILE" || fail "join status (want 200)"
+grep -qi '^Set-Cookie:.*HttpOnly' "$HEADER_FILE" || fail "cookie HttpOnly"
+grep -qi '^Set-Cookie:.*SameSite=Strict' "$HEADER_FILE" || fail "cookie SameSite"
+echo "$JOIN_BODY" | grep -qi 'Smoke party' || fail "join body (guest page)"
+PASS=$((PASS + 4))
 
 expect_code 200 "guest page" -b "$JAR" "$BASE/"
 expect_code 200 "state" -b "$JAR" "$BASE/api/state"
@@ -81,6 +91,10 @@ expect_code 200 "unchanged state" -b "$JAR" "$BASE/api/state?v=1"
 expect_code 415 "add without X-CF" -b "$JAR" \
     -H 'Content-Type: application/json' -d '{"input":"https://youtu.be/dQw4w9WgXcQ"}' \
     "$BASE/api/add"
+JSON_ERR="$(curl -sS -b "$JAR" -H 'Content-Type: application/json' \
+    -d '{"input":"https://youtu.be/dQw4w9WgXcQ"}' "$BASE/api/add")"
+echo "$JSON_ERR" | grep -q '"bad_request"' || fail "JSON error body"
+PASS=$((PASS + 1))
 expect_code 415 "add without JSON content type" -b "$JAR" -H 'X-CF: 1' \
     -d '{"input":"https://youtu.be/dQw4w9WgXcQ"}' "$BASE/api/add"
 expect_code 200 "valid add" -b "$JAR" -H 'Content-Type: application/json' -H 'X-CF: 1' \
@@ -92,6 +106,9 @@ expect_code 200 "search" -b "$JAR" "$BASE/api/search?q=test"
 
 # Host allowlist: only 127.0.0.1/localhost (or the bound LAN IP) is served.
 expect_code 421 "foreign Host header" -H 'Host: evil.example' "$BASE/healthz"
+FOREIGN_BODY="$(curl -sS -H 'Host: evil.example' "$BASE/healthz")"
+echo "$FOREIGN_BODY" | grep -qi 'Open the party link' || fail "foreign Host explanation"
+PASS=$((PASS + 1))
 
 # Path traversal / bad ids never reach the filesystem.
 expect_code 404 "unknown art id" -b "$JAR" "$BASE/api/art/aaaaaaaaaaa"

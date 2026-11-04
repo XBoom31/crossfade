@@ -102,7 +102,7 @@ host play, which uses the play channel.
 | Method | Path | Purpose |
 |---|---|---|
 | GET | `/healthz` | Plain `ok` for diagnostics |
-| GET | `/j/<token>` | Validate token, issue guest cookie, redirect to `/` |
+| GET | `/j/<token>` | Validate token, serve the guest page with a guest cookie |
 | GET | `/` | Self-contained guest page |
 | GET | `/api/state?v=N` | Full snapshot or `{"unchanged":true}` |
 | POST | `/api/add` | Add a link or bare 11-char id |
@@ -116,7 +116,9 @@ All responses are `no-store` except successfully served validated art
 thumbnails finish downloading.
 The guest page is served with a restrictive CSP, `X-Content-Type-Options`,
 `Referrer-Policy: no-referrer`, `X-Frame-Options: DENY` and
-`Cross-Origin-Resource-Policy: same-origin`.
+`Cross-Origin-Resource-Policy: same-origin`. Error responses keep a short HTML
+or JSON explanation rather than an empty body, so a phone never shows a blank
+white page when a cookie is missing or a link is stale.
 
 ## Security model
 

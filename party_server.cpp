@@ -27,6 +27,19 @@ bool g_running = false;
 // Server object is never destroyed while the listen loop still references it.
 std::thread g_listen_thread;
 
+const char *kHostErrorHtml =
+    "<!doctype html><meta charset=utf-8>"
+    "<meta name=viewport content='width=device-width,initial-scale=1'>"
+    "<title>crossfade party</title>"
+    "<body style=\"font:16px system-ui,sans-serif;background:#0e1014;color:#f2f4f8;"
+    "display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0\">"
+    "<div style='text-align:center;padding:28px'>"
+    "<div style='font-size:40px'>🎵</div>"
+    "<h1 style='font-size:20px;margin:10px 0 6px'>Open the party link directly</h1>"
+    "<p style='color:#a0a7b4;margin:0;max-width:320px'>This device reached crossfade, "
+    "but the address did not match the party. Scan the QR code again or use the "
+    "exact link shown on the host, including the <b>:port</b>.</p></div></body>";
+
 const char *kScanAgainHtml =
     "<!doctype html><meta charset=utf-8>"
     "<meta name=viewport content='width=device-width,initial-scale=1'>"
@@ -294,8 +307,9 @@ bool party_server_start(const PartyServerConfig &config, std::string &error)
     svr->set_pre_routing_handler([](const httplib::Request &req, httplib::Response &res) {
         if (!host_ok(req.get_header_value("Host")))
         {
-            res.status = 421;
-            res.set_content("", "text/plain");
+            // An empty body can look like a broken blank page on a phone.
+            // Explain the mismatch instead; this still reveals nothing.
+            serve_page(res, kHostErrorHtml, 421);
             return httplib::Server::HandlerResponse::Handled;
         }
         return httplib::Server::HandlerResponse::Unhandled;
@@ -304,7 +318,11 @@ bool party_server_start(const PartyServerConfig &config, std::string &error)
         security_headers(req, res);
     });
     svr->set_error_handler([](const httplib::Request &, httplib::Response &res) {
-        res.set_content("", "text/plain");
+        // httplib calls this for every 4xx/5xx response. Only supply an empty
+        // default when the route did not set a body; overwriting it would turn
+        // the friendly scan-again page and every JSON error into a blank page.
+        if (res.body.empty())
+            res.set_content("", "text/plain");
     });
 
     svr->Get("/healthz", [](const httplib::Request &, httplib::Response &res) {
@@ -319,12 +337,14 @@ bool party_server_start(const PartyServerConfig &config, std::string &error)
             serve_page(res, kScanAgainHtml, 404);
             return;
         }
+        // Serve the page directly instead of redirecting to "/". Cookie
+        // handling during a cross-site QR navigation is the fragile part on
+        // phones; keeping both the Set-Cookie and the document in one 200
+        // response avoids relying on a cookie being replayed for the redirect.
         std::string cookie = "cf_guest=" + guest_id +
                              "; HttpOnly; SameSite=Strict; Path=/; Max-Age=43200";
         res.set_header("Set-Cookie", cookie);
-        res.status = 302;
-        res.set_header("Location", "/");
-        res.set_content("", "text/plain");
+        serve_page(res, party_api::page_html());
     });
 
     svr->Get("/", [](const httplib::Request &req, httplib::Response &res) {
