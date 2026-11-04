@@ -661,24 +661,24 @@ layout and GL redraw does not run every millisecond just because audio is playin
 
 | Area | Files |
 |---|---|
-| Entry point, main loop, crossfade engine, session restore | `main.cpp` |
-| Global state, types, layout constants | `ui.h` |
-| Backend process management, JSON parsing, audio cache | `ytdlp.h`, `ytdlp.cpp` |
-| mpv wrapper | `mpvplayer.h`, `mpvplayer.cpp` |
-| Top bar / navigation / search | `ui_top.cpp` |
-| Track lists and context menu | `ui_main.cpp` |
-| Album and artist pages | `ui_album.cpp`, `ui_artists.cpp` |
-| Playlists, queue, radio, YouTube library | `ui_playlists.cpp`, `ui_queue.cpp`, `ui_radio.cpp`, `ui_youtube.cpp` |
-| Bottom bar, lyrics, notifications | `ui_bottom.cpp`, `ui_lyrics.cpp`, `ui_notify.cpp` |
-| Party host UI, server, queue, link parsing | `ui_party.cpp`, `party.cpp`, `party_server.cpp`, `party_queue.cpp`, `party_link.cpp`, `party_util.cpp`, `party_net.cpp` |
-| Stats, settings, theme, backdrop, components, icons | `ui_stats.cpp`, `ui_settings.cpp`, `ui_theme.cpp`, `ui_backdrop.cpp`, `ui_components.cpp`, `ui_icons.cpp` |
-| Persistence and shared helpers | `ui_helpers.cpp` |
-| SQLite library, migration, FTS5 search, backups | `library.h`, `library.cpp`, `external/sqlite/` |
-| Diagnostics, crash handler, safe mode | `diagnostics.h`, `diagnostics.cpp` |
+| Entry point, main loop, crossfade engine, session restore | `src/main.cpp` |
+| Global state, types, layout constants | `src/ui/ui.h` |
+| Backend process management, JSON parsing, audio cache | `src/net/ytdlp.h`, `src/net/ytdlp.cpp` |
+| mpv wrapper | `src/playback/mpvplayer.h`, `src/playback/mpvplayer.cpp` |
+| Top bar / navigation / search | `src/ui/ui_top.cpp` |
+| Track lists and context menu | `src/ui/ui_main.cpp` |
+| Album and artist pages | `src/ui/ui_album.cpp`, `src/ui/ui_artists.cpp` |
+| Playlists, queue, radio, YouTube library | `src/ui/ui_playlists.cpp`, `src/ui/ui_queue.cpp`, `src/ui/ui_radio.cpp`, `src/ui/ui_youtube.cpp` |
+| Bottom bar, lyrics, notifications | `src/ui/ui_bottom.cpp`, `src/ui/ui_lyrics.cpp`, `src/ui/ui_notify.cpp` |
+| Party host UI, server, queue, link parsing | `src/ui/ui_party.cpp`, `src/party/party.cpp`, `src/party/party_server.cpp`, `src/party/party_queue.cpp`, `src/party/party_link.cpp`, `src/party/party_util.cpp`, `src/party/party_net.cpp` |
+| Stats, settings, theme, backdrop, components, icons | `src/ui/ui_stats.cpp`, `src/ui/ui_settings.cpp`, `src/ui/ui_theme.cpp`, `src/ui/ui_backdrop.cpp`, `src/ui/ui_components.cpp`, `src/ui/ui_icons.cpp` |
+| Persistence and shared helpers | `src/ui/ui_helpers.cpp` |
+| SQLite library, migration, FTS5 search, backups | `src/data/library.h`, `src/data/library.cpp`, `external/sqlite/` |
+| Diagnostics, crash handler, safe mode | `src/app/diagnostics.h`, `src/app/diagnostics.cpp` |
 | Unit tests | `tests/` |
-| Async artwork | `texture.h`, `texture.cpp` |
-| MPRIS, Discord RPC | `mpris.cpp`, `discord_rpc.cpp` |
-| Paths, config, accent | `paths.cpp`, `config.cpp`, `accent.cpp` |
+| Async artwork | `src/net/texture.h`, `src/net/texture.cpp` |
+| MPRIS, Discord RPC | `src/playback/mpris.cpp`, `src/net/discord_rpc.cpp` |
+| Paths, config, accent | `src/data/paths.cpp`, `src/data/config.cpp`, `src/data/accent.cpp` |
 | Python backends | `p100-backend.py`, `p100-backend-oauth.py` |
 
 ## Development
