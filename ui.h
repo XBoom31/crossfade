@@ -508,6 +508,9 @@ struct AppState
     bool show_shortcuts = false;
     // Party view: fullscreen QR takeover. Session-only; never persisted.
     bool party_fullscreen = false;
+    // Set by the Party tab's "Party settings" shortcut so the Settings page
+    // scrolls straight to the Party section on the next frame.
+    bool settings_focus_party = false;
 
     // Backend diagnostics shown in Settings.
     bool backend_running = false;

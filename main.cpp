@@ -3366,9 +3366,10 @@ int main(int, char **)
             draw_main_ui(g_state, *g_player, true);
             draw_bottom_bar(g_state, *g_player);
             draw_party_chip(g_state);
-            draw_party_fullscreen(g_state);
-
             ui_notify_draw();
+            // Draw the QR takeover after the toasts so it is a true top-most
+            // surface. The modal already blocks clicks to everything behind it.
+            draw_party_fullscreen(g_state);
 
             if (show_demo)
             {

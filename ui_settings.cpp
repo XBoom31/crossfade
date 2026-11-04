@@ -927,6 +927,140 @@ void draw_settings_panel(AppState &state)
     }
     settings_help("When the list and queue run out, keep playing a radio seeded by the last song.");
 
+    // ------------------------------------------------------------------
+    // Party mode. The Party tab is only the start/live surface; everything
+    // that can be configured ahead of time lives here so the tab stays a
+    // one-click experience.
+    // ------------------------------------------------------------------
+    const float party_section_y = ImGui::GetCursorPosY();
+    settings_gap();
+    ui_section_header("Party", "Let guests add songs from their phones");
+    settings_help("Start a party from the Party tab. Guests scan its QR code with a phone camera, paste a YouTube or YouTube Music link, and their songs join Up Next. Nothing leaves your local network - there is no account, no cloud, and no telemetry.");
+
+    PartySettings &ps = state.settings.party;
+    if (party_running())
+    {
+        ImGui::TextColored(ui_c().accent_text,
+                           "A party is running. Changes here apply the next time you start one.");
+    }
+
+    ImGui::TextColored(ui_c().text_muted, "Party name");
+    ImGui::SetNextItemWidth(field_w);
+    ImGui::InputText("##party_name", &ps.name);
+    if (ImGui::IsItemDeactivatedAfterEdit())
+    {
+        ps.name = party_util::clean_utf8(ps.name, 60);
+        if (ps.name.empty())
+            ps.name = "crossfade party";
+        save = true;
+    }
+    settings_help("Shown on the host screen and at the top of the guest page.");
+
+    ImGui::Dummy(ImVec2(0.0f, m.space_3));
+    ImGui::TextColored(ui_c().text_muted, "Network");
+    std::vector<PartyInterfaceInfo> ifaces = party_interfaces();
+    std::vector<std::string> labels;
+    labels.push_back("Automatic (best network)");
+    int current = 0;
+    for (int i = 0; i < (int)ifaces.size(); ++i)
+    {
+        std::string label = ifaces[i].label;
+        if (ifaces[i].is_preferred)
+            label += "  (recommended)";
+        if (ifaces[i].is_secondary)
+            label += "  (alternate address)";
+        if (!ifaces[i].is_private)
+            label += "  (public address)";
+        labels.push_back(label);
+        if (!ps.interface_ip.empty() && ifaces[i].ip == ps.interface_ip)
+            current = (int)labels.size() - 1;
+    }
+    if (!ps.interface_ip.empty() && current == 0)
+    {
+        labels.push_back("Saved: " + ps.interface_ip);
+        current = (int)labels.size() - 1;
+    }
+    std::vector<const char *> ptrs;
+    ptrs.reserve(labels.size());
+    for (const std::string &l : labels)
+        ptrs.push_back(l.c_str());
+    ImGui::SetNextItemWidth(field_w);
+    if (ImGui::Combo("##party_iface", &current, ptrs.data(), (int)ptrs.size()))
+    {
+        if (current == 0)
+            ps.interface_ip.clear();
+        else if (current - 1 < (int)ifaces.size())
+            ps.interface_ip = ifaces[current - 1].ip;
+        else
+            ps.interface_ip.clear();
+        save = true;
+    }
+    settings_help("Pick the Wi-Fi or hotspot address phones can reach. Automatic skips virtual adapters like Docker and VPNs and prefers the address your network actually routes.");
+    if (!ifaces.empty())
+        settings_help(("Automatic will use " + ifaces.front().ip + ".").c_str());
+
+    ImGui::Dummy(ImVec2(0.0f, m.space_2));
+    ImGui::TextColored(ui_c().text_muted, "Port");
+    ImGui::SetNextItemWidth(160.0f * m.layout_scale);
+    ImGui::InputInt("##party_port", &ps.port, 0, 0);
+    if (ImGui::IsItemDeactivatedAfterEdit())
+    {
+        ps.port = std::max(1024, std::min(65535, ps.port));
+        save = true;
+    }
+    settings_help("The guest page is served on this port. If it is busy, start the party again on another port.");
+
+    ImGui::Dummy(ImVec2(0.0f, m.space_2));
+    ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + content_w);
+    ImGui::TextColored(ui_c().text_muted,
+                       "Hotspots and public Wi-Fi often isolate clients. If a phone cannot open the link, make this laptop the hotspot, use a normal router, or disable client isolation on the network. On Android 16 and newer, Chrome may also need Nearby devices permission (or try Firefox).");
+    ImGui::PopTextWrapPos();
+
+    ImGui::Dummy(ImVec2(0.0f, m.space_3));
+    ImGui::TextColored(ui_c().text_muted, "Who can add songs");
+    if (ImGui::Checkbox("Host approves every request", &ps.require_approval))
+        save = true;
+    settings_help("When on, new songs wait in the Party tab until you approve them. When off, they join Up Next immediately.");
+
+    ImGui::SetNextItemWidth(field_w);
+    ImGui::SliderInt("##party_max_guest", &ps.max_per_guest, 0, 20,
+                     ps.max_per_guest == 0 ? "Per guest  unlimited" : "Per guest  %d songs");
+    if (ImGui::IsItemDeactivatedAfterEdit())
+        save = true;
+    ImGui::SetNextItemWidth(field_w);
+    ImGui::SliderInt("##party_cooldown", &ps.cooldown_sec, 0, 60,
+                     ps.cooldown_sec == 0 ? "Cooldown  off" : "Cooldown  %d s between adds");
+    if (ImGui::IsItemDeactivatedAfterEdit())
+        save = true;
+    ImGui::SetNextItemWidth(field_w);
+    ImGui::SliderInt("##party_max_minutes", &ps.max_video_minutes, 0, 60,
+                     ps.max_video_minutes == 0 ? "Max video length  unlimited"
+                                               : "Max video length  %d min");
+    if (ImGui::IsItemDeactivatedAfterEdit())
+        save = true;
+    ImGui::SetNextItemWidth(field_w);
+    ImGui::SliderInt("##party_max_queue", &ps.max_queue, 0, 300,
+                     ps.max_queue == 0 ? "Queue cap  unlimited" : "Queue cap  %d songs");
+    if (ImGui::IsItemDeactivatedAfterEdit())
+        save = true;
+    settings_help("Limits apply per guest. Queue cap counts every song waiting in Up Next.");
+
+    ImGui::Dummy(ImVec2(0.0f, m.space_2));
+    ImGui::TextColored(ui_c().text_muted, "Guest experience");
+    if (ImGui::Checkbox("Let guests search YouTube", &ps.allow_search))
+        save = true;
+    settings_help("Turns the guest search box into a paste-only field when off. Search runs through the same local backend as the app.");
+    if (ImGui::Checkbox("Allow duplicate songs", &ps.allow_duplicates))
+        save = true;
+    if (ImGui::Checkbox("Show guest names next to songs", &ps.show_names))
+        save = true;
+
+    if (state.settings_focus_party)
+    {
+        ImGui::SetScrollY(std::max(0.0f, party_section_y - m.space_4));
+        state.settings_focus_party = false;
+    }
+
     settings_gap();
     ui_section_header("Lyrics");
     ImGui::SetNextItemWidth(field_w);

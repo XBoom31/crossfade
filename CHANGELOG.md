@@ -17,6 +17,20 @@ All notable changes to crossfade are documented here.
   metadata lookups without resolving a stream.
 - Party settings persist across restarts; the party token, guest ids and guest
   names never touch disk, and the party never auto-starts.
+- Android 16+ connection help: Chrome may require the **Nearby devices**
+  permission before it can open a LAN address such as the party link.
+
+### Changed
+
+- **Party tab overhaul.** The tab now uses the same animated hero style as
+  Radio. **Start party** puts a working QR code on the page immediately; setup
+  fields moved to **Settings → Party**, with a direct shortcut from the hero.
+- **Present QR** is now a true top-most modal: it dims the app, blocks clicks
+  to tabs and lists, and closes with `Esc` or the close button. Starting a
+  party no longer auto-opens fullscreen.
+- The floating party indicator moved out of the now-playing panel and toast
+  stack, and the connection help includes a `/healthz` link for phone-side
+  diagnostics.
 
 ### Security
 

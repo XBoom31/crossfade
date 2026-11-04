@@ -399,27 +399,35 @@ Local-only use is fully supported.
 
 ## Party mode
 
-Open **Party** (or press `P`) and choose **Start party**. The host page shows a
-QR code and a link; anyone on the same Wi-Fi can scan it, paste a YouTube /
+Open **Party** (or press `P`) and choose **Start party**. The QR code appears
+right in the tab; anyone on the same Wi-Fi can scan it, paste a YouTube /
 YouTube Music link, and add a song. Nothing leaves the local network: the
 server is part of crossfade, uses the existing Python backend for metadata, and
 never writes guest names or links to disk.
 
-- **Approval.** Turn on **Host approves every request** to review songs before
-  they join Up Next.
+- **Setup in Settings.** Party name, network address, port, approval, limits and
+  guest options live in **Settings → Party**. **Party settings** in the Party
+  tab jumps straight there. Changes apply the next time you start a party.
+- **Approval.** Turn on **Host approves every request** to review songs in the
+  Party tab before they join Up Next.
 - **Fair queueing.** Guest songs are interleaved round-robin, below anything you
   queued yourself, so one guest cannot fill the queue.
 - **Limits.** Set songs per guest, add cooldown, max video length and a queue
   cap. Rate limits are enforced per guest on the server.
 - **Guest page.** One self-contained mobile page (light/dark, no external
   requests) with now-playing progress, Up Next, search and undo.
-- **Fullscreen.** Show the QR code large for a TV or projector; `Esc` returns.
+- **Present QR.** Open a top-most fullscreen QR for a TV or projector, with a
+  **Copy link** button; `Esc` or the close button returns to the app.
 - **Privacy.** The party token lives only in the QR URL, guest ids are in memory
   only, and the party never auto-starts or persists live state.
 
 Party mode binds to one LAN IPv4 address and serves plain HTTP. Use it on a
-trusted network; do not forward the port from your router. The full design and
-security notes are in [`docs/PARTY-MODE.md`](docs/PARTY-MODE.md).
+trusted network; do not forward the port from your router. Hotspots and public
+Wi-Fi often isolate clients, so a phone that is not the hotspot owner may not
+reach the laptop even though both are "on the same Wi-Fi". If that happens, use
+a normal router, make the laptop the hotspot, or disable client isolation on
+the network. The full design and security notes are in
+[`docs/PARTY-MODE.md`](docs/PARTY-MODE.md).
 
 ## Controls
 
@@ -689,8 +697,8 @@ Everything else — playback, crossfade, caching, lyrics, library — is portabl
 | Lyrics are out of sync | **Settings → Lyrics → Timing offset** |
 | OAuth token rejected | Delete `browseroauth.json`, re-run the OAuth login, restart |
 | App won't start on Wayland | Run under XWayland (`SDL_VIDEODRIVER=x11 crossfade`) |
-| Guests can't open the party link | Make sure both devices are on the same Wi-Fi and no client-isolation/VPN blocks LAN traffic. Pick the right address in **Party → Network** |
-| Party port already in use | crossfade tries the next 10 ports automatically; or change the port in Party settings |
+| Guests can't open the party link | Make sure both devices are on the same Wi-Fi and no client-isolation/VPN blocks LAN traffic. Pick the right address in **Settings → Party → Network**. On a phone hotspot, the hotspot owner can often connect while other phones cannot: use a router or make the laptop the hotspot. On Android 16+, Chrome may show `ERR_TOO_MANY_RETRIES` until it is allowed to access nearby devices (Chrome → App info → Permissions → Nearby devices); Firefox is a quick alternative |
+| Party port already in use | crossfade tries the next 10 ports automatically; or change the port in **Settings → Party** |
 | Guest search says it couldn't search | The local Python backend must be running and able to reach YouTube; adding a direct link still works when metadata lookup succeeds |
 
 <details>

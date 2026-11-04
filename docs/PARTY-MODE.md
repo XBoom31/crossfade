@@ -170,13 +170,23 @@ are **never** persisted. A party never auto-starts on launch.
 
 ## Rendering
 
-- `ui_party.cpp` draws the host panel, a running status card, fullscreen QR
-  overlay and the bottom-bar party chip.
+- `ui_settings.cpp` owns the **Settings → Party** configuration form (name,
+  network address, port, approval, limits and guest options). The Party tab's
+  **Party settings** shortcut switches tabs and scrolls that section into view.
+- `ui_party.cpp` draws the Party tab as a Radio-style hero. Before a party it
+  shows a single **Start party** action; after starting, the live QR appears
+  in-tab with **Copy link**, **Present QR** and **End party**, followed by
+  pending approvals and guest requests. The bottom-bar party chip remains.
+- **Present QR** opens a true ImGui modal popup, so it is top-most, dims the
+  app, and blocks clicks to tabs and lists behind it. `Esc` or the close button
+  dismisses it; starting a party does **not** auto-open fullscreen.
 - QR modules are drawn with `ImDrawList::AddRectFilled`; no texture upload and
   no temporary image file.
-- The demand-driven loop is unchanged. While a party is running, the existing
-  wake event, playback cadence and 1 s safety tick are enough to keep guest
-  state fresh. Party mode requests no continuous animation frames.
+- The demand-driven loop is unchanged. While a party is running, a small
+  animation request keeps the live dot, QR rings and scan highlight moving;
+  the existing wake event, playback cadence and 1 s safety tick keep guest
+  state fresh. Animations respect **Settings → Appearance → Animations** and
+  stop when that setting is Off.
 
 ## Tests
 
@@ -223,3 +233,13 @@ scripts/party-smoke-test.sh
   network; failed lookups return a friendly retryable error.
 - Pending approvals are not persisted, so restarting the app ends the party
   and discards them.
+- Hotspots and public Wi-Fi commonly enable client isolation. The hotspot
+  owner's phone can then reach the host while another phone cannot. Party mode
+  cannot work around that at the application layer; use a normal router, make
+  the laptop the hotspot, or disable client isolation where the network
+  exposes the option.
+- Android 16 and newer can gate local-network access behind a runtime
+  permission. Chrome may report `ERR_TOO_MANY_RETRIES` (or
+  `ERR_LOCAL_NETWORK_PERMISSION_MISSING`) until **Nearby devices** is allowed
+  for the browser; Firefox or another browser can be used to confirm the host
+  is reachable. The host cannot detect or grant this permission remotely.

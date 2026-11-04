@@ -226,6 +226,24 @@ void ui_draw_icon(ImDrawList *dl, UiIcon icon, ImVec2 c, float s, ImU32 col, flo
         dl->AddCircleFilled(off, r * 0.78f, ImGui::GetColorU32(ui_c().bg), 24);
         break;
     }
+    case UiIcon::Qr:
+    {
+        // Three finder patterns and a few data modules.
+        const float q = 0.26f;
+        const float finders[3][2] = {{-0.26f, -0.26f}, {0.26f, -0.26f}, {-0.26f, 0.26f}};
+        for (const auto &f : finders)
+        {
+            dl->AddRect(p(c, s, f[0] - q * 0.5f, f[1] - q * 0.5f),
+                        p(c, s, f[0] + q * 0.5f, f[1] + q * 0.5f), col, s * 0.035f, 0, t);
+            dl->AddRectFilled(p(c, s, f[0] - 0.075f, f[1] - 0.075f),
+                              p(c, s, f[0] + 0.075f, f[1] + 0.075f), col, s * 0.02f);
+        }
+        const float m = 0.06f;
+        const float mods[4][2] = {{0.10f, 0.10f}, {0.28f, 0.10f}, {0.10f, 0.28f}, {0.28f, 0.28f}};
+        for (const auto &mo : mods)
+            dl->AddRectFilled(p(c, s, mo[0], mo[1]), p(c, s, mo[0] + m, mo[1] + m), col);
+        break;
+    }
     case UiIcon::Party:
     {
         // Confetti / sparkle burst: a central dot with a few rays and dots.
