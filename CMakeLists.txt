@@ -53,6 +53,7 @@ target_link_libraries(imgui PUBLIC SDL2::SDL2 OpenGL::GL)
 # ---- crossfade sources ----
 set(SOURCES
     src/main.cpp
+    src/app/app.cpp
     src/data/config.cpp
     src/data/accent.cpp
     src/data/paths.cpp

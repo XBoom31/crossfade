@@ -661,7 +661,8 @@ layout and GL redraw does not run every millisecond just because audio is playin
 
 | Area | Files |
 |---|---|
-| Entry point, main loop, crossfade engine, session restore | `src/main.cpp` |
+| Thin entry point | `src/main.cpp` |
+| App init, main loop, input dispatch, playback housekeeping, shutdown | `src/app/app.cpp` |
 | Session save/restore JSON | `src/playback/session.cpp` |
 | Global state, types, layout constants | `src/ui/ui.h` |
 | Backend process management, JSON parsing, audio cache | `src/net/ytdlp.h`, `src/net/ytdlp.cpp` |
