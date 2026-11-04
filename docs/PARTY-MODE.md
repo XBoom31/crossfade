@@ -123,6 +123,10 @@ The guest page is served with a restrictive CSP, `X-Content-Type-Options`,
 - **LAN only.** The server binds to one selected IPv4 interface (or `0.0.0.0`
   only when the selected address cannot be bound). It is not a public service
   and does not use HTTPS.
+- **Address selection.** Automatic mode asks the kernel which source address it
+  would use for outbound traffic and prefers it. This avoids stale secondary
+  DHCP aliases that still answer on the laptop itself but are unreachable from
+  phones. The network picker labels the recommended address.
 - **Token.** 128 bits from the OS CSPRNG, base64url-encoded, compared in
   constant time. The token appears only in the QR URL; it is never written to
   disk, logged, or returned by `/api/state`.

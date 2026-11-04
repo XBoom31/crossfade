@@ -744,6 +744,7 @@ std::vector<PartyInterfaceInfo> party_interfaces()
         p.ip = i.ip;
         p.label = party_net::interface_label(i);
         p.is_private = i.is_private;
+        p.is_preferred = i.is_preferred;
         out.push_back(p);
     }
     return out;

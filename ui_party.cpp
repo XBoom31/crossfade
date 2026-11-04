@@ -360,6 +360,8 @@ void draw_setup(AppState &state)
         for (int i = 0; i < (int)ifaces.size(); ++i)
         {
             std::string label = ifaces[i].label;
+            if (ifaces[i].is_preferred)
+                label += "  (recommended)";
             if (!ifaces[i].is_private)
                 label += "  (public address)";
             labels.push_back(label);
@@ -386,7 +388,9 @@ void draw_setup(AppState &state)
                 ps.interface_ip.clear();
             save = true;
         }
-        party_help("Pick the Wi-Fi or hotspot address phones can reach. Automatic skips virtual adapters like Docker and VPNs.");
+        party_help("Pick the Wi-Fi or hotspot address phones can reach. Automatic skips virtual adapters like Docker and VPNs and prefers the address your network actually routes.");
+        if (!ifaces.empty())
+            party_help(("Automatic will use " + ifaces.front().ip + ".").c_str());
 
         ImGui::Dummy(ImVec2(0.0f, m.space_2));
         ImGui::TextColored(ui_c().text_muted, "Port");

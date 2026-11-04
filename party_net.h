@@ -11,6 +11,9 @@ struct Interface
     std::string ip;
     bool is_private = false;
     bool is_virtual = false;
+    // True for the address the kernel would use as the source for outbound
+    // traffic; this avoids stale DHCP aliases on the same interface.
+    bool is_preferred = false;
     int score = 0;
 };
 

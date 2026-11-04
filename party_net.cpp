@@ -1,8 +1,11 @@
 #include "party_net.h"
 
 #include <algorithm>
+#include <chrono>
+#include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <mutex>
 
 #ifdef _WIN32
 #ifndef WIN32_LEAN_AND_MEAN
@@ -17,6 +20,7 @@
 #include <net/if.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
+#include <unistd.h>
 #endif
 
 namespace party_net
@@ -50,11 +54,93 @@ bool is_link_local(const std::string &ip)
     return starts_with(ip, "169.254.");
 }
 
-int score_for(const std::string &name, const std::string &ip, bool is_virtual)
+// Lets the kernel pick the source address it would use for outbound traffic.
+// A UDP connect performs only a route lookup (no packet is sent), and catches
+// stale secondary DHCP aliases that still answer locally but are unreachable
+// from other devices.
+std::string route_source_ip()
+{
+#ifdef _WIN32
+    WSADATA wsa;
+    const bool started = WSAStartup(MAKEWORD(2, 2), &wsa) == 0;
+#endif
+    std::string result;
+#ifdef _WIN32
+    SOCKET s = socket(AF_INET, SOCK_DGRAM, 0);
+    if (s == INVALID_SOCKET)
+    {
+        if (started)
+            WSACleanup();
+        return result;
+    }
+#else
+    int s = socket(AF_INET, SOCK_DGRAM, 0);
+    if (s < 0)
+        return result;
+#endif
+    sockaddr_in dst;
+    std::memset(&dst, 0, sizeof(dst));
+    dst.sin_family = AF_INET;
+    dst.sin_port = htons(9);
+    // TEST-NET-1: never routed on a normal network, but route lookup is all
+    // this needs.
+    inet_pton(AF_INET, "192.0.2.1", &dst.sin_addr);
+    if (connect(s, (sockaddr *)&dst, sizeof(dst)) == 0)
+    {
+        sockaddr_in src;
+        std::memset(&src, 0, sizeof(src));
+#ifdef _WIN32
+        int len = (int)sizeof(src);
+#else
+        socklen_t len = (socklen_t)sizeof(src);
+#endif
+        if (getsockname(s, (sockaddr *)&src, &len) == 0 && src.sin_family == AF_INET)
+        {
+            char buf[INET_ADDRSTRLEN] = {0};
+            if (inet_ntop(AF_INET, &src.sin_addr, buf, sizeof(buf)))
+                result = buf;
+        }
+    }
+#ifdef _WIN32
+    closesocket(s);
+    if (started)
+        WSACleanup();
+#else
+    close(s);
+#endif
+    return result;
+}
+
+std::string preferred_ip()
+{
+    static std::mutex mu;
+    static std::chrono::steady_clock::time_point checked{};
+    static std::string cached;
+    std::lock_guard<std::mutex> lock(mu);
+    const auto now = std::chrono::steady_clock::now();
+    if (now - checked < std::chrono::seconds(3))
+        return cached;
+    cached = route_source_ip();
+    checked = now;
+    return cached;
+}
+
+uint32_t ipv4_key(const std::string &ip)
+{
+    unsigned a = 0, b = 0, c = 0, d = 0;
+    if (std::sscanf(ip.c_str(), "%u.%u.%u.%u", &a, &b, &c, &d) != 4)
+        return 0xFFFFFFFFu;
+    return (a << 24) | (b << 16) | (c << 8) | d;
+}
+
+int score_for(const std::string &name, const std::string &ip, bool is_virtual,
+              bool is_preferred)
 {
     int score = 0;
     if (is_private_ip(ip))
         score += 100;
+    if (is_preferred)
+        score += 60;
     if (is_link_local(ip))
         score -= 80;
     if (is_virtual)
@@ -96,14 +182,16 @@ std::string narrow_w(const wchar_t *w)
 }
 #endif
 
-Interface make_interface(const std::string &name, const std::string &ip)
+Interface make_interface(const std::string &name, const std::string &ip,
+                         const std::string &preferred)
 {
     Interface i;
     i.name = name;
     i.ip = ip;
     i.is_private = is_private_ip(ip);
     i.is_virtual = virtual_name(name);
-    i.score = score_for(name, ip, i.is_virtual);
+    i.is_preferred = !preferred.empty() && ip == preferred;
+    i.score = score_for(name, ip, i.is_virtual, i.is_preferred);
     return i;
 }
 
@@ -119,6 +207,7 @@ std::string interface_label(const Interface &iface)
 std::vector<Interface> list()
 {
     std::vector<Interface> out;
+    const std::string preferred = preferred_ip();
 #ifdef _WIN32
     ULONG size = 15000;
     std::vector<unsigned char> buf(size);
@@ -153,7 +242,7 @@ std::vector<Interface> list()
             char ip[INET_ADDRSTRLEN] = {0};
             if (!inet_ntop(AF_INET, &sin->sin_addr, ip, sizeof(ip)))
                 continue;
-            out.push_back(make_interface(name, ip));
+            out.push_back(make_interface(name, ip, preferred));
         }
     }
 #else
@@ -170,14 +259,20 @@ std::vector<Interface> list()
         struct sockaddr_in *sin = (struct sockaddr_in *)ifa->ifa_addr;
         if (!inet_ntop(AF_INET, &sin->sin_addr, ip, sizeof(ip)))
             continue;
-        out.push_back(make_interface(ifa->ifa_name ? ifa->ifa_name : "", ip));
+        out.push_back(make_interface(ifa->ifa_name ? ifa->ifa_name : "", ip, preferred));
     }
     freeifaddrs(ifaddr);
 #endif
-    std::sort(out.begin(), out.end(), [](const Interface &a, const Interface &b) {
+    // Score first, then numeric IPv4 order. A plain string comparison puts
+    // 10.0.0.100 before 10.0.0.99, which can select a stale DHCP alias.
+    std::stable_sort(out.begin(), out.end(), [](const Interface &a, const Interface &b) {
         if (a.score != b.score)
             return a.score > b.score;
-        return a.ip < b.ip;
+        const uint32_t ka = ipv4_key(a.ip);
+        const uint32_t kb = ipv4_key(b.ip);
+        if (ka != kb)
+            return ka < kb;
+        return a.name < b.name;
     });
     return out;
 }

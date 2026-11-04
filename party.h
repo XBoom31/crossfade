@@ -49,6 +49,7 @@ struct PartyInterfaceInfo
     std::string ip;
     std::string label;
     bool is_private = false;
+    bool is_preferred = false;
 };
 
 struct PartyPendingRequest
