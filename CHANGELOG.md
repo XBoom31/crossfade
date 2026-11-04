@@ -4,6 +4,8 @@ All notable changes to crossfade are documented here.
 
 ## Unreleased
 
+## 0.1.5 - 2026-11-04
+
 ### Added
 
 - **Party mode** — start a local-network listening party from the new **Party**
