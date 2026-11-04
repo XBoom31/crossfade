@@ -39,24 +39,6 @@ static std::string expand_tilde(const std::string &p)
     return p;
 }
 
-static std::string xml_escape(const std::string &s)
-{
-    std::string out;
-    out.reserve(s.size());
-    for (char c : s)
-    {
-        switch (c)
-        {
-        case '&': out += "&amp;"; break;
-        case '<': out += "&lt;"; break;
-        case '>': out += "&gt;"; break;
-        case '"': out += "&quot;"; break;
-        default: out += c;
-        }
-    }
-    return out;
-}
-
 static void export_playlist_file(const Playlist &pl, const std::string &path_raw, bool xspf)
 {
     const std::string path = expand_tilde(path_raw);
@@ -69,34 +51,7 @@ static void export_playlist_file(const Playlist &pl, const std::string &path_raw
                   "Could not write " + path);
         return;
     }
-    if (xspf)
-    {
-        out << "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
-            << "<playlist version=\"1\" xmlns=\"http://xspf.org/ns/0/\">\n"
-            << "  <title>" << xml_escape(pl.name) << "</title>\n"
-            << "  <trackList>\n";
-        for (const Track &t : pl.tracks)
-        {
-            out << "    <track>\n"
-                << "      <location>" << xml_escape(t.url) << "</location>\n"
-                << "      <title>" << xml_escape(t.title) << "</title>\n"
-                << "      <creator>" << xml_escape(t.artist) << "</creator>\n"
-                << "      <album>" << xml_escape(t.album) << "</album>\n"
-                << "      <duration>" << t.duration_sec * 1000 << "</duration>\n"
-                << "    </track>\n";
-        }
-        out << "  </trackList>\n</playlist>\n";
-    }
-    else
-    {
-        out << "#EXTM3U\n";
-        for (const Track &t : pl.tracks)
-        {
-            out << "#EXTINF:" << t.duration_sec << ","
-                << t.artist << " - " << t.title << "\n"
-                << t.url << "\n";
-        }
-    }
+    out << (xspf ? playlist_xspf(pl) : playlist_m3u(pl));
     out.close();
     ui_notify(UiNotifyType::Success,
               xspf ? "Exported as XSPF" : "Exported as M3U",

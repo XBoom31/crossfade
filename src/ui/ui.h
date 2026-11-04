@@ -131,6 +131,8 @@ std::vector<Track> load_playlist_tracks(const std::string &name);
 std::vector<std::string> get_playlist_names();
 void delete_playlist(const std::string &name);
 void rename_playlist(const std::string &old_name, const std::string &new_name);
+std::string playlist_m3u(const Playlist &playlist);
+std::string playlist_xspf(const Playlist &playlist);
 
 // Lyrics cache (~/.config/p100/lyrics/<video_id>.json). One file per track;
 // loading never touches the network. A definitive "no lyrics" result is

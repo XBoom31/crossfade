@@ -5,6 +5,7 @@
 
 #include <filesystem>
 #include <fstream>
+#include <sstream>
 #include <string>
 #include <sys/stat.h>
 
@@ -14,6 +15,62 @@ std::string sanitize_filename(const std::string &name)
 }
 
 using persist::json_escape;
+
+namespace
+{
+std::string xml_escape(const std::string &s)
+{
+    std::string out;
+    out.reserve(s.size());
+    for (char c : s)
+    {
+        switch (c)
+        {
+        case '&': out += "&amp;"; break;
+        case '<': out += "&lt;"; break;
+        case '>': out += "&gt;"; break;
+        case '"': out += "&quot;"; break;
+        case '\'': out += "&apos;"; break;
+        default: out += c; break;
+        }
+    }
+    return out;
+}
+} // namespace
+
+std::string playlist_m3u(const Playlist &pl)
+{
+    std::ostringstream out;
+    out << "#EXTM3U\n";
+    for (const Track &t : pl.tracks)
+    {
+        out << "#EXTINF:" << t.duration_sec << "," << t.artist << " - " << t.title
+            << "\n"
+            << t.url << "\n";
+    }
+    return out.str();
+}
+
+std::string playlist_xspf(const Playlist &pl)
+{
+    std::ostringstream out;
+    out << "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+        << "<playlist version=\"1\" xmlns=\"http://xspf.org/ns/0/\">\n"
+        << "  <title>" << xml_escape(pl.name) << "</title>\n"
+        << "  <trackList>\n";
+    for (const Track &t : pl.tracks)
+    {
+        out << "    <track>\n"
+            << "      <location>" << xml_escape(t.url) << "</location>\n"
+            << "      <title>" << xml_escape(t.title) << "</title>\n"
+            << "      <creator>" << xml_escape(t.artist) << "</creator>\n"
+            << "      <album>" << xml_escape(t.album) << "</album>\n"
+            << "      <duration>" << t.duration_sec * 1000 << "</duration>\n"
+            << "    </track>\n";
+    }
+    out << "  </trackList>\n</playlist>\n";
+    return out.str();
+}
 
 std::string playlists_dir()
 {
