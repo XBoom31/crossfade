@@ -25,6 +25,13 @@ if [ -n "$SHARE_DIR" ] && [ -x "$SHARE_DIR/venv/bin/ytmusicapi" ]; then
     exec "$SHARE_DIR/venv/bin/ytmusicapi" "${AUTH_ARGS[@]}" "$@"
 fi
 
+# Dev builds resolve the source tree as SHARE_DIR; the installed venv still
+# lives in the per-user data dir created by install.sh.
+USER_SHARE="${XDG_DATA_HOME:-$HOME/.local/share}/crossfade"
+if [ -x "$USER_SHARE/venv/bin/ytmusicapi" ]; then
+    exec "$USER_SHARE/venv/bin/ytmusicapi" "${AUTH_ARGS[@]}" "$@"
+fi
+
 if [ -n "$SHARE_DIR" ] && [ -x "$SHARE_DIR/py/bin/ytmusicapi" ]; then
     exec "$SHARE_DIR/py/bin/ytmusicapi" "${AUTH_ARGS[@]}" "$@"
 fi

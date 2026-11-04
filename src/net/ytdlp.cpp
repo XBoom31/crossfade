@@ -258,9 +258,27 @@ static std::string backend_python()
     // Per-user venv created by install.sh (installed share dir).
     if (std::string cand = resolve_file("venv/bin/python"); !cand.empty())
         return cand;
-    // Historical dev layout: <project>/py/bin/python.
+    // Historical dev layout: <project>/py/bin/python. Kept for existing
+    // checkouts; the repo's py/ directory is now the shared backend package.
     if (std::string cand = resolve_file("py/bin/python"); !cand.empty())
         return cand;
+    // install.sh puts the venv in the per-user share dir. A dev build in
+    // build/ resolves the source tree as its share dir, so look there too.
+    {
+        std::string base;
+        if (const char *xdg = getenv("XDG_DATA_HOME"); xdg && *xdg)
+            base = xdg;
+        else if (const char *home = getenv("HOME"); home && *home)
+            base = std::string(home) + "/.local/share";
+        if (!base.empty())
+        {
+            std::string cand = base + "/crossfade/venv/bin/python";
+            struct stat st;
+            if (stat(cand.c_str(), &st) == 0 && S_ISREG(st.st_mode) &&
+                access(cand.c_str(), X_OK) == 0)
+                return cand;
+        }
+    }
     return "python3"; // fall back to a system interpreter
 #endif
 }
