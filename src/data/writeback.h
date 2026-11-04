@@ -10,6 +10,7 @@ struct Track;
 // never contend with each other on the backend pipe. Jobs are network-bound;
 // callers return immediately.
 void start_writeback_worker();
+void stop_writeback_worker();
 void writeback_enqueue(std::function<void()> job);
 
 // Master switch (Settings checkbox, off by default). When disabled, every

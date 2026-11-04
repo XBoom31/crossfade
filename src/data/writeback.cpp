@@ -11,6 +11,7 @@
 #include <map>
 #include <mutex>
 #include <set>
+#include <atomic>
 #include <thread>
 
 namespace
@@ -19,6 +20,8 @@ std::mutex wb_mutex;
 std::condition_variable wb_cv;
 std::deque<std::function<void()>> wb_queue;
 bool wb_started = false;
+std::atomic<bool> wb_quit{false};
+std::thread wb_thread;
 // Master switch: account mutations stay local unless the user opts in.
 std::atomic<bool> g_wb_enabled{false};
 
@@ -29,7 +32,9 @@ void writeback_worker()
         std::function<void()> job;
         {
             std::unique_lock<std::mutex> lock(wb_mutex);
-            wb_cv.wait(lock, [] { return !wb_queue.empty(); });
+            wb_cv.wait(lock, [] { return wb_quit.load() || !wb_queue.empty(); });
+            if (wb_quit.load() && wb_queue.empty())
+                return;
             job = std::move(wb_queue.front());
             wb_queue.pop_front();
         }
@@ -88,8 +93,23 @@ void start_writeback_worker()
     if (!wb_started)
     {
         wb_started = true;
-        std::thread(writeback_worker).detach();
+        wb_quit.store(false);
+        wb_thread = std::thread(writeback_worker);
     }
+}
+
+void stop_writeback_worker()
+{
+    {
+        std::lock_guard<std::mutex> lock(wb_mutex);
+        if (!wb_started)
+            return;
+        wb_quit.store(true);
+    }
+    wb_cv.notify_all();
+    if (wb_thread.joinable())
+        wb_thread.join();
+    wb_started = false;
 }
 
 void writeback_set_enabled(bool enabled)

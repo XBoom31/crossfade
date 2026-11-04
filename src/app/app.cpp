@@ -3635,6 +3635,8 @@ int app_run()
     party_stop();
     DLOG("shutdown: backend stop");
     stop_backend();
+    DLOG("shutdown: writeback");
+    stop_writeback_worker();
     DLOG("shutdown: tasks");
     tasks::shutdown();
     DLOG("shutdown: textures");
