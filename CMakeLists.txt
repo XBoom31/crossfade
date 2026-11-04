@@ -138,6 +138,36 @@ install(FILES
 install(DIRECTORY assets/fonts DESTINATION ${CMAKE_INSTALL_DATADIR}/crossfade/assets)
 install(PROGRAMS scripts/crossfade-login DESTINATION ${CMAKE_INSTALL_BINDIR})
 
+# ---- Party mode unit tests (off by default; ./mk stays unchanged) ----
+option(CROSSFADE_BUILD_TESTS "Build crossfade unit tests" OFF)
+if(CROSSFADE_BUILD_TESTS)
+    enable_testing()
+    foreach(party_test party_link party_queue party_util)
+        add_executable(test_${party_test} tests/test_${party_test}.cpp
+            ${party_test}.cpp)
+        target_include_directories(test_${party_test} PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR})
+        target_link_libraries(test_${party_test} Threads::Threads)
+        add_test(NAME ${party_test} COMMAND test_${party_test})
+    endforeach()
+    if(WIN32)
+        target_link_libraries(test_party_util bcrypt)
+    endif()
+
+    # Headless HTTP harness used by scripts/party-smoke-test.sh.
+    add_executable(party_smoke_server
+        tests/party_smoke_server.cpp
+        party_server.cpp
+        party_util.cpp
+    )
+    target_include_directories(party_smoke_server PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR} external)
+    target_link_libraries(party_smoke_server Threads::Threads)
+    if(WIN32)
+        target_link_libraries(party_smoke_server ws2_32 iphlpapi bcrypt)
+    endif()
+endif()
+
 if(UNIX)
     install(FILES packaging/crossfade.desktop DESTINATION ${CMAKE_INSTALL_DATADIR}/applications)
     install(FILES assets/crossfade.svg DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/scalable/apps)
