@@ -1,3 +1,4 @@
+#include "tasks.h"
 #include "ui.h"
 #include "texture.h"
 #include "ui_components.h"
@@ -435,7 +436,7 @@ static void begin_station(AppState &state, const Track &seed, int plays, bool sw
         state.current_tab = Tab::Radio;
     }
 
-    std::thread([&state, seed_copy, plays, token]() {
+    tasks::spawn([&state, seed_copy, plays, token]() {
         std::vector<Track> results;
         bool ok = false;
         try
@@ -469,7 +470,7 @@ static void begin_station(AppState &state, const Track &seed, int plays, bool sw
         state.radio_failed = !ok;
         state.radio_loading = false;
         state.repaint_requested = true;
-    }).detach();
+    });
 }
 
 // ----------------------------------------------------------------------

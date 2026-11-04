@@ -1,3 +1,4 @@
+#include "tasks.h"
 #include "ui.h"
 #include "ytdlp.h"
 #include "texture.h"
@@ -274,9 +275,9 @@ void open_artist_view(AppState &state, const std::string &browse_id,
     state.current_tab = Tab::Artist;
     state.current_playlist_source = PlaylistSource::ARTIST;
 
-    std::thread([&state, browse_id]() {
+    tasks::spawn([&state, browse_id]() {
         fetch_artist_into(state, browse_id);
-    }).detach();
+    });
 }
 
 void open_artist_from_track(AppState &state, const Track &track)
@@ -317,7 +318,7 @@ void open_artist_from_track(AppState &state, const Track &track)
     state.current_tab = Tab::Artist;
     state.current_playlist_source = PlaylistSource::ARTIST;
 
-    std::thread([&state, track]() {
+    tasks::spawn([&state, track]() {
         std::string artist_id, artist_name;
         if (fetch_artist_for_track(track.id, artist_id, artist_name))
         {
@@ -363,7 +364,7 @@ void open_artist_from_track(AppState &state, const Track &track)
         state.artist_ready = true;
         state.artist_loading = false;
         state.repaint_requested = true;
-    }).detach();
+    });
 }
 
 void close_artist_view(AppState &state)
@@ -677,9 +678,9 @@ void draw_artist_panel(AppState &state)
                 state.artist_failed = false;
                 state.artist_loading = true;
                 state.repaint_requested = true;
-                std::thread([&state, id = state.artist_browse_id]() {
+                tasks::spawn([&state, id = state.artist_browse_id]() {
                     fetch_artist_into(state, id);
-                }).detach();
+                });
             }
         }
         else
@@ -731,10 +732,11 @@ void draw_artist_panel(AppState &state)
             {
                 state.artist_songs_loading = true;
                 state.repaint_requested = true;
-                std::thread(load_more_artist_songs, std::ref(state),
-                            state.artist_browse_id, state.artist_songs_browse_id,
-                            state.artist_songs_offset)
-                    .detach();
+                tasks::spawn([&state, browse = state.artist_browse_id,
+                              songs = state.artist_songs_browse_id,
+                              offset = state.artist_songs_offset]() {
+                    load_more_artist_songs(state, browse, songs, offset);
+                });
             }
         }
     }

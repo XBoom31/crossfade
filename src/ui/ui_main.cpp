@@ -1,3 +1,4 @@
+#include "tasks.h"
 #include "ui.h"
 #include "ui_backdrop.h"
 #include "ui_components.h"
@@ -1381,7 +1382,7 @@ static void draw_list_page(AppState &state, const AppLayout &layout, float width
         {
             state.home_loading_more = true;
             int current_count = tracks ? (int)tracks->size() : 0;
-            std::thread([&state, current_count]() {
+            tasks::spawn([&state, current_count]() {
                 auto more = fetch_recommendations(true, current_count + 40);
                 prefetch_urls_for(more, 10);
                 auto cur = std::atomic_load(&state.recommendations);
@@ -1409,7 +1410,7 @@ static void draw_list_page(AppState &state, const AppLayout &layout, float width
                 }
                 state.home_loading_more = false;
                 state.repaint_requested = true;
-            }).detach();
+            });
         }
     }
 

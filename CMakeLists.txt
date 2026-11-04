@@ -54,6 +54,7 @@ target_link_libraries(imgui PUBLIC SDL2::SDL2 OpenGL::GL)
 set(SOURCES
     src/main.cpp
     src/app/app.cpp
+    src/core/tasks.cpp
     src/data/config.cpp
     src/data/accent.cpp
     src/data/paths.cpp
@@ -280,8 +281,8 @@ if(CROSSFADE_BUILD_TESTS)
 
     add_executable(test_session tests/test_session.cpp
         src/playback/session.cpp src/data/cache.cpp src/ui/playlists_io.cpp
-        src/net/ytdlp.cpp src/data/paths.cpp src/data/library.cpp
-        external/sqlite/sqlite3.c)
+        src/core/tasks.cpp src/net/ytdlp.cpp src/data/paths.cpp
+        src/data/library.cpp external/sqlite/sqlite3.c)
     target_include_directories(test_session PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}
         ${CMAKE_CURRENT_SOURCE_DIR}/src
@@ -300,8 +301,8 @@ if(CROSSFADE_BUILD_TESTS)
     add_test(NAME session COMMAND test_session)
 
     add_executable(test_playlists tests/test_playlists.cpp
-        src/ui/playlists_io.cpp src/net/ytdlp.cpp src/data/paths.cpp
-        src/data/library.cpp external/sqlite/sqlite3.c)
+        src/ui/playlists_io.cpp src/core/tasks.cpp src/net/ytdlp.cpp
+        src/data/paths.cpp src/data/library.cpp external/sqlite/sqlite3.c)
     target_include_directories(test_playlists PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}
         ${CMAKE_CURRENT_SOURCE_DIR}/src

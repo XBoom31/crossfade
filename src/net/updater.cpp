@@ -1,3 +1,4 @@
+#include "tasks.h"
 #include "updater.h"
 #include "version.h"
 
@@ -142,7 +143,7 @@ void check_async()
         g_status.message.clear();
     }
 
-    std::thread([]()
+    tasks::spawn([]()
                 {
         std::string out;
         const std::string cmd =
@@ -173,8 +174,7 @@ void check_async()
             wake = g_wake;
         }
         if (wake)
-            wake(); })
-        .detach();
+            wake(); });
 #endif
 }
 

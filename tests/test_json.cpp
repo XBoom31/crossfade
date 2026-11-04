@@ -101,6 +101,24 @@ int main()
     }
 
     {
+        // Deeply nested input is bounded and cannot make the scanner run away.
+        std::string deep = "{\"id\":\"x\",\"title\":\"X\",\"a\":";
+        for (int i = 0; i < 300; ++i)
+            deep += "{\"a\":";
+        deep += "1";
+        auto tracks = parse_track_array(deep);
+        check(tracks.empty(), "deep nesting bounded");
+    }
+
+    {
+        // Oversized backend replies are rejected before scanning.
+        std::string huge(16u * 1024u * 1024u + 1u, 'x');
+        check(parse_track_array(huge).empty(), "oversized input rejected");
+        Lyrics lx;
+        check(!parse_lyrics_json(huge, lx), "oversized lyrics rejected");
+    }
+
+    {
         Lyrics lx;
         check(parse_lyrics_json(
                   "{\"synced\":true,\"lines\":[{\"t\":1,\"text\":\"A：B\"}]}", lx),

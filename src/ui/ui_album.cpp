@@ -1,3 +1,4 @@
+#include "tasks.h"
 #include "ui.h"
 #include "ytdlp.h"
 #include "texture.h"
@@ -116,7 +117,7 @@ static void start_album_download(AppState &state, const std::string &browse_id)
     state.album_download_done = 0;
     state.album_download_total = (int)ids.size();
 
-    std::thread([&state, ids]() {
+    tasks::spawn([&state, ids]() {
         int done = 0;
         for (const auto &id : ids)
         {
@@ -129,7 +130,7 @@ static void start_album_download(AppState &state, const std::string &browse_id)
         g_downloads_dirty = true;
         state.album_downloading = false;
         state.repaint_requested = true;
-    }).detach();
+    });
 }
 
 // Background album fetch shared by open_album_view and the Retry button on
@@ -217,9 +218,9 @@ void open_album_view(AppState &state, const std::string &browse_id)
     state.current_tab = Tab::Album;
     state.current_playlist_source = PlaylistSource::ALBUM;
 
-    std::thread([&state, browse_id]() {
+    tasks::spawn([&state, browse_id]() {
         fetch_album_into(state, browse_id);
-    }).detach();
+    });
 }
 
 void open_album_from_track(AppState &state, const Track &track)
@@ -255,7 +256,7 @@ void open_album_from_track(AppState &state, const Track &track)
     state.current_tab = Tab::Album;
     state.current_playlist_source = PlaylistSource::ALBUM;
 
-    std::thread([&state, track]() {
+    tasks::spawn([&state, track]() {
         std::string bid, bname;
         if (fetch_album_for_track(track.id, bid, bname))
         {
@@ -300,7 +301,7 @@ void open_album_from_track(AppState &state, const Track &track)
         state.album_ready = true;
         state.album_loading = false;
         state.repaint_requested = true;
-    }).detach();
+    });
 }
 
 void close_album_view(AppState &state)
@@ -644,9 +645,9 @@ void draw_album_panel(AppState &state)
                 state.album_failed = false;
                 state.album_loading = true;
                 state.repaint_requested = true;
-                std::thread([&state, id = state.album_browse_id]() {
+                tasks::spawn([&state, id = state.album_browse_id]() {
                     fetch_album_into(state, id);
-                }).detach();
+                });
             }
         }
         else

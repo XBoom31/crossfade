@@ -1,4 +1,5 @@
 #include "ui.h"
+#include "tasks.h"
 #include "party_util.h"
 #include "ytdlp.h"
 #include "texture.h"
@@ -1283,7 +1284,9 @@ void draw_settings_panel(AppState &state)
                 s_repair_total = (int)snapshot.size();
                 s_repair_covers = 0;
                 s_repair_lyrics = 0;
-                std::thread(repair_cache_worker, &state, std::move(snapshot)).detach();
+                tasks::spawn([&state, snapshot = std::move(snapshot)]() mutable {
+                    repair_cache_worker(&state, std::move(snapshot));
+                });
             }
         }
         settings_help("Re-download missing album covers and lyrics for downloaded songs.");

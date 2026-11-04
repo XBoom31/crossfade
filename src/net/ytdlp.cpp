@@ -858,6 +858,9 @@ static int json_get_int(const std::string &json, const std::string &key)
     return val;
 }
 
+static constexpr int kJsonMaxDepth = 256;
+static constexpr size_t kJsonMaxInput = 16u * 1024u * 1024u;
+
 static std::string json_find_object(const std::string &json, size_t key_pos)
 {
     size_t obj_start = json.rfind('{', key_pos);
@@ -881,7 +884,10 @@ static std::string json_find_object(const std::string &json, size_t key_pos)
         else if (c == '"')
             in_str = true;
         else if (c == '{')
-            depth++;
+        {
+            if (++depth > kJsonMaxDepth)
+                return "";
+        }
         else if (c == '}')
         {
             if (--depth == 0)
@@ -947,6 +953,8 @@ static void parse_track_object(const std::string &obj, Track &t)
 
 std::vector<Track> parse_track_array(const std::string &json)
 {
+    if (json.size() > kJsonMaxInput)
+        return {};
     std::vector<Track> tracks;
     size_t pos = 0;
     int count = 0;
@@ -1032,7 +1040,10 @@ static size_t json_object_end(const std::string &json, size_t obj_start)
         else if (c == '"')
             in_str = true;
         else if (c == '{')
-            depth++;
+        {
+            if (++depth > kJsonMaxDepth)
+                return std::string::npos;
+        }
         else if (c == '}')
         {
             if (--depth == 0)
@@ -1077,6 +1088,8 @@ static void normalize_lyric_text(std::string &s)
 
 bool parse_lyrics_json(const std::string &json, Lyrics &out)
 {
+    if (json.size() > kJsonMaxInput)
+        return false;
     if (json.empty() || json.find("\"error\"") != std::string::npos)
         return false;
 

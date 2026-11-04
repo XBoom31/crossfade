@@ -4,6 +4,11 @@
 
 // ----------------------------------------------------------------------
 // Application state
+//
+// Locking discipline (see docs/THREADING.md):
+//  - network-fed lists are atomic shared_ptr<const vector<...>> snapshots;
+//  - playback/UI scalars are atomics or UI-thread only;
+//  - vectors/maps are UI-thread owned; workers publish snapshots.
 struct AppState
 {
     // Current tab

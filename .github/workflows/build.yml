@@ -200,6 +200,13 @@ jobs:
         run: cmake --build build -j2
       - name: Run unit tests
         run: ctest --test-dir build --output-on-failure
+      - name: ThreadSanitizer tests
+        run: |
+          cmake -S . -B build-tsan -DCMAKE_BUILD_TYPE=Debug \
+            -DCMAKE_C_FLAGS="-fsanitize=thread -fno-omit-frame-pointer" \
+            -DCMAKE_CXX_FLAGS="-fsanitize=thread -fno-omit-frame-pointer"
+          cmake --build build-tsan -j2 --target test_party_link test_party_queue test_party_util test_library test_crossfade test_cache test_json test_session test_playlists test_settings
+          TSAN_OPTIONS=halt_on_error=1 ctest --test-dir build-tsan --output-on-failure
 
   python:
     runs-on: ubuntu-latest

@@ -1,3 +1,4 @@
+#include "tasks.h"
 #include "ui.h"
 #include "library.h"
 #include "paths.h"
@@ -211,14 +212,14 @@ void prefetch_album_cache(const std::string &browse_id)
     if (browse_id.empty())
         return;
     std::string path = album_cache_path(browse_id);
-    std::thread([browse_id, path]() {
+    tasks::spawn([browse_id, path]() {
         std::error_code ec;
         if (std::filesystem::exists(path, ec))
             return;
         Album album;
         if (fetch_album(browse_id, album))
             save_album_cache(album);
-    }).detach();
+    });
 }
 
 std::string artist_cache_dir()
@@ -329,12 +330,12 @@ void prefetch_artist_cache(const std::string &browse_id)
     if (browse_id.empty())
         return;
     std::string path = artist_cache_path(browse_id);
-    std::thread([browse_id, path]() {
+    tasks::spawn([browse_id, path]() {
         std::error_code ec;
         if (std::filesystem::exists(path, ec))
             return;
         ArtistInfo artist;
         if (fetch_artist(browse_id, artist))
             save_artist_cache(artist);
-    }).detach();
+    });
 }

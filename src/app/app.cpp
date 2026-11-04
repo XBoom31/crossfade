@@ -1,3 +1,4 @@
+#include "tasks.h"
 #include "imgui.h"
 #include "imgui_impl_sdl2.h"
 #include "imgui_impl_opengl3.h"
@@ -15,6 +16,7 @@
 #include <cstdlib>
 #include <cctype>
 #include <ctime>
+#include <csignal>
 #ifndef P100_WINDOWS
 #include <unistd.h>
 #endif
@@ -68,6 +70,14 @@ static class MprisPlayer *g_mpris = nullptr;
 static std::function<void(const std::string &)> g_main_event_cb;
 static std::function<void(const std::string &)> g_fade_event_cb;
 static std::mutex g_data_mutex;
+
+// SIGTERM/SIGINT request a clean shutdown (save session, stop workers, tear
+// down GL) instead of leaving the process to be killed mid-write.
+static volatile std::sig_atomic_t g_quit_requested = 0;
+static void handle_quit_signal(int)
+{
+    g_quit_requested = 1;
+}
 
 // Party HTTP workers call this after pushing work into the party inbox. It
 // must wake SDL_WaitEventTimeout() without touching ImGui from a worker
@@ -814,7 +824,7 @@ void prefetch_urls_for(const std::vector<Track> &tracks, size_t count,
     if (ids.empty())
         return;
 
-    std::thread([ids = std::move(ids), cancel_search_id]()
+    tasks::spawn([ids = std::move(ids), cancel_search_id]()
     {
         for (size_t i = 0; i < ids.size(); ++i)
         {
@@ -834,7 +844,7 @@ void prefetch_urls_for(const std::vector<Track> &tracks, size_t count,
             else
                 g_prefetched_urls[ids[i]] = url;
         }
-    }).detach();
+    });
 }
 
 // Warm stream URLs one at a time. The backend handles commands serially, so
@@ -859,7 +869,7 @@ void prefetch_urls_for_serial(const std::vector<Track> &tracks, size_t count,
     if (ids.empty())
         return;
 
-    std::thread([ids = std::move(ids), cancel_token, token]() {
+    tasks::spawn([ids = std::move(ids), cancel_token, token]() {
         for (const std::string &id : ids)
         {
             if (cancel_token && cancel_token->load() != token)
@@ -884,7 +894,7 @@ void prefetch_urls_for_serial(const std::vector<Track> &tracks, size_t count,
                 return;
             std::this_thread::sleep_for(std::chrono::milliseconds(120));
         }
-    }).detach();
+    });
 }
 
 // The tracks playback will touch next: the head of the single global queue.
@@ -929,7 +939,7 @@ static void maybe_sweep_missing_covers()
         return;
     if (g_cover_sweep_running.exchange(true))
         return;
-    std::thread(cover_sweep_worker, g_state.downloaded_tracks).detach();
+    tasks::spawn([tracks = g_state.downloaded_tracks]() { cover_sweep_worker(tracks); });
 }
 
 // Full downloads currently running (video_id -> nothing). Guards against
@@ -964,7 +974,7 @@ static void background_download(const std::string &video_id)
         }
     }
     g_bg_download_count.fetch_add(1);
-    std::thread([video_id]()
+    tasks::spawn([video_id]()
                 {
         std::string path = get_cached_audio_path(video_id);
         g_bg_download_count.fetch_sub(1);
@@ -973,8 +983,7 @@ static void background_download(const std::string &video_id)
             g_downloading.erase(video_id);
         }
         if (!path.empty())
-            g_downloads_dirty = true; })
-        .detach();
+            g_downloads_dirty = true; });
 }
 
 // While the current song plays, make sure the next one will start from the
@@ -1058,7 +1067,7 @@ static void finalize_recording()
     // Validate off-thread: mpv documents that seeks/stream switches can stop
     // the recorder outright, and a truncated or empty file must never reach
     // the cache as a "downloaded" song.
-    std::thread([temp, path, id, expected_duration]() mutable
+    tasks::spawn([temp, path, id, expected_duration]() mutable
                 {
         const double got = probe_audio_file_duration(temp);
         if (got <= 0.0 || (expected_duration > 0.0 && got < expected_duration - 5.0))
@@ -1083,8 +1092,7 @@ static void finalize_recording()
         if (path.empty() || rename(temp.c_str(), path.c_str()) != 0)
             return;
         g_downloads_dirty = true;
-        finalize_recorded_audio(id, path); })
-        .detach();
+        finalize_recorded_audio(id, path); });
 }
 
 // A track was skipped/stopped before finishing: drop the partial recording.
@@ -1447,7 +1455,7 @@ static bool maybe_start_endless_refill()
     g_endless_attempted = true;
     g_state.endless_loading = true;
     const std::string seed = g_state.current_track_id;
-    std::thread([seed]()
+    tasks::spawn([seed]()
                 {
         std::vector<Track> results;
         try {
@@ -1457,8 +1465,7 @@ static bool maybe_start_endless_refill()
                           std::make_shared<const std::vector<Track>>(std::move(results)));
         g_state.endless_ready = true;
         g_state.endless_loading = false;
-        g_state.repaint_requested = true; })
-        .detach();
+        g_state.repaint_requested = true; });
     return true;
 }
 
@@ -2253,7 +2260,12 @@ int app_run()
     }
 
     g_state.home_refreshing = true;
-    std::thread(load_recommendations, false).detach();
+    tasks::spawn([]() { load_recommendations(false); });
+
+#ifndef P100_WINDOWS
+    std::signal(SIGTERM, handle_quit_signal);
+    std::signal(SIGINT, handle_quit_signal);
+#endif
 
     // ---- Event callback ----
     g_main_event_cb = [&](const std::string &event)
@@ -2580,7 +2592,7 @@ int app_run()
     auto next_frame = last_save_time;
     auto last_activity_time = last_save_time;
 
-    while (running)
+    while (running && !g_quit_requested)
     {
 #ifndef P100_WINDOWS
         while (g_main_context_iteration(g_main_context_default(), FALSE))
@@ -3126,15 +3138,17 @@ int app_run()
                             g_play_retry_count = 0;
                         DLOG("spawn resolve id=%s url=%s%s", g_state.pending_video_id.c_str(),
                              g_state.pending_play_url.c_str(), fresh ? " (fresh)" : "");
-                        std::thread(resolve_audio,
-                                    g_state.pending_video_id,
-                                    g_state.pending_video_url,
-                                    g_state.pending_play_title,
-                                    g_state.pending_play_artist,
-                                    g_state.pending_play_thumbnail_url,
-                                    fresh,
-                                    g_play_generation.load())
-                            .detach();
+                        const std::string pending_id = g_state.pending_video_id;
+                        const std::string pending_url = g_state.pending_video_url;
+                        const std::string pending_title = g_state.pending_play_title;
+                        const std::string pending_artist = g_state.pending_play_artist;
+                        const std::string pending_thumb = g_state.pending_play_thumbnail_url;
+                        const std::uint64_t pending_gen = g_play_generation.load();
+                        tasks::spawn([pending_id, pending_url, pending_title, pending_artist,
+                                      pending_thumb, fresh, pending_gen]() {
+                            resolve_audio(pending_id, pending_url, pending_title,
+                                          pending_artist, pending_thumb, fresh, pending_gen);
+                        });
                         g_state.pending_play_url.clear();
                     }
                 }
@@ -3295,7 +3309,7 @@ int app_run()
                 g_state.refresh_requested = false;
                 g_state.home_refreshing = true;
                 g_state.status_text = "Loading...";
-                std::thread(load_recommendations, true).detach();
+                tasks::spawn([]() { load_recommendations(true); });
             }
 
             // Search: the UI debounces and snapshots the query; we run the
@@ -3306,14 +3320,14 @@ int app_run()
                 g_state.search_dirty = false;
                 std::string query = g_state.queued_search;
                 int expect_id = g_state.search_id;
-                std::thread(search_all_and_update, query, expect_id).detach();
+                tasks::spawn([query, expect_id]() { search_all_and_update(query, expect_id); });
             }
             if (g_state.artist_search_dirty)
             {
                 g_state.artist_search_dirty = false;
                 std::string query = g_state.queued_artist_search;
                 int expect_id = g_state.search_id;
-                std::thread(artist_search_and_update, query, expect_id).detach();
+                tasks::spawn([query, expect_id]() { artist_search_and_update(query, expect_id); });
             }
 
             // Lyrics: prefetch the current track's lyrics in the background
@@ -3336,9 +3350,11 @@ int app_run()
                     {
                         g_state.lyrics_seq++;
                         g_state.lyrics_loading = true;
-                        std::thread(load_lyrics_worker, g_state.lyrics_requested_id,
-                                    (int)g_state.lyrics_seq)
-                            .detach();
+                        const std::string lyrics_id = g_state.lyrics_requested_id;
+                        const int lyrics_seq = (int)g_state.lyrics_seq;
+                        tasks::spawn([lyrics_id, lyrics_seq]() {
+                            load_lyrics_worker(lyrics_id, lyrics_seq);
+                        });
                     }
                 }
             }
@@ -3601,6 +3617,7 @@ int app_run()
         }
     }
 
+    DLOG("shutdown: save session");
     // ---- Save session on shutdown ----
     save_session(g_state, *g_player,
                  (g_cf.pending || g_cf.active) ? (int)g_cf.user_volume : -1);
@@ -3614,21 +3631,42 @@ int app_run()
     discard_recording();
 
     // ---- Cleanup ----
+    DLOG("shutdown: party stop");
     party_stop();
+    DLOG("shutdown: backend stop");
     stop_backend();
+    DLOG("shutdown: tasks");
+    tasks::shutdown();
+    DLOG("shutdown: textures");
     clear_texture_cache();
+    DLOG("shutdown: players");
     g_player.reset();
+    g_fade_player.reset();
+    g_player_raw = nullptr;
+    g_fade_player_raw = nullptr;
     mpris.reset();
+    DLOG("shutdown: imgui gl");
     ImGui_ImplOpenGL3_Shutdown();
+    DLOG("shutdown: imgui sdl");
     ImGui_ImplSDL2_Shutdown();
     ImGui::DestroyContext();
+    DLOG("shutdown: gl context");
     SDL_GL_DeleteContext(gl_context);
+    DLOG("shutdown: window");
     SDL_DestroyWindow(window);
+    DLOG("shutdown: sdl quit");
     SDL_Quit();
+    DLOG("shutdown: notify");
 
 #ifndef P100_WINDOWS
     if (notify_init_done)
         notify_uninit();
 #endif
-    return 0;
+    DLOG("shutdown: done");
+    // GLib/GDBus and SDL can leave atexit/static teardown waiting on helper
+    // threads after main returns. Every resource we own has been released
+    // above, so leave the process deterministically instead of hanging on a
+    // library's static destructor.
+    std::fflush(nullptr);
+    std::_Exit(0);
 }

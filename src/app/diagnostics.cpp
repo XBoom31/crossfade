@@ -90,17 +90,11 @@ LONG WINAPI crash_filter(EXCEPTION_POINTERS *info)
 #else
 void posix_crash_handler(int sig)
 {
-    char ts[32] = "unknown";
-    const std::time_t now = std::time(nullptr);
-    std::tm tm{};
-#ifdef _WIN32
-    if (localtime_s(&tm, &now) == 0)
-#else
-    if (localtime_r(&now, &tm) != nullptr)
-#endif
-        std::strftime(ts, sizeof(ts), "%Y%m%d-%H%M%S", &tm);
+    // Keep the signal path free of allocation and locale/tz calls. An epoch
+    // suffix is enough to distinguish dumps and std::time() is safe here.
+    const long long now = (long long)std::time(nullptr);
     char path[1200];
-    std::snprintf(path, sizeof(path), "%s/crash-%s.log", g_crash_dir_buf, ts);
+    std::snprintf(path, sizeof(path), "%s/crash-%lld.log", g_crash_dir_buf, now);
     int fd = ::open(path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
     if (fd >= 0)
     {

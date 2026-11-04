@@ -1,3 +1,4 @@
+#include "tasks.h"
 #include "party.h"
 
 #include "party_link.h"
@@ -253,7 +254,7 @@ void cache_art_async(const std::string &id, const std::string &url)
 {
     if (id.empty() || url.empty())
         return;
-    std::thread([id, url]() {
+    tasks::spawn([id, url]() {
         std::string path = get_cached_thumbnail_path(url);
         if (path.empty())
             return;
@@ -261,7 +262,7 @@ void cache_art_async(const std::string &id, const std::string &url)
         if (g_art.size() > 1500)
             g_art.clear();
         g_art[id] = path;
-    }).detach();
+    });
 }
 
 void finish_waiter(const std::shared_ptr<AddWaiter> &w, party_api::AddResult r)
@@ -582,7 +583,7 @@ void meta_cache_put(const Track &t)
 bool fetch_meta_bounded(const std::string &id, Track &out, std::string &error)
 {
     auto w = std::make_shared<MetaWait>();
-    std::thread([w, id]() {
+    tasks::spawn([w, id]() {
         Track t;
         std::string err;
         bool ok = fetch_track_meta(id, t, err);
@@ -592,7 +593,7 @@ bool fetch_meta_bounded(const std::string &id, Track &out, std::string &error)
         w->error = std::move(err);
         w->done = true;
         w->cv.notify_all();
-    }).detach();
+    });
 
     std::unique_lock<std::mutex> lock(w->m);
     if (!w->cv.wait_for(lock, std::chrono::seconds(8), [&] { return w->done; }))
