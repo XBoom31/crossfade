@@ -279,7 +279,14 @@ static float ease_in_cubic(float t)
 
 void ui_notify_draw()
 {
-    std::lock_guard<std::mutex> lock(g_notify_mutex);
+    // Action callbacks can call ui_notify() themselves (the undo buttons do).
+    // Defer them until the toast list is no longer being iterated and the
+    // mutex is released, otherwise the callback can reallocate g_toasts while
+    // a Toast reference is live, or deadlock trying to lock the mutex again.
+    void (*pending_action)() = nullptr;
+    bool pending_open_settings = false;
+
+    std::unique_lock<std::mutex> lock(g_notify_mutex);
     if (g_toasts.empty())
         return;
 
@@ -482,9 +489,9 @@ void ui_notify_draw()
             if (ui_ghost_button(t.action.c_str(), ImVec2(0, m.control_h)))
             {
                 if (t.action_fn)
-                    t.action_fn();
+                    pending_action = t.action_fn;
                 else if (g_open_settings)
-                    g_open_settings();
+                    pending_open_settings = true;
                 t.closing = true;
                 t.close_start = now;
             }
@@ -493,6 +500,12 @@ void ui_notify_draw()
         ImGui::End();
         ImGui::PopStyleVar(3);
     }
+
+    lock.unlock();
+    if (pending_action)
+        pending_action();
+    else if (pending_open_settings && g_open_settings)
+        g_open_settings();
 }
 
 bool ui_notify_animating()

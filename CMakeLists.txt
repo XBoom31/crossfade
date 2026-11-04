@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(crossfade VERSION 0.1.10 LANGUAGES CXX)
+project(crossfade VERSION 0.1.10 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -79,7 +79,10 @@ set(SOURCES
     party_net.cpp
     party_server.cpp
     updater.cpp
+    library.cpp
+    diagnostics.cpp
     external/qrcodegen.cpp
+    external/sqlite/sqlite3.c
 )
 
 if(P100_WIN)
@@ -97,6 +100,13 @@ add_executable(crossfade ${SOURCES})
 target_compile_definitions(crossfade PRIVATE
     P100_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
     CROSSFADE_VERSION="${PROJECT_VERSION}"
+    SQLITE_ENABLE_FTS5=1
+    SQLITE_OMIT_LOAD_EXTENSION=1
+    SQLITE_THREADSAFE=1
+)
+
+target_include_directories(crossfade PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/external/sqlite
 )
 
 if(P100_WIN)
@@ -111,6 +121,7 @@ if(P100_WIN)
         iphlpapi
         bcrypt
         shell32
+        dbghelp
     )
 else()
     target_include_directories(crossfade PRIVATE
@@ -156,6 +167,21 @@ if(CROSSFADE_BUILD_TESTS)
     if(WIN32)
         target_link_libraries(test_party_util bcrypt)
     endif()
+
+    add_executable(test_library tests/test_library.cpp
+        library.cpp ytdlp.cpp paths.cpp external/sqlite/sqlite3.c)
+    target_include_directories(test_library PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${CMAKE_CURRENT_SOURCE_DIR}/external/sqlite
+        ${CMAKE_CURRENT_SOURCE_DIR}/external/imgui
+        ${CMAKE_CURRENT_SOURCE_DIR}/external)
+    target_compile_definitions(test_library PRIVATE
+        P100_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
+        SQLITE_ENABLE_FTS5=1
+        SQLITE_OMIT_LOAD_EXTENSION=1
+        SQLITE_THREADSAFE=1)
+    target_link_libraries(test_library Threads::Threads)
+    add_test(NAME library COMMAND test_library)
 
     # Headless HTTP harness used by scripts/party-smoke-test.sh.
     add_executable(party_smoke_server

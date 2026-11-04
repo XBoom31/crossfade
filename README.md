@@ -360,6 +360,11 @@ YouTube Music; **Enter** searches immediately. Results have **Songs / Albums / A
 Playlists** tabs. While a search is open, the local list filters as you type. Clear the
 query or press **Esc** to go back.
 
+On the Home tab, the **Library** button next to the search box switches the same field to
+your local library. It searches titles, artists, albums, and playlists stored in
+`library.db` with FTS5, without contacting YouTube. The scope button is remembered for the
+session; press **Library** again to return to YouTube search.
+
 ### Playing and queueing
 
 - **Double-click** a row to play it (single tap on touchscreens).
@@ -414,6 +419,32 @@ Local-only use is fully supported.
 - **Sleep timer** — end of track or 15/30/45/60/90 minutes, with a gentle volume fade.
 - **Accent colour** — follows the XDG desktop portal (Plasma, recent GNOME); otherwise a
   date-seeded colour that rolls at local midnight. Override with `P100_ACCENT`.
+
+### Libraries, undo, and diagnostics
+
+Crossfade keeps your local library in a single SQLite database with full-text search. Likes,
+playlists, play counts, history, saved albums/artists, the queue, and downloaded-track metadata
+live in `library.db`;
+`settings.json` and `session.json` stay small JSON files. On first launch, existing JSON data
+is imported once, a timestamped `library-backup-*` copy is written, and the JSON files are
+left in place as a fallback. If the database cannot be opened, crossfade keeps using the old
+JSON files and retries on the next launch.
+
+- **Library search** — Home tab → **Library** next to the search box.
+- **Undo** — clearing **Up Next**, deleting a playlist, and the reset buttons in
+  **Settings → Danger Zone** show an **Undo** toast. Undo restores the in-memory state and
+  writes it back to the database.
+- **Diagnostics** — **Settings → Diagnostics** copies a plain-text diagnostics bundle
+  (version, paths, library status, recent log), runs an SQLite integrity check, writes a
+  timestamped database backup, opens the config folder, and shows recent log lines.
+- **Safe mode** — the same section toggles safe mode for the next launch, or start with
+  `P100_SAFE_MODE=1`. Safe mode disables the backdrop shader, album backdrop, warm stream
+  resolver, and update checks. Saved preferences are not modified.
+
+Crashes write a local dump to the config directory (`crash-*.log` on Linux/BSD,
+`crash-*.dmp` on Windows) instead of only disappearing. Nothing is uploaded automatically;
+use **Copy diagnostics** when reporting a problem.
+
 
 ## Party mode
 
@@ -504,14 +535,16 @@ history.
 |---|---|
 | `settings.json` | Every Settings-panel option (crossfade, normalization, animations, UI scale, …) |
 | `session.json` | Resume state: last track, position, volume, view |
+| `library.db` | **Local library** — SQLite database with tracks, downloaded-track metadata, likes, playlists, queue, history, play counts, play log, saved albums/artists, and the FTS5 search index |
+| `library-backup-*` | Timestamped pre-migration or manual library backups |
 | `browser.json` | **Your cookie auth — treat it like a password** (git-ignored, never shipped) |
 | `browseroauth.json` | OAuth token when using OAuth mode |
-| `liked.json` | Liked tracks |
-| `playlists/` | One JSON file per local playlist |
-| `albums.json`, `artists.json` | Saved album/artist metadata |
+| `liked.json` | Legacy liked tracks; imported into `library.db` and kept as a fallback |
+| `playlists/` | Legacy one-JSON-file-per-playlist data; imported into `library.db` and kept as a fallback |
+| `albums.json`, `artists.json` | Legacy saved album/artist metadata; imported into `library.db` |
 | `album_cache/`, `artist_cache/` | Cached album/artist headers and track lists (instant reopen, offline) |
-| `history.json` | Recently played timeline |
-| `play_counts.json`, `play_log.json` | Play counts and per-play log used by Stats |
+| `history.json` | Legacy recently played timeline; imported into `library.db` |
+| `play_counts.json`, `play_log.json` | Legacy play counts/log used by Stats; imported into `library.db` |
 | `radio_last.cache` | Last radio station, so it reopens instantly |
 | `recommendations_cache.json` | Cached Home feed |
 | `youtube_playlist_*.json` | Cached mirrors of your YouTube account playlists |
@@ -520,6 +553,7 @@ history.
 | `lyrics/` | Per-track lyrics cache (`<videoId>.json`) |
 | `imgui.ini` | Window layout |
 | `backend.log` | Backend stderr — the first place to look when auth or `yt-dlp` misbehaves |
+| `crash-*.log`, `crash-*.dmp` | Local crash reports written by the diagnostics handler |
 | `config.ini` | Legacy browser setting; superseded by `settings.json` |
 
 > Some internal filenames and environment variables still use the historical `p100`
@@ -639,6 +673,9 @@ layout and GL redraw does not run every millisecond just because audio is playin
 | Party host UI, server, queue, link parsing | `ui_party.cpp`, `party.cpp`, `party_server.cpp`, `party_queue.cpp`, `party_link.cpp`, `party_util.cpp`, `party_net.cpp` |
 | Stats, settings, theme, backdrop, components, icons | `ui_stats.cpp`, `ui_settings.cpp`, `ui_theme.cpp`, `ui_backdrop.cpp`, `ui_components.cpp`, `ui_icons.cpp` |
 | Persistence and shared helpers | `ui_helpers.cpp` |
+| SQLite library, migration, FTS5 search, backups | `library.h`, `library.cpp`, `external/sqlite/` |
+| Diagnostics, crash handler, safe mode | `diagnostics.h`, `diagnostics.cpp` |
+| Unit tests | `tests/` |
 | Async artwork | `texture.h`, `texture.cpp` |
 | MPRIS, Discord RPC | `mpris.cpp`, `discord_rpc.cpp` |
 | Paths, config, accent | `paths.cpp`, `config.cpp`, `accent.cpp` |
@@ -657,6 +694,18 @@ cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j"$(nproc)"
 ./build/crossfade
 ```
+
+Build and run the unit tests:
+
+```bash
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCROSSFADE_BUILD_TESTS=ON
+cmake --build build -j"$(nproc)"
+ctest --test-dir build --output-on-failure
+```
+
+The test suite covers the party link/queue helpers and the SQLite library (legacy
+migration, CRUD, FTS5 search, integrity check, backup, second init, and a failed database
+open). CI also rebuilds the same tests with AddressSanitizer and UndefinedBehaviorSanitizer.
 
 ### Ground rules
 
@@ -692,8 +741,9 @@ A JSON reply means auth and the API work; `{"error": ..., "kind": "auth"}` means
 ### Continuous integration
 
 `.github/workflows/build.yml` builds the Linux binary on every push and pull request and
-also compiles the Windows port under MSYS2. The CI build is the source of truth for
-platform health.
+also compiles the Windows port under MSYS2. Linux runs the unit test suite and a second
+ASan/UBSan build of the same tests. The CI build is the source of truth for platform
+health.
 
 ## Platform support
 
@@ -717,6 +767,9 @@ Everything else — playback, crossfade, caching, lyrics, library — is portabl
 | Wrong browser for cookies | **Settings → YouTube Music → Cookie browser** |
 | No sound / mpv errors | Check `mpv --version` (≥ 0.35) and that `mpv <some-url>` plays |
 | Backend weirdness | Read `~/.config/crossfade/backend.log` |
+| Library data missing or unexpected | **Settings → Diagnostics → Check library**, then check for `library-backup-*` in the config folder. The legacy JSON files remain as a fallback |
+| App renders badly or crashes after an update | Enable **Settings → Diagnostics → Safe mode on next launch**, or start with `P100_SAFE_MODE=1` |
+| Need to report a crash | **Settings → Diagnostics → Copy diagnostics** (includes the recent log and library status); local crash files are `crash-*.log` / `crash-*.dmp` in the config folder |
 | Media keys / `playerctl` don't work | Needs a running D-Bus session; `playerctl -l` should list crossfade |
 | Songs start slowly | Enable **Settings → YouTube Music → Fast stream resolve** and update `yt-dlp` |
 | Crossfade doesn't happen | Both tracks must be playable; uncached skips switch instantly by design. Check the crossfade duration and **Crossfade manual skips** |

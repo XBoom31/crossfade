@@ -121,10 +121,32 @@ static void open_export(AppState &state, int index, bool xspf)
     ImGui::OpenPopup("Export playlist###ExportPlaylistPopup");
 }
 
+static Playlist g_deleted_playlist;
+static int g_deleted_playlist_index = -1;
+static AppState *g_deleted_playlist_state = nullptr;
+
+static void undo_delete_playlist()
+{
+    if (!g_deleted_playlist_state || g_deleted_playlist.name.empty())
+        return;
+    AppState &s = *g_deleted_playlist_state;
+    const int at = std::max(0, std::min((int)s.playlists.size(), g_deleted_playlist_index));
+    s.playlists.insert(s.playlists.begin() + at, g_deleted_playlist);
+    save_playlist(g_deleted_playlist.name, g_deleted_playlist.tracks);
+    s.selected_playlist_index = at;
+    s.repaint_requested = true;
+    g_deleted_playlist = Playlist{};
+    g_deleted_playlist_index = -1;
+    ui_notify(UiNotifyType::Info, "Playlist restored", "The playlist is back.", 4.0f);
+}
+
 static void delete_playlist_at(AppState &state, int index)
 {
     if (index < 0 || index >= (int)state.playlists.size())
         return;
+    g_deleted_playlist = state.playlists[index];
+    g_deleted_playlist_index = index;
+    g_deleted_playlist_state = &state;
     delete_playlist(state.playlists[index].name);
     wb_delete_playlist(state.playlists[index].name);
     state.playlists.erase(state.playlists.begin() + index);
@@ -137,6 +159,9 @@ static void delete_playlist_at(AppState &state, int index)
     }
     if (state.selected_playlist_index < 0)
         state.current_playlist_source = PlaylistSource::HOME;
+    ui_notify(UiNotifyType::Info, "Playlist deleted",
+              g_deleted_playlist.name + " was removed.", 6.0f, "Undo",
+              &undo_delete_playlist);
 }
 
 void draw_playlists_panel(AppState &state)

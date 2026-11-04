@@ -5,21 +5,94 @@
 #include "ui_components.h"
 #include "ui_icons.h"
 #include "ui_theme.h"
+#include "ui_notify.h"
 #include "accent.h"
 #include "paths.h"
 #include "writeback.h"
+#include "library.h"
+#include "diagnostics.h"
 #include "misc/cpp/imgui_stdlib.h"
 #include <fstream>
 #include <filesystem>
 #include <cstring>
 #include <cfloat>
 #include <cstdio>
+#include <ctime>
 #include <cstdlib>
 #include <cmath>
 #include <algorithm>
 #include <thread>
 #include <atomic>
 #include <vector>
+
+// ----------------------------------------------------------------------
+// Undo for the destructive reset buttons
+// ----------------------------------------------------------------------
+namespace
+{
+enum class ResetKind
+{
+    None,
+    Likes,
+    Albums,
+    Artists,
+    Playlists
+};
+
+struct ResetSnapshot
+{
+    ResetKind kind = ResetKind::None;
+    AppState *state = nullptr;
+    std::vector<Track> likes;
+    std::vector<SavedAlbum> albums;
+    std::vector<SavedArtist> artists;
+    std::vector<Playlist> playlists;
+};
+
+ResetSnapshot g_reset_snapshot;
+
+void undo_reset()
+{
+    ResetSnapshot &s = g_reset_snapshot;
+    if (!s.state || s.kind == ResetKind::None)
+        return;
+    AppState &st = *s.state;
+    switch (s.kind)
+    {
+    case ResetKind::Likes:
+        st.liked_tracks = s.likes;
+        save_liked_tracks(st.liked_tracks);
+        break;
+    case ResetKind::Albums:
+        st.saved_albums = s.albums;
+        save_saved_albums(st.saved_albums);
+        break;
+    case ResetKind::Artists:
+        st.saved_artists = s.artists;
+        save_saved_artists(st.saved_artists);
+        break;
+    case ResetKind::Playlists:
+        st.playlists = s.playlists;
+        st.selected_playlist_index = st.playlists.empty() ? -1 : 0;
+        for (const auto &pl : st.playlists)
+            save_playlist(pl.name, pl.tracks);
+        break;
+    default:
+        break;
+    }
+    st.repaint_requested = true;
+    s = ResetSnapshot{};
+    ui_notify(UiNotifyType::Info, "Restored", "The reset was undone.", 4.0f);
+}
+
+void begin_reset(AppState &state, ResetKind kind)
+{
+    g_reset_snapshot = ResetSnapshot{};
+    g_reset_snapshot.kind = kind;
+    g_reset_snapshot.state = &state;
+}
+
+} // namespace
 
 // ----------------------------------------------------------------------
 // Settings persistence
@@ -213,6 +286,7 @@ void save_settings(const Settings &settings)
         << "\"album_backdrop\":" << (settings.album_backdrop ? "true" : "false") << ","
         << "\"album_backdrop_strength\":" << settings.album_backdrop_strength << ","
         << "\"backdrop_shader\":" << (settings.backdrop_shader ? "true" : "false") << ","
+        << "\"safe_mode\":" << (settings.safe_mode ? "true" : "false") << ","
         << "\"glow_separators\":" << (settings.glow_separators ? "true" : "false") << ","
         << "\"glow_separator_strength\":" << settings.glow_separator_strength << ","
         << "\"backdrop_drift\":" << (settings.backdrop_drift ? "true" : "false") << ","
@@ -445,6 +519,8 @@ Settings load_settings()
         }
         if (json.find("\"backdrop_shader\"") != std::string::npos)
             s.backdrop_shader = get_bool("backdrop_shader");
+        if (json.find("\"safe_mode\"") != std::string::npos)
+            s.safe_mode = get_bool("safe_mode");
         if (json.find("\"glow_separators\"") != std::string::npos)
             s.glow_separators = get_bool("glow_separators");
         if (json.find("\"glow_separator_strength\"") != std::string::npos)
@@ -1265,6 +1341,75 @@ void draw_settings_panel(AppState &state)
     settings_help("Keep at most this much downloaded audio (0 = unlimited). When the cap is reached, the least-listened songs are removed first.");
 
     settings_gap();
+    ui_section_header("Diagnostics");
+    settings_help("Local-only troubleshooting. Nothing here is uploaded automatically.");
+    {
+        const std::string status = library::status_text();
+        ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + content_w);
+        ImGui::TextUnformatted(status.c_str());
+        ImGui::PopTextWrapPos();
+        if (!library::backup_dir().empty())
+            settings_help(("Legacy JSON backup: " + library::backup_dir()).c_str());
+
+        const float bw = 176.0f * m.layout_scale;
+        if (ui_ghost_button("Copy diagnostics", ImVec2(bw, m.control_h)))
+        {
+            ImGui::SetClipboardText(diagnostics::bundle().c_str());
+            ui_notify(UiNotifyType::Success, "Diagnostics copied",
+                      "Version, paths, library status and recent log lines are on the clipboard.", 4.0f);
+        }
+        ImGui::SameLine(0.0f, m.space_2);
+        if (ui_ghost_button("Check library", ImVec2(bw, m.control_h)))
+        {
+            std::string result;
+            const bool ok = library::integrity_check(result);
+            ui_notify(ok ? UiNotifyType::Success : UiNotifyType::Error,
+                      ok ? "Library is healthy" : "Library check failed",
+                      result.empty() ? "No details returned." : result, ok ? 4.0f : 8.0f);
+        }
+        ImGui::SameLine(0.0f, m.space_2);
+        if (ui_ghost_button("Back up library", ImVec2(bw, m.control_h)))
+        {
+            char stamp[32];
+            const std::time_t now = std::time(nullptr);
+            std::tm tm{};
+#ifdef _WIN32
+            localtime_s(&tm, &now);
+#else
+            localtime_r(&now, &tm);
+#endif
+            std::strftime(stamp, sizeof(stamp), "%Y%m%d-%H%M%S", &tm);
+            const std::string path =
+                p100_config_path(std::string("library-backup-") + stamp + ".db");
+            std::string err;
+            if (library::backup_to(path, err))
+                ui_notify(UiNotifyType::Success, "Library backed up", path, 5.0f);
+            else
+                ui_notify(UiNotifyType::Error, "Backup failed", err, 7.0f);
+        }
+        ImGui::SameLine(0.0f, m.space_2);
+        if (ui_ghost_button("Open config folder", ImVec2(bw, m.control_h)))
+            diagnostics::open_folder(p100_config_dir());
+
+        bool safe = state.settings.safe_mode;
+        if (ImGui::Checkbox("Safe mode on next launch", &safe))
+        {
+            state.settings.safe_mode = safe;
+            save = true;
+        }
+        settings_help("Disables the backdrop shader, auto-update checks and optional background integrations. Use it if a new build crashes or renders badly.");
+
+        if (ImGui::TreeNode("Recent diagnostics"))
+        {
+            const std::string log = diagnostics::recent_log();
+            ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + content_w);
+            ImGui::TextUnformatted(log.empty() ? "No log lines yet." : log.c_str());
+            ImGui::PopTextWrapPos();
+            ImGui::TreePop();
+        }
+    }
+
+    settings_gap();
     ui_section_header("Notes");
     ImGui::InputTextMultiline("##notes", &state.settings.notes,
                               ImVec2(content_w, ImGui::GetTextLineHeight() * 6),
@@ -1277,7 +1422,7 @@ void draw_settings_panel(AppState &state)
     ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.42f, 0.42f, 1.0f));
     ImGui::TextUnformatted("Danger Zone");
     ImGui::PopStyleColor();
-    settings_help("These actions remove data from disk and cannot be undone.");
+    settings_help("These actions remove local data. Most offer an Undo toast right after they run.");
 
     const float danger_w = std::max(220.0f * m.layout_scale,
                                     ImGui::CalcTextSize("Clear download cache").x +
@@ -1305,36 +1450,49 @@ void draw_settings_panel(AppState &state)
     }
     if (danger_row("Reset liked songs", "Remove all liked songs.", nullptr))
     {
+        begin_reset(state, ResetKind::Likes);
+        g_reset_snapshot.likes = state.liked_tracks;
         state.liked_tracks.clear();
         save_liked_tracks(state.liked_tracks);
+        ui_notify(UiNotifyType::Warning, "Liked songs reset", "All liked songs were removed.",
+                  6.0f, "Undo", &undo_reset);
     }
     if (danger_row("Reset saved albums", "Remove all saved albums.", nullptr))
     {
+        begin_reset(state, ResetKind::Albums);
+        g_reset_snapshot.albums = state.saved_albums;
         state.saved_albums.clear();
         save_saved_albums(state.saved_albums);
+        ui_notify(UiNotifyType::Warning, "Saved albums reset", "All saved albums were removed.",
+                  6.0f, "Undo", &undo_reset);
     }
     if (danger_row("Reset saved artists", "Remove all saved artists.", nullptr))
     {
+        begin_reset(state, ResetKind::Artists);
+        g_reset_snapshot.artists = state.saved_artists;
         state.saved_artists.clear();
         save_saved_artists(state.saved_artists);
+        ui_notify(UiNotifyType::Warning, "Saved artists reset", "All saved artists were removed.",
+                  6.0f, "Undo", &undo_reset);
     }
-    if (danger_row("Reset playlists", "Delete all playlist files.", nullptr))
+    if (danger_row("Reset playlists", "Delete all playlists.", nullptr))
     {
+        begin_reset(state, ResetKind::Playlists);
+        g_reset_snapshot.playlists = state.playlists;
+        const auto names = get_playlist_names();
+        for (const auto &name : names)
+            delete_playlist(name);
+        // Also clear the fallback JSON files if the DB is unavailable.
         std::string dir = playlists_dir();
-        for (const auto &entry : std::filesystem::directory_iterator(dir))
-            std::filesystem::remove(entry.path());
+        if (std::filesystem::exists(dir))
+        {
+            for (const auto &entry : std::filesystem::directory_iterator(dir))
+                std::filesystem::remove(entry.path());
+        }
         state.playlists.clear();
         state.selected_playlist_index = -1;
-        save_playlist("dummy", {});
-        auto names = get_playlist_names();
-        state.playlists.clear();
-        for (const auto &name : names)
-        {
-            Playlist pl;
-            pl.name = name;
-            pl.tracks = load_playlist_tracks(name);
-            state.playlists.push_back(pl);
-        }
+        ui_notify(UiNotifyType::Warning, "Playlists reset", "All playlists were removed.",
+                  6.0f, "Undo", &undo_reset);
     }
     ImGui::Dummy(ImVec2(0.0f, m.space_5));
 

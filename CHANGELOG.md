@@ -4,6 +4,30 @@ All notable changes to crossfade are documented here.
 
 ## Unreleased
 
+### Added
+
+- **Local SQLite library.** Likes, playlists, the queue, history, play counts and log,
+  saved albums/artists, and downloaded-track metadata now live in `library.db`, backed
+  by the vendored SQLite amalgamation with FTS5. Audio files stay in `audio_cache/`. `settings.json` and `session.json` remain JSON. Existing JSON
+  data is imported once, backed up to `library-backup-*`, and left in place as a fallback
+  if the database can't be opened.
+- **Library search scope.** The Home search box has a **Library** button that searches the
+  local database (titles, artists, albums, playlists) instead of YouTube Music.
+- **Diagnostics panel** in Settings: copy a diagnostics bundle, run an SQLite integrity
+  check, back up the library, open the config folder, view recent log lines, and toggle
+  **Safe mode on next launch**. Crashes now write local `crash-*.log` (Linux) or
+  `crash-*.dmp` (Windows) files.
+- **Undo** for clearing Up Next, deleting a playlist, and the Danger Zone reset buttons.
+- **Onboarding copy** in the empty Home state.
+- **Tests and CI.** A CTest target covers migration, CRUD, FTS5 search, integrity checks,
+  backups, second init, and failed database open. Linux CI runs the suite plus an
+  ASan/UBSan build.
+
+### Changed
+
+- Empty Home states now point at search, party mode, and the shortcut help instead of
+  only suggesting a refresh.
+
 ## 0.1.10 - 2026-11-04
 
 ### Added

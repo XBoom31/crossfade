@@ -52,7 +52,7 @@ jobs:
             libsdl2-dev libgl1-mesa-dev libmpv-dev libglib2.0-dev \
             libnotify-dev python3 python3-venv curl libjack0
       - name: Configure
-        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCROSSFADE_BUILD_TESTS=ON
       - name: Build
         run: |
           code=0
@@ -75,6 +75,15 @@ jobs:
           name: linux-build-log
           path: /tmp/build.log
           if-no-files-found: ignore
+      - name: Run unit tests
+        run: ctest --test-dir build --output-on-failure
+      - name: ASan/UBSan tests
+        run: |
+          cmake -S . -B build-asan -DCMAKE_BUILD_TYPE=Debug -DCROSSFADE_BUILD_TESTS=ON \
+            -DCMAKE_C_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer" \
+            -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer"
+          cmake --build build-asan -j2 --target test_party_link test_party_queue test_party_util test_library
+          ctest --test-dir build-asan --output-on-failure -R 'party_|library'
       - name: Verify binary exists
         run: test -x ./build/crossfade
         # No runtime smoke test yet: the app has no CLI flags, blocks in its

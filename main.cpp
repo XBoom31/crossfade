@@ -35,6 +35,8 @@
 #include "mpris.h"
 #include "ui_notify.h"
 #include "updater.h"
+#include "library.h"
+#include "diagnostics.h"
 #include "writeback.h"
 #include "discord_rpc.h"
 
@@ -1208,6 +1210,73 @@ static void artist_search_and_update(const std::string &query, int expect_id)
     g_state.repaint_requested = true;
 }
 
+static bool text_matches_query(const std::string &haystack, const std::string &needle)
+{
+    if (needle.empty())
+        return true;
+    return std::search(haystack.begin(), haystack.end(), needle.begin(), needle.end(),
+                       [](char a, char b) {
+                           return std::tolower((unsigned char)a) ==
+                                  std::tolower((unsigned char)b);
+                       }) != haystack.end();
+}
+
+static void merge_local_search_results(const std::string &query, SearchAllResult &results)
+{
+    std::unordered_set<std::string> seen;
+
+    auto local_tracks = library::search_tracks(query, 60);
+    std::vector<Track> tracks;
+    tracks.reserve(local_tracks.size() + results.songs.size());
+    for (auto &t : local_tracks)
+        if (seen.insert(t.id).second)
+            tracks.push_back(std::move(t));
+    for (auto &t : results.songs)
+        if (seen.insert(t.id).second)
+            tracks.push_back(std::move(t));
+    results.songs = std::move(tracks);
+
+    std::unordered_set<std::string> seen_albums;
+    std::vector<AlbumSummary> albums;
+    for (const auto &a : library::load_saved_albums())
+    {
+        if (!text_matches_query(a.title, query) && !text_matches_query(a.artist, query))
+            continue;
+        AlbumSummary s;
+        s.browse_id = a.browse_id;
+        s.title = a.title;
+        s.artist = a.artist;
+        s.year = a.year;
+        s.thumbnail_url = a.thumbnail_url;
+        s.track_count = a.track_count;
+        if (seen_albums.insert(s.browse_id).second)
+            albums.push_back(std::move(s));
+    }
+    for (auto &a : results.albums)
+        if (seen_albums.insert(a.browse_id).second)
+            albums.push_back(std::move(a));
+    results.albums = std::move(albums);
+
+    std::unordered_set<std::string> seen_artists;
+    std::vector<ArtistSummary> artists;
+    for (const auto &a : library::load_saved_artists())
+    {
+        if (!text_matches_query(a.name, query))
+            continue;
+        ArtistSummary s;
+        s.browse_id = a.browse_id;
+        s.name = a.name;
+        s.thumbnail_url = a.thumbnail_url;
+        s.subscribers = a.subscribers;
+        if (seen_artists.insert(s.browse_id).second)
+            artists.push_back(std::move(s));
+    }
+    for (auto &a : results.artists)
+        if (seen_artists.insert(a.browse_id).second)
+            artists.push_back(std::move(a));
+    results.artists = std::move(artists);
+}
+
 static void search_all_and_update(const std::string &query, int expect_id)
 {
     if (query.empty())
@@ -1234,6 +1303,9 @@ static void search_all_and_update(const std::string &query, int expect_id)
 
     if (g_state.search_id == expect_id)
     {
+        // Local library rows are authoritative and instant; put them first,
+        // then append online results that aren't already present.
+        merge_local_search_results(query, results);
         // Warm the URLs of the visible results so clicking one starts fast.
         // Depth matches the rows a search page shows; warming runs on the
         // main backend channel and aborts as soon as search_id changes.
@@ -1940,8 +2012,33 @@ int main(int, char **)
 
     // ---- Load settings ----
     g_state.settings = load_settings();
+    diagnostics::init();
+    const bool safe_mode = diagnostics::safe_mode_requested() || g_state.settings.safe_mode;
+    if (safe_mode)
+    {
+        // Override in memory only: the user's saved preferences stay intact.
+        g_state.settings.backdrop_shader = false;
+        g_state.settings.album_backdrop = false;
+        g_state.settings.warm_stream_resolver = false;
+        diagnostics::log("app", "safe mode enabled");
+    }
     writeback_set_enabled(g_state.settings.server_sync);
     discord_apply_client_id();
+
+    // ---- Local library database ----
+    {
+        std::string library_error;
+        if (!library::init(library_error))
+        {
+            std::fprintf(stderr, "Library database unavailable, using legacy JSON: %s\n",
+                         library_error.c_str());
+            diagnostics::log("library", "DB unavailable, using legacy JSON: " + library_error);
+        }
+        else
+        {
+            diagnostics::log("library", "SQLite library ready");
+        }
+    }
 
     // ---- Load up-next queue and recent searches ----
     g_state.play_queue = load_play_queue();
@@ -1997,7 +2094,8 @@ int main(int, char **)
     SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER);
     party_init();
     party_set_wake(party_wake_event);
-    updater::init(party_wake_event);
+    if (!safe_mode)
+        updater::init(party_wake_event);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 2);

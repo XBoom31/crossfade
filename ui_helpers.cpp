@@ -6,6 +6,8 @@
 #include "mpvplayer.h"
 #include "paths.h"
 #include "writeback.h"
+#include "library.h"
+#include "ui_notify.h"
 #include <fstream>
 #include <filesystem>
 #include <algorithm>
@@ -30,6 +32,12 @@ std::string liked_file_path()
 
 void save_liked_tracks(const std::vector<Track> &tracks)
 {
+    if (library::available())
+    {
+        library::save_liked(tracks);
+        return;
+    }
+
     std::ofstream out(liked_file_path());
     if (!out)
         return;
@@ -56,6 +64,11 @@ void save_liked_tracks(const std::vector<Track> &tracks)
 
 std::vector<Track> load_liked_tracks()
 {
+    if (library::available())
+    {
+        return library::load_liked();
+    }
+
     std::ifstream in(liked_file_path());
     if (!in.good())
         return {};
@@ -74,6 +87,12 @@ std::string history_file_path()
 
 void save_playback_history(const std::vector<Track> &tracks)
 {
+    if (library::available())
+    {
+        library::save_history(tracks);
+        return;
+    }
+
     std::ofstream out(history_file_path());
     if (!out)
         return;
@@ -100,6 +119,11 @@ void save_playback_history(const std::vector<Track> &tracks)
 
 std::vector<Track> load_playback_history()
 {
+    if (library::available())
+    {
+        return library::load_history();
+    }
+
     std::ifstream in(history_file_path());
     if (!in.good())
         return {};
@@ -180,6 +204,12 @@ std::string queue_file_path()
 
 void save_play_queue(const std::vector<Track> &tracks)
 {
+    if (library::available())
+    {
+        library::save_queue(tracks);
+        return;
+    }
+
     const std::string path = queue_file_path();
     std::error_code ec;
     std::filesystem::create_directories(std::filesystem::path(path).parent_path(), ec);
@@ -198,6 +228,11 @@ void save_play_queue(const std::vector<Track> &tracks)
 
 std::vector<Track> load_play_queue()
 {
+    if (library::available())
+    {
+        return library::load_queue();
+    }
+
     std::ifstream in(queue_file_path());
     if (!in.good())
         return {};
@@ -250,11 +285,31 @@ void queue_move(AppState &state, int from, int to)
     state.repaint_requested = true;
 }
 
+static std::vector<Track> g_queue_undo;
+static AppState *g_queue_undo_state = nullptr;
+
+static void undo_queue_clear()
+{
+    if (!g_queue_undo_state || g_queue_undo.empty())
+        return;
+    g_queue_undo_state->play_queue = g_queue_undo;
+    g_queue_undo_state->queue_dirty = true;
+    g_queue_undo_state->repaint_requested = true;
+    g_queue_undo.clear();
+    ui_notify(UiNotifyType::Info, "Queue restored", "Your previous Up Next is back.", 4.0f);
+}
+
 void queue_clear(AppState &state)
 {
+    if (state.play_queue.empty())
+        return;
+    g_queue_undo = state.play_queue;
+    g_queue_undo_state = &state;
     state.play_queue.clear();
     state.queue_dirty = true;
     state.repaint_requested = true;
+    ui_notify(UiNotifyType::Info, "Queue cleared", "Up Next is empty.", 6.0f, "Undo",
+              &undo_queue_clear);
 }
 
 std::string search_recent_file_path()
@@ -381,6 +436,12 @@ void ui_go_forward(AppState &state)
 
 void save_playlist(const std::string &name, const std::vector<Track> &tracks)
 {
+    if (library::available())
+    {
+        library::save_playlist(name, tracks);
+        return;
+    }
+
     ensure_playlists_dir();
     std::string path = playlist_path(name);
     std::ofstream out(path);
@@ -409,6 +470,11 @@ void save_playlist(const std::string &name, const std::vector<Track> &tracks)
 
 std::vector<Track> load_playlist_tracks(const std::string &name)
 {
+    if (library::available())
+    {
+        return library::load_playlist_tracks(name);
+    }
+
     std::string path = playlist_path(name);
     std::ifstream in(path);
     if (!in.good())
@@ -420,6 +486,11 @@ std::vector<Track> load_playlist_tracks(const std::string &name)
 
 std::vector<std::string> get_playlist_names()
 {
+    if (library::available())
+    {
+        return library::playlist_names();
+    }
+
     std::vector<std::string> names;
     std::string dir = playlists_dir();
     if (!std::filesystem::exists(dir))
@@ -438,6 +509,12 @@ std::vector<std::string> get_playlist_names()
 
 void delete_playlist(const std::string &name)
 {
+    if (library::available())
+    {
+        library::delete_playlist(name);
+        return;
+    }
+
     std::string path = playlist_path(name);
     std::filesystem::remove(path);
 }
@@ -617,6 +694,8 @@ void build_smart_view(AppState &state)
 void load_downloaded_tracks(AppState &state)
 {
     state.downloaded_tracks = get_cached_tracks();
+    if (library::available())
+        library::save_downloads(state.downloaded_tracks);
     state.downloaded_loaded = true;
 }
 
@@ -707,6 +786,11 @@ std::string play_counts_file_path()
 
 std::unordered_map<std::string, int> load_play_counts()
 {
+    if (library::available())
+    {
+        return library::load_play_counts();
+    }
+
     std::unordered_map<std::string, int> counts;
     std::ifstream in(play_counts_file_path());
     if (!in.good())
@@ -747,6 +831,12 @@ std::unordered_map<std::string, int> load_play_counts()
 
 void save_play_counts(const std::unordered_map<std::string, int> &counts)
 {
+    if (library::available())
+    {
+        library::save_play_counts(counts);
+        return;
+    }
+
     std::string path = play_counts_file_path();
     std::string dir = path.substr(0, path.rfind('/'));
     mkdir(dir.c_str(), 0755);
@@ -816,6 +906,12 @@ static std::string json_escape(const std::string &s)
 
 void save_play_log(const std::vector<PlayEvent> &events)
 {
+    if (library::available())
+    {
+        library::save_play_log(events);
+        return;
+    }
+
     std::string path = play_log_file_path();
     std::string dir = path.substr(0, path.rfind('/'));
     mkdir(dir.c_str(), 0755);
@@ -876,6 +972,11 @@ static std::string extract_str_field(const std::string &json, const std::string 
 
 std::vector<PlayEvent> load_play_log()
 {
+    if (library::available())
+    {
+        return library::load_play_log();
+    }
+
     std::vector<PlayEvent> events;
     std::ifstream in(play_log_file_path());
     if (!in.good())
@@ -940,6 +1041,12 @@ std::string saved_albums_file_path()
 
 void save_saved_albums(const std::vector<SavedAlbum> &albums)
 {
+    if (library::available())
+    {
+        library::save_saved_albums(albums);
+        return;
+    }
+
     std::string path = saved_albums_file_path();
     std::string dir = path.substr(0, path.rfind('/'));
     mkdir(dir.c_str(), 0755);
@@ -987,6 +1094,11 @@ static int extract_int_field(const std::string &json, const std::string &key)
 
 std::vector<SavedAlbum> load_saved_albums()
 {
+    if (library::available())
+    {
+        return library::load_saved_albums();
+    }
+
     std::vector<SavedAlbum> albums;
     std::ifstream in(saved_albums_file_path());
     if (!in.good())
@@ -1185,6 +1297,12 @@ std::string saved_artists_file_path()
 
 void save_saved_artists(const std::vector<SavedArtist> &artists)
 {
+    if (library::available())
+    {
+        library::save_saved_artists(artists);
+        return;
+    }
+
     std::string path = saved_artists_file_path();
     std::string dir = path.substr(0, path.rfind('/'));
     mkdir(dir.c_str(), 0755);
@@ -1211,6 +1329,11 @@ void save_saved_artists(const std::vector<SavedArtist> &artists)
 
 std::vector<SavedArtist> load_saved_artists()
 {
+    if (library::available())
+    {
+        return library::load_saved_artists();
+    }
+
     std::vector<SavedArtist> artists;
     std::ifstream in(saved_artists_file_path());
     if (!in.good())

@@ -5,6 +5,7 @@
 #include "ui_layout.h"
 #include "ui_theme.h"
 #include "ytdlp.h"
+#include "library.h"
 
 #include <algorithm>
 #include <cmath>
@@ -512,11 +513,12 @@ static void dispatch_search(AppState &state)
                 state.search_recent.resize(10);
             save_search_recent(state.search_recent);
 
-            // Drop the previous search's results now, so the searching
-            // animation shows (it only draws when the lists are empty)
-            // instead of the stale list lingering until the new one lands.
-            std::atomic_store(&state.search_results,
-                              std::make_shared<const std::vector<Track>>());
+            // Publish local-library matches immediately, then let the backend
+            // fill in the online results. The worker merges and dedupes them.
+            auto local = library::search_tracks(query, 60);
+            std::atomic_store(
+                &state.search_results,
+                std::make_shared<const std::vector<Track>>(std::move(local)));
             std::atomic_store(&state.search_album_results,
                               std::make_shared<const std::vector<AlbumSummary>>());
             std::atomic_store(&state.search_artist_results,
@@ -603,7 +605,7 @@ static std::string view_subtitle(const AppState &s)
     if (s.current_tab == Tab::Artist)
         return s.artist_subscribers;
     if (s.current_tab == Tab::Home && s.search_buffer[0])
-        return "Results from YouTube Music";
+        return "Your library + YouTube Music";
     if (s.current_tab == Tab::Artists && s.artist_search_active)
         return "Results from YouTube Music";
     if (s.current_playlist_source == PlaylistSource::RADIO)
@@ -632,7 +634,7 @@ static std::string view_subtitle(const AppState &s)
 // (it is meaningless while searching or on another tab) and becomes a spinner
 // while a refresh is in flight.
 static bool header_refresh_button(AppState &state, const ImVec2 &pos, float width,
-                                  float height, float appear)
+                                  float height, float appear, bool compact)
 {
     const UiMetrics &m = ui_m();
     const float alpha = std::min(std::max(appear, 0.0f), 1.0f);
@@ -666,8 +668,10 @@ static bool header_refresh_button(AppState &state, const ImVec2 &pos, float widt
     const float gap = m.space_2;
     const float fs = 18.0f * m.text_scale;
     const char *label = "Refresh";
-    const ImVec2 ts = g_ui_fonts.medium->CalcTextSizeA(fs, FLT_MAX, 0.0f, label);
-    const float content_w = icon + gap + ts.x;
+    const ImVec2 ts = compact
+                          ? ImVec2(0.0f, 0.0f)
+                          : g_ui_fonts.medium->CalcTextSizeA(fs, FLT_MAX, 0.0f, label);
+    const float content_w = icon + (compact ? 0.0f : gap + ts.x);
     const float x = p0.x + (width - content_w) * 0.5f;
     const float cy = p0.y + height * 0.5f;
 
@@ -678,9 +682,13 @@ static bool header_refresh_button(AppState &state, const ImVec2 &pos, float widt
                                 : (hovered ? ui_accent_text_u32() : ui_text_dim_u32());
     ui_draw_icon(dl, UiIcon::Refresh, ImVec2(x + icon * 0.5f, cy), icon,
                  ui_with_alpha(icon_col, alpha), 1.7f, spin);
-    const ImU32 label_col = busy ? ui_text_u32() : (hovered ? ui_text_u32() : ui_text_dim_u32());
-    dl->AddText(g_ui_fonts.medium, fs, ImVec2(x + icon + gap, cy - ts.y * 0.5f),
-                ui_with_alpha(label_col, alpha), label);
+    if (!compact)
+    {
+        const ImU32 label_col =
+            busy ? ui_text_u32() : (hovered ? ui_text_u32() : ui_text_dim_u32());
+        dl->AddText(g_ui_fonts.medium, fs, ImVec2(x + icon + gap, cy - ts.y * 0.5f),
+                    ui_with_alpha(label_col, alpha), label);
+    }
     return clicked && !busy;
 }
 
@@ -794,6 +802,7 @@ void draw_content_header(AppState &state)
     const float refresh_pad = 15.0f * m.layout_scale;
     const float refresh_full_w =
         refresh_pad * 2.0f + refresh_icon + m.space_2 + refresh_text_w;
+    const float refresh_compact_w = refresh_pad * 2.0f + refresh_icon;
     const float refresh_gap = m.space_3;
     static float s_refresh_vis = -1.0f;
     if (s_refresh_vis < 0.0f)
@@ -805,12 +814,37 @@ void draw_content_header(AppState &state)
     else
         ui_anim_request();
 
+    // Keep the controls pinned to the right edge and give the title room as
+    // the window (or UI scale) shrinks. The refresh pill becomes icon-only
+    // and the search field narrows before anything can overlap the title.
+    const float right_edge = ws.x - m.content_pad;
+    const float controls_room = right_edge - left - m.space_4;
+    const float title_reserve = std::min(title_ts.x, 220.0f * m.layout_scale);
     float search_w = std::min(420.0f * m.layout_scale, ws.x * 0.38f);
-    search_w = std::max(search_w, 150.0f * m.layout_scale);
-    const float refresh_block = s_refresh_vis * (refresh_gap + refresh_full_w);
-    const float search_x = ws.x - m.content_pad - search_w - refresh_block;
+    search_w = std::max(search_w, 180.0f * m.layout_scale);
+    bool compact_refresh = false;
+    float refresh_w = refresh_full_w;
+    if (controls_room < title_reserve + search_w + refresh_gap + refresh_w)
+    {
+        compact_refresh = true;
+        refresh_w = refresh_compact_w;
+    }
+    if (controls_room < title_reserve + search_w + refresh_gap + refresh_w)
+    {
+        const float max_search =
+            controls_room - title_reserve - refresh_gap - refresh_w;
+        search_w = std::max(110.0f * m.layout_scale, max_search);
+    }
+    if (controls_room < title_reserve + search_w + refresh_gap + refresh_w)
+    {
+        const float max_search =
+            controls_room - 100.0f * m.layout_scale - refresh_gap - refresh_w;
+        search_w = std::max(90.0f * m.layout_scale, max_search);
+    }
+    const float refresh_block = s_refresh_vis * (refresh_gap + refresh_w);
+    const float search_x = right_edge - search_w - refresh_block;
     const float title_max =
-        std::max(80.0f, (can_search ? search_x : ws.x - m.content_pad) - left - m.space_4);
+        std::max(60.0f, (can_search ? search_x : right_edge) - left - m.space_4);
 
     // Accent marker beside the title (skipped in detail views where the
     // back/forward buttons already anchor the block).
@@ -869,7 +903,8 @@ void draw_content_header(AppState &state)
             ImGui::SetKeyboardFocusHere();
             state.focus_search_requested = false;
         }
-        if (ImGui::InputTextWithHint("##global_search", "Search", state.search_buffer, sizeof(state.search_buffer)))
+        if (ImGui::InputTextWithHint("##global_search", "Search", state.search_buffer,
+                                     sizeof(state.search_buffer)))
             on_search_edit(state);
         // Enter dispatches immediately instead of waiting out the debounce.
         if (ImGui::IsItemActive() &&
@@ -930,7 +965,8 @@ void draw_content_header(AppState &state)
         if (s_refresh_vis > 0.01f)
         {
             const ImVec2 rp(wp.x + search_x + search_w + refresh_gap, wp.y + fy);
-            if (header_refresh_button(state, rp, refresh_full_w, field_h, s_refresh_vis))
+            if (header_refresh_button(state, rp, refresh_w, field_h, s_refresh_vis,
+                                      compact_refresh))
                 state.refresh_requested = true;
         }
     }

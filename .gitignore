@@ -1,4 +1,5 @@
 build/
+build-asan/
 py/
 wheels/
 __pycache__/

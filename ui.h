@@ -204,6 +204,9 @@ struct Settings
     // Render the ambient wash with a single full-screen shader pass and
     // in-shader dithering instead of stacked ImGui ellipses.
     bool backdrop_shader = true;
+    // Diagnostic switch: next launch disables the shader backdrop, updater
+    // checks and optional background integrations.
+    bool safe_mode = false;
     // Glowing separators: a soft album-coloured light streak under each
     // section header, plus album-tinted structural hairlines. Uses the same
     // dominant-colour tint as the backdrop, but works with the backdrop off.
@@ -276,6 +279,7 @@ struct Settings
                album_backdrop == o.album_backdrop &&
                album_backdrop_strength == o.album_backdrop_strength &&
                backdrop_shader == o.backdrop_shader &&
+               safe_mode == o.safe_mode &&
                glow_separators == o.glow_separators &&
                glow_separator_strength == o.glow_separator_strength &&
                backdrop_drift == o.backdrop_drift &&

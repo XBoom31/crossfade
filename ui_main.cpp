@@ -1087,7 +1087,8 @@ static void draw_list_page(AppState &state, MpvPlayer &player, const AppLayout &
         else if (state.current_tab == Tab::Radio)
             ui_empty_state(UiIcon::Radio, "Radio is quiet", "Start radio from any track");
         else
-            ui_empty_state(UiIcon::Album, "Nothing here", "Try refreshing or searching for something new");
+            ui_empty_state(UiIcon::Album, "Nothing here",
+                           "Press / to search, P to start a party, or ? for shortcuts.");
         if (hero_tab)
             ImGui::PopStyleVar();
         ImGui::EndChild();
@@ -1158,6 +1159,7 @@ static void draw_list_page(AppState &state, MpvPlayer &player, const AppLayout &
     static bool s_home_ever_appended = false;
     static int s_home_last_frame = -1;
     const bool is_home_list = home && state.search_buffer[0] == '\0';
+    const bool is_search_list = home && state.search_buffer[0] != '\0';
     const int cur_count = tracks ? (int)tracks->size() : 0;
     if (is_home_list)
     {
@@ -1192,17 +1194,94 @@ static void draw_list_page(AppState &state, MpvPlayer &player, const AppLayout &
         s_home_prev_count = cur_count;
     }
 
+    // Search refines in two stages: local matches appear immediately, then
+    // online results are merged in behind them. Only rows that were not
+    // already visible should animate; replaying the whole list on every
+    // refinement makes the page flash.
+    static std::string s_search_query;
+    static std::unordered_set<std::string> s_search_seen;
+    static std::unordered_set<std::string> s_search_append_ids;
+    static double s_search_append_start = -1.0;
+    static double s_search_reveal_start = -1.0;
+    static uint64_t s_search_epoch = (uint64_t)-1;
+    int search_append_first = -1;
+    if (is_search_list && tracks)
+    {
+        const std::string query(state.search_buffer);
+        const uint64_t epoch = ui_page_epoch();
+        // Reset on a new query or a page change (tab switch / search cleared).
+        // Do NOT reset on a frame gap: the app skips idle frames while the
+        // backend is still searching, and treating that as a new page replays
+        // the whole list when the online results arrive.
+        if (s_search_epoch == (uint64_t)-1 || query != s_search_query ||
+            epoch != s_search_epoch)
+        {
+            s_search_seen.clear();
+            s_search_append_ids.clear();
+            s_search_append_start = -1.0;
+            s_search_reveal_start = -1.0;
+            s_search_query = query;
+            s_search_epoch = epoch;
+        }
+        if (!tracks->empty() && s_search_reveal_start < 0.0)
+            s_search_reveal_start = ImGui::GetTime();
+
+        bool has_new = false;
+        for (const auto &t : *tracks)
+            if (!s_search_seen.count(t.id))
+                has_new = true;
+
+        // Growth within the same query is a refinement; animate only the new
+        // ids. The first batch for a query still uses the regular list reveal.
+        if (has_new && !s_search_seen.empty())
+        {
+            s_search_append_ids.clear();
+            for (const auto &t : *tracks)
+                if (!s_search_seen.count(t.id))
+                    s_search_append_ids.insert(t.id);
+            s_search_append_start = ImGui::GetTime();
+        }
+        if (s_search_append_start > 0.0 &&
+            ImGui::GetTime() - s_search_append_start > 1.0)
+        {
+            s_search_append_ids.clear();
+            s_search_append_start = -1.0;
+        }
+        if (!s_search_append_ids.empty())
+        {
+            for (int i = 0; i < (int)tracks->size(); ++i)
+                if (s_search_append_ids.count((*tracks)[i].id))
+                {
+                    search_append_first = i;
+                    break;
+                }
+        }
+
+        s_search_seen.clear();
+        for (const auto &t : *tracks)
+            s_search_seen.insert(t.id);
+    }
+
     double base_reveal = -1.0;
     if (tracks)
     {
-        if (is_home_list && (s_home_append_active || s_home_ever_appended))
+        const bool home_refining =
+            is_home_list && (s_home_append_active || s_home_ever_appended);
+        const bool search_refining = is_search_list && !s_search_append_ids.empty();
+        if (home_refining || search_refining)
         {
-            base_reveal = -1.0; // existing rows: no replay after first append
+            base_reveal = -1.0; // existing rows: no replay after an append
+        }
+        else if (is_search_list)
+        {
+            // Search has its own reveal clock: the initial batch (local or
+            // remote) animates once, later refinements only animate new rows.
+            base_reveal = s_search_reveal_start;
         }
         else
         {
-            base_reveal = ui_anim_track_list_reveal(reveal_key.c_str(), *tracks,
-                                                    (uint64_t)(uintptr_t)tracks.get());
+            base_reveal = ui_anim_track_list_reveal(
+                reveal_key.c_str(), *tracks, (uint64_t)(uintptr_t)tracks.get());
         }
     }
 
@@ -1223,17 +1302,24 @@ static void draw_list_page(AppState &state, MpvPlayer &player, const AppLayout &
             double row_reveal = base_reveal;
             const bool appended_row =
                 is_home_list && s_home_ever_appended && i >= s_home_append_base;
+            const bool search_appended =
+                is_search_list && s_search_append_ids.count(track.id) > 0;
             if (appended_row && s_home_append_active &&
                 (ImGui::GetTime() - s_home_append_start < 1.0))
                 row_reveal = s_home_append_start;
+            else if (search_appended)
+                row_reveal = s_search_append_start;
             opt.reveal_start = row_reveal;
             // Stagger from the first row currently on screen (or from the start
             // of the appended batch) instead of the absolute list position:
             // a scrolled viewport would otherwise clamp every visible row to
             // the same delay and make the whole page animate as one block.
-            const int reveal_base = appended_row ? s_home_append_base : clipper.DisplayStart;
+            const int reveal_base =
+                search_appended
+                    ? std::max(0, search_append_first)
+                    : (appended_row ? s_home_append_base : clipper.DisplayStart);
             opt.reveal_index = std::max(0, i - reveal_base);
-            opt.stagger_scroll_reveal = is_home_list;
+            opt.stagger_scroll_reveal = is_home_list || search_appended;
             opt.selected = !selection_context.empty() && state.selected_track_ids.count(track.id) > 0;
             TrackRowResult row = ui_track_row(state, track, i, opt);
             if (row.deleted)
