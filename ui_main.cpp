@@ -1486,6 +1486,7 @@ void draw_main_ui(AppState &state, MpvPlayer &player, bool show_recommendations)
     const bool single_panel = state.current_tab == Tab::Settings ||
                               state.current_tab == Tab::Radio ||
                               state.current_tab == Tab::Queue ||
+                              state.current_tab == Tab::Party ||
                               state.current_tab == Tab::Playlists ||
                               state.current_tab == Tab::Albums ||
                               state.current_tab == Tab::Artists ||
@@ -1557,6 +1558,8 @@ void draw_main_ui(AppState &state, MpvPlayer &player, bool show_recommendations)
             draw_radio_panel(state);
         else if (state.current_tab == Tab::Queue)
             draw_queue_panel(state);
+        else if (state.current_tab == Tab::Party)
+            draw_party_panel(state);
         else if (state.current_tab == Tab::Playlists)
             draw_playlists_panel(state);
         else if (state.current_tab == Tab::Albums)

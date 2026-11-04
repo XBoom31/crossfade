@@ -12,6 +12,7 @@
 #include <cstdint>
 #include "ytdlp.h"
 #include "ui_theme.h"
+#include "party.h"
 
 // Forward declarations
 class MpvPlayer;
@@ -49,7 +50,8 @@ static inline ImVec4 accent_alpha(const ImVec4 &c, float a)
         Artist,
         Settings,
         YouTube,
-        Smart
+        Smart,
+        Party
     };
 
     // ----------------------------------------------------------------------
@@ -227,6 +229,9 @@ struct Settings
     // when the backend processes start (i.e. next app launch).
     bool warm_stream_resolver = true;
 
+    // Party mode settings (never the token, guest ids or guest names).
+    PartySettings party;
+
     // Playback rate multiplier (0.5 - 2.0). Applied live to both mpv
     // instances so it survives the crossfade role swap.
     float playback_speed = 1.0f;
@@ -276,7 +281,7 @@ struct Settings
                warm_stream_resolver == o.warm_stream_resolver &&
                playback_speed == o.playback_speed && eq_enabled == o.eq_enabled &&
                eq_same && discord_client_id == o.discord_client_id &&
-               server_sync == o.server_sync;
+               server_sync == o.server_sync && party == o.party;
     }
 };
 
@@ -501,6 +506,8 @@ struct AppState
     // Keyboard/shortcut state.
     bool focus_search_requested = false;
     bool show_shortcuts = false;
+    // Party view: fullscreen QR takeover. Session-only; never persisted.
+    bool party_fullscreen = false;
 
     // Backend diagnostics shown in Settings.
     bool backend_running = false;
@@ -716,6 +723,11 @@ void save_play_log(const std::vector<PlayEvent> &events);
 void rebuild_stats(AppState &state);
 void draw_stats_panel(AppState &state);
 void draw_queue_panel(AppState &state);
+void draw_party_panel(AppState &state);
+// Fullscreen QR takeover (Esc or the close button returns to the app).
+void draw_party_fullscreen(AppState &state);
+// Small bottom-bar chip shown only while a party is running.
+void draw_party_chip(AppState &state);
 
 // Radio station page (~/.config/p100/radio_last.cache holds the last station
 // so the tab opens with content and warm stream URLs).

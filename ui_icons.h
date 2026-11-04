@@ -33,7 +33,8 @@ enum class UiIcon
     Check,
     Refresh,
     Sun,
-    Moon
+    Moon,
+    Party
 };
 
 void ui_draw_icon(ImDrawList *dl, UiIcon icon, ImVec2 center, float size, ImU32 color,

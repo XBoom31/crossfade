@@ -69,6 +69,7 @@ set(SOURCES
     ui_notify.cpp
     ui_settings.cpp
     ui_stats.cpp
+    ui_party.cpp
     texture.cpp
     writeback.cpp
     party.cpp

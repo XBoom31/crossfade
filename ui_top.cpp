@@ -407,6 +407,7 @@ void draw_sidebar(AppState &state)
     nav_item(state, Tab::History, UiIcon::History, "History", rail);
     nav_item(state, Tab::Stats, UiIcon::Stats, "Stats", rail);
     nav_item(state, Tab::Smart, UiIcon::Repeat, "Smart", rail);
+    nav_item(state, Tab::Party, UiIcon::Party, "Party", rail);
 
     if (!rail)
         ImGui::Dummy(ImVec2(0, m.space_3));
@@ -587,6 +588,7 @@ static const char *view_title(const AppState &s)
     case Tab::History: return "History";
     case Tab::Stats: return "Stats";
     case Tab::Queue: return "Up Next";
+    case Tab::Party: return "Party";
     case Tab::Album: return "Album";
     case Tab::Artist: return "Artist";
     case Tab::Settings: return "Settings";
@@ -620,6 +622,7 @@ static std::string view_subtitle(const AppState &s)
     case Tab::Artists: return "Artists you follow";
     case Tab::Stats: return "Your listening, at a glance";
     case Tab::Queue: return "Playback queue";
+    case Tab::Party: return "Let guests add songs from their phones";
     case Tab::Settings: return "Make crossfade yours";
     default: return s.status_text;
     }

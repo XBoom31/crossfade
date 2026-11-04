@@ -36,6 +36,7 @@ C++17 · SDL2 + OpenGL + Dear ImGui · playback by `mpv` · music data by a Pyth
 - [Sign in](#sign-in)
 - [A quick tour](#a-quick-tour)
 - [Everyday use](#everyday-use)
+- [Party mode](#party-mode)
 - [Controls](#controls)
 - [Configuration](#configuration)
 - [How it works](#how-it-works)
@@ -303,7 +304,7 @@ The window has four persistent regions:
 
 | Region | What lives there |
 |---|---|
-| **Sidebar** | **Browse:** Home, Downloads, Radio, Liked, History, Stats, Smart. **Library:** Albums, Artists, Playlists, YouTube. Settings is pinned at the bottom. |
+| **Sidebar** | **Browse:** Home, Downloads, Radio, Liked, History, Stats, Smart, Party. **Library:** Albums, Artists, Playlists, YouTube. Settings is pinned at the bottom. |
 | **Top bar** | Back / forward, the current view title and subtitle, search, and Refresh where it applies. |
 | **Main area** | Track lists, album/artist detail pages, grids, the queue, stats, or the settings panel. |
 | **Bottom bar** | Cover art, track + artist, like, previous / play-pause / next, sleep timer, Up Next, lyrics, volume, and the speed preset. |
@@ -323,6 +324,8 @@ The window has four persistent regions:
   rate, top-artist bars, and listening-by-hour charts for **All Time / This Month / This
   Week**.
 - **Smart** — **On Repeat** (your most-played tracks) and **Recently Played**.
+- **Party** — start a LAN party, show the QR code, approve guest requests, and
+  reopen the fullscreen code with `P`.
 - **Albums / Artists** — saved grids; open any card for a detail page with **Play all**,
   save/unsave, and (for albums) download/delete.
 - **Playlists** — local playlists on the left, tracks on the right, with create, rename,
@@ -394,6 +397,30 @@ Local-only use is fully supported.
 - **Accent colour** — follows the XDG desktop portal (Plasma, recent GNOME); otherwise a
   date-seeded colour that rolls at local midnight. Override with `P100_ACCENT`.
 
+## Party mode
+
+Open **Party** (or press `P`) and choose **Start party**. The host page shows a
+QR code and a link; anyone on the same Wi-Fi can scan it, paste a YouTube /
+YouTube Music link, and add a song. Nothing leaves the local network: the
+server is part of crossfade, uses the existing Python backend for metadata, and
+never writes guest names or links to disk.
+
+- **Approval.** Turn on **Host approves every request** to review songs before
+  they join Up Next.
+- **Fair queueing.** Guest songs are interleaved round-robin, below anything you
+  queued yourself, so one guest cannot fill the queue.
+- **Limits.** Set songs per guest, add cooldown, max video length and a queue
+  cap. Rate limits are enforced per guest on the server.
+- **Guest page.** One self-contained mobile page (light/dark, no external
+  requests) with now-playing progress, Up Next, search and undo.
+- **Fullscreen.** Show the QR code large for a TV or projector; `Esc` returns.
+- **Privacy.** The party token lives only in the QR URL, guest ids are in memory
+  only, and the party never auto-starts or persists live state.
+
+Party mode binds to one LAN IPv4 address and serves plain HTTP. Use it on a
+trusted network; do not forward the port from your router. The full design and
+security notes are in [`docs/PARTY-MODE.md`](docs/PARTY-MODE.md).
+
 ## Controls
 
 ### Keyboard
@@ -409,7 +436,8 @@ Local-only use is fully supported.
 | Focus search | `/` or `Ctrl+F` |
 | Toggle lyrics panel | `L` |
 | Toggle sidebar | `S` |
-| Back / clear search | `Esc` |
+| Open party mode | `P` |
+| Back / clear search / close fullscreen QR | `Esc` |
 | Shortcut help | `?` |
 | ImGui demo (development) | `Ctrl+Shift+D` |
 
@@ -573,6 +601,7 @@ layout and GL redraw does not run every millisecond just because audio is playin
 | Album and artist pages | `ui_album.cpp`, `ui_artists.cpp` |
 | Playlists, queue, radio, YouTube library | `ui_playlists.cpp`, `ui_queue.cpp`, `ui_radio.cpp`, `ui_youtube.cpp` |
 | Bottom bar, lyrics, notifications | `ui_bottom.cpp`, `ui_lyrics.cpp`, `ui_notify.cpp` |
+| Party host UI, server, queue, link parsing | `ui_party.cpp`, `party.cpp`, `party_server.cpp`, `party_queue.cpp`, `party_link.cpp`, `party_util.cpp`, `party_net.cpp` |
 | Stats, settings, theme, backdrop, components, icons | `ui_stats.cpp`, `ui_settings.cpp`, `ui_theme.cpp`, `ui_backdrop.cpp`, `ui_components.cpp`, `ui_icons.cpp` |
 | Persistence and shared helpers | `ui_helpers.cpp` |
 | Async artwork | `texture.h`, `texture.cpp` |
@@ -660,6 +689,9 @@ Everything else — playback, crossfade, caching, lyrics, library — is portabl
 | Lyrics are out of sync | **Settings → Lyrics → Timing offset** |
 | OAuth token rejected | Delete `browseroauth.json`, re-run the OAuth login, restart |
 | App won't start on Wayland | Run under XWayland (`SDL_VIDEODRIVER=x11 crossfade`) |
+| Guests can't open the party link | Make sure both devices are on the same Wi-Fi and no client-isolation/VPN blocks LAN traffic. Pick the right address in **Party → Network** |
+| Party port already in use | crossfade tries the next 10 ports automatically; or change the port in Party settings |
+| Guest search says it couldn't search | The local Python backend must be running and able to reach YouTube; adding a direct link still works when metadata lookup succeeds |
 
 <details>
 <summary><b>Reset the auth state from scratch</b></summary>
@@ -719,6 +751,9 @@ YouTube's terms of service.
 - [mpv](https://mpv.io/) / libmpv — playback, crossfade, `stream-record`
 - [Dear ImGui](https://github.com/ocornut/imgui) · [SDL2](https://www.libsdl.org/) ·
   [stb_image](https://github.com/nothings/stb) · [GLib](https://docs.gtk.org/glib/)
+- [cpp-httplib](https://github.com/yhirose/cpp-httplib) — local party HTTP server
+- [QR Code generator](https://github.com/nayuki/QR-Code-generator) by Nayuki — QR
+  rendering for the party link
 
 ---
 

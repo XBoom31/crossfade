@@ -1,4 +1,5 @@
 #include "ui.h"
+#include "party_util.h"
 #include "ytdlp.h"
 #include "texture.h"
 #include "ui_components.h"
@@ -224,7 +225,20 @@ void save_settings(const Settings &settings)
         << settings.eq_gains[4] << "]"
         << ",\"discord_client_id\":\"" << settings.discord_client_id << "\""
         << ",\"server_sync\":" << (settings.server_sync ? "true" : "false")
-        << ",\"notes\":\"" << json_escape(settings.notes) << "\"";
+        << ",\"notes\":\"" << json_escape(settings.notes) << "\""
+        << ",\"party\":{"
+        << "\"name\":\"" << json_escape(settings.party.name) << "\""
+        << ",\"port\":" << std::max(1024, std::min(65535, settings.party.port))
+        << ",\"interface_ip\":\"" << json_escape(settings.party.interface_ip) << "\""
+        << ",\"require_approval\":" << (settings.party.require_approval ? "true" : "false")
+        << ",\"max_per_guest\":" << std::max(0, std::min(20, settings.party.max_per_guest))
+        << ",\"cooldown_sec\":" << std::max(0, std::min(60, settings.party.cooldown_sec))
+        << ",\"max_video_minutes\":" << std::max(0, std::min(60, settings.party.max_video_minutes))
+        << ",\"max_queue\":" << std::max(0, std::min(300, settings.party.max_queue))
+        << ",\"allow_search\":" << (settings.party.allow_search ? "true" : "false")
+        << ",\"allow_duplicates\":" << (settings.party.allow_duplicates ? "true" : "false")
+        << ",\"show_names\":" << (settings.party.show_names ? "true" : "false")
+        << "}";
     for (const auto &def : ui_element_defs())
         out << ",\"ui_elem_" << def.key << "\":" << elem_value(settings, def.key);
     out << "}";
@@ -479,6 +493,96 @@ Settings load_settings()
                 }
                 if (end <= json.size())
                     s.notes = json_unescape(json.substr(pos, end - pos));
+            }
+        }
+
+        // Party settings are stored as a nested object. Only settings live
+        // here: the party token, guest ids and guest names are never written
+        // to disk (and the party never auto-starts on launch).
+        const size_t party_pos = json.find("\"party\"");
+        if (party_pos != std::string::npos)
+        {
+            const size_t obj = json.find('{', party_pos);
+            const size_t end = obj == std::string::npos ? std::string::npos
+                                                        : json.find('}', obj);
+            if (obj != std::string::npos && end != std::string::npos && end > obj)
+            {
+                const std::string pj = json.substr(obj, end - obj + 1);
+                auto pget_str = [&](const std::string &key) -> std::string
+                {
+                    size_t pos = pj.find("\"" + key + "\":\"");
+                    if (pos == std::string::npos)
+                        return "";
+                    pos += key.size() + 4;
+                    size_t close = pos;
+                    while (close < pj.size())
+                    {
+                        if (pj[close] == '\\')
+                        {
+                            close += 2;
+                            continue;
+                        }
+                        if (pj[close] == '"')
+                            break;
+                        ++close;
+                    }
+                    if (close > pj.size())
+                        return "";
+                    return json_unescape(pj.substr(pos, close - pos));
+                };
+                auto pget_num = [&](const std::string &key) -> int
+                {
+                    size_t pos = pj.find("\"" + key + "\":");
+                    if (pos == std::string::npos)
+                        return 0;
+                    pos += key.size() + 3;
+                    char *endp = nullptr;
+                    const long v = std::strtol(pj.c_str() + pos, &endp, 10);
+                    if (endp == pj.c_str() + pos)
+                        return 0;
+                    return (int)v;
+                };
+                auto pget_bool = [&](const std::string &key) -> bool
+                {
+                    size_t pos = pj.find("\"" + key + "\":");
+                    if (pos == std::string::npos)
+                        return false;
+                    pos += key.size() + 2;
+                    const size_t t = pj.find("true", pos);
+                    const size_t f = pj.find("false", pos);
+                    return t != std::string::npos && (f == std::string::npos || t < f);
+                };
+
+                std::string name = pget_str("name");
+                if (!name.empty())
+                    s.party.name = party_util::clean_utf8(name, 60);
+
+                if (pj.find("\"port\"") != std::string::npos)
+                    s.party.port = std::max(1024, std::min(65535, pget_num("port")));
+                std::string iface = pget_str("interface_ip");
+                bool ipv4_like = !iface.empty() && iface.size() <= 15;
+                for (char c : iface)
+                    if (!(std::isdigit((unsigned char)c) || c == '.'))
+                        ipv4_like = false;
+                s.party.interface_ip = ipv4_like ? iface : "";
+
+                if (pj.find("\"require_approval\"") != std::string::npos)
+                    s.party.require_approval = pget_bool("require_approval");
+                if (pj.find("\"max_per_guest\"") != std::string::npos)
+                    s.party.max_per_guest = std::max(0, std::min(20, pget_num("max_per_guest")));
+                if (pj.find("\"cooldown_sec\"") != std::string::npos)
+                    s.party.cooldown_sec = std::max(0, std::min(60, pget_num("cooldown_sec")));
+                if (pj.find("\"max_video_minutes\"") != std::string::npos)
+                    s.party.max_video_minutes =
+                        std::max(0, std::min(60, pget_num("max_video_minutes")));
+                if (pj.find("\"max_queue\"") != std::string::npos)
+                    s.party.max_queue = std::max(0, std::min(300, pget_num("max_queue")));
+                if (pj.find("\"allow_search\"") != std::string::npos)
+                    s.party.allow_search = pget_bool("allow_search");
+                if (pj.find("\"allow_duplicates\"") != std::string::npos)
+                    s.party.allow_duplicates = pget_bool("allow_duplicates");
+                if (pj.find("\"show_names\"") != std::string::npos)
+                    s.party.show_names = pget_bool("show_names");
             }
         }
     }

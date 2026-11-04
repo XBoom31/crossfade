@@ -226,6 +226,21 @@ void ui_draw_icon(ImDrawList *dl, UiIcon icon, ImVec2 c, float s, ImU32 col, flo
         dl->AddCircleFilled(off, r * 0.78f, ImGui::GetColorU32(ui_c().bg), 24);
         break;
     }
+    case UiIcon::Party:
+    {
+        // Confetti / sparkle burst: a central dot with a few rays and dots.
+        dl->AddCircleFilled(c, h * 0.16f, col, 12);
+        const float rays[][2] = {
+            {0.00f, -0.46f}, {0.00f, 0.46f}, {-0.46f, 0.00f}, {0.46f, 0.00f},
+            {-0.34f, -0.34f}, {0.34f, -0.34f}, {-0.34f, 0.34f}, {0.34f, 0.34f}};
+        for (const auto &ray : rays)
+        {
+            const float len = (ray[0] == 0.0f || ray[1] == 0.0f) ? 0.72f : 0.58f;
+            dl->AddLine(p(c, s, ray[0] * len, ray[1] * len),
+                        p(c, s, ray[0], ray[1]), col, t);
+        }
+        break;
+    }
     }
 }
 

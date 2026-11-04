@@ -65,6 +65,17 @@ static std::function<void(const std::string &)> g_main_event_cb;
 static std::function<void(const std::string &)> g_fade_event_cb;
 static std::mutex g_data_mutex;
 
+// Party HTTP workers call this after pushing work into the party inbox. It
+// must wake SDL_WaitEventTimeout() without touching ImGui from a worker
+// thread, so it posts an empty user event; the main loop then drains the
+// inbox on its own thread.
+static void party_wake_event()
+{
+    SDL_Event event{};
+    event.type = SDL_USEREVENT;
+    SDL_PushEvent(&event);
+}
+
 // ----------------------------------------------------------------------
 // Global UI scale (Settings -> "UI scale" + per-aspect sliders).
 // The layout heights below are globals so they can track the sliders live,
@@ -1929,6 +1940,8 @@ int main(int, char **)
     // so suppress SDL's synthetic touch-to-mouse events.
     SDL_SetHint(SDL_HINT_TOUCH_MOUSE_EVENTS, "0");
     SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER);
+    party_init();
+    party_set_wake(party_wake_event);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 2);
@@ -2510,6 +2523,8 @@ int main(int, char **)
                 ImGui_ImplSDL2_ProcessEvent(&event);
                 if (event.type == SDL_QUIT)
                     running = false;
+                if (event.type == SDL_USEREVENT)
+                    g_state.repaint_requested = true;
                 if (event.type == SDL_WINDOWEVENT)
                 {
                     if (event.window.event == SDL_WINDOWEVENT_CLOSE &&
@@ -2655,7 +2670,9 @@ int main(int, char **)
                     }
                     else if (key == SDLK_ESCAPE && !ctrl && !shift)
                     {
-                        if (g_state.show_shortcuts)
+                        if (g_state.party_fullscreen)
+                            g_state.party_fullscreen = false;
+                        else if (g_state.show_shortcuts)
                             g_state.show_shortcuts = false;
                         else if (g_state.current_tab != Tab::Album &&
                                  g_state.current_tab != Tab::Artist &&
@@ -2686,6 +2703,11 @@ int main(int, char **)
                     else if (key == SDLK_s && !ctrl && !shift)
                     {
                         g_state.sidebar_collapsed = !g_state.sidebar_collapsed;
+                        g_state.repaint_requested = true;
+                    }
+                    else if (key == SDLK_p && !ctrl && !shift)
+                    {
+                        g_state.current_tab = Tab::Party;
                         g_state.repaint_requested = true;
                     }
                     else if (shift && key == SDLK_SLASH)
@@ -3287,6 +3309,16 @@ int main(int, char **)
                 last_save_time = now;
             }
 
+            // Party: drain guest add/undo requests here, on the main thread.
+            // HTTP workers only ever enqueue immutable requests; this call is
+            // the single place where guest songs enter state.play_queue.
+            if (party_running())
+            {
+                const double party_pos = g_player->cached_time_pos();
+                const double party_dur = g_player->get_property_double("duration");
+                party_tick(g_state, party_pos, party_dur, !g_state.playing.load());
+            }
+
             // ---- Rendering decision ----
             // Housekeeping above runs on its own cadence; the full ImGui
             // layout + GL swap only happens when something is actually
@@ -3333,6 +3365,8 @@ int main(int, char **)
             draw_content_header(g_state);
             draw_main_ui(g_state, *g_player, true);
             draw_bottom_bar(g_state, *g_player);
+            draw_party_chip(g_state);
+            draw_party_fullscreen(g_state);
 
             ui_notify_draw();
 
@@ -3363,6 +3397,7 @@ int main(int, char **)
                 ImGui::Spacing();
                 ImGui::Text("L                Toggle lyrics panel");
                 ImGui::Text("S  Toggle sidebar");
+                ImGui::Text("P  Party mode");
                 ImGui::Spacing();
                 ImGui::TextColored(ui_c().text_muted, "Navigation");
                 ImGui::Text("/ or Ctrl+F      Focus search");
@@ -3398,6 +3433,7 @@ int main(int, char **)
     discard_recording();
 
     // ---- Cleanup ----
+    party_stop();
     stop_backend();
     clear_texture_cache();
     g_player.reset();
