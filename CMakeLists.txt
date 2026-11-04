@@ -49,7 +49,7 @@ set(SOURCES
     src/data/accent.cpp
     src/data/paths.cpp
     src/net/ytdlp.cpp
-    mpvplayer.cpp
+    src/playback/mpvplayer.cpp
     src/ui/ui_helpers.cpp
     src/ui/ui_theme.cpp
     src/ui/ui_backdrop.cpp
@@ -90,7 +90,7 @@ if(P100_WIN)
     # keep the same class/function surface so main.cpp compiles untouched.
     list(APPEND SOURCES win32/mpris_stub.cpp win32/discord_rpc_stub.cpp)
 else()
-    list(APPEND SOURCES mpris.cpp src/net/discord_rpc.cpp)
+    list(APPEND SOURCES src/playback/mpris.cpp src/net/discord_rpc.cpp)
 endif()
 
 add_executable(crossfade ${SOURCES})
@@ -112,6 +112,7 @@ target_include_directories(crossfade PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src/party
     ${CMAKE_CURRENT_SOURCE_DIR}/src/data
     ${CMAKE_CURRENT_SOURCE_DIR}/src/net
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/playback
     ${CMAKE_CURRENT_SOURCE_DIR}/external/sqlite
 )
 
@@ -186,6 +187,7 @@ if(CROSSFADE_BUILD_TESTS)
         ${CMAKE_CURRENT_SOURCE_DIR}/src/party
         ${CMAKE_CURRENT_SOURCE_DIR}/src/data
         ${CMAKE_CURRENT_SOURCE_DIR}/src/net
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/playback
         ${CMAKE_CURRENT_SOURCE_DIR}/external/sqlite
         ${CMAKE_CURRENT_SOURCE_DIR}/external/imgui
         ${CMAKE_CURRENT_SOURCE_DIR}/external)
