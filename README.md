@@ -675,7 +675,8 @@ layout and GL redraw does not run every millisecond just because audio is playin
 | Bottom bar, lyrics, notifications | `src/ui/ui_bottom.cpp`, `src/ui/ui_lyrics.cpp`, `src/ui/ui_notify.cpp` |
 | Party host UI, server, queue, link parsing | `src/ui/ui_party.cpp`, `src/party/party.cpp`, `src/party/party_server.cpp`, `src/party/party_queue.cpp`, `src/party/party_link.cpp`, `src/party/party_util.cpp`, `src/party/party_net.cpp` |
 | Stats, settings, theme, backdrop, components, icons | `src/ui/ui_stats.cpp`, `src/ui/ui_settings.cpp`, `src/ui/ui_theme.cpp`, `src/ui/ui_backdrop.cpp`, `src/ui/ui_components.cpp`, `src/ui/ui_icons.cpp` |
-| Persistence and shared helpers | `src/ui/ui_helpers.cpp` |
+| Persistence and shared helpers | `src/data/store.cpp`, `src/data/cache.cpp`, `src/ui/playlists_io.cpp`, `src/ui/ui_helpers.cpp` |
+| Duration and text formatting | `src/ui/format.cpp` |
 | SQLite library, migration, FTS5 search, backups | `src/data/library.h`, `src/data/library.cpp`, `external/sqlite/` |
 | Diagnostics, crash handler, safe mode | `src/app/diagnostics.h`, `src/app/diagnostics.cpp` |
 | Unit tests | `tests/` |

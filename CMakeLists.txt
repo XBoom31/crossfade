@@ -62,6 +62,8 @@ set(SOURCES
     src/playback/session.cpp
     src/playback/mpvplayer.cpp
     src/ui/ui_helpers.cpp
+    src/ui/format.cpp
+    src/ui/playlists_io.cpp
     src/ui/ui_theme.cpp
     src/ui/ui_backdrop.cpp
     src/ui/ui_layout.cpp
@@ -91,6 +93,8 @@ set(SOURCES
     src/party/party_server.cpp
     src/net/updater.cpp
     src/data/library.cpp
+    src/data/store.cpp
+    src/data/cache.cpp
     src/app/diagnostics.cpp
     external/qrcodegen.cpp
     external/sqlite/sqlite3.c
