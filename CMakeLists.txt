@@ -44,7 +44,7 @@ target_link_libraries(imgui PUBLIC SDL2::SDL2 OpenGL::GL)
 
 # ---- crossfade sources ----
 set(SOURCES
-    main.cpp
+    src/main.cpp
     src/data/config.cpp
     src/data/accent.cpp
     src/data/paths.cpp
@@ -80,7 +80,7 @@ set(SOURCES
     src/party/party_server.cpp
     src/net/updater.cpp
     src/data/library.cpp
-    diagnostics.cpp
+    src/app/diagnostics.cpp
     external/qrcodegen.cpp
     external/sqlite/sqlite3.c
 )
@@ -113,6 +113,7 @@ target_include_directories(crossfade PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src/data
     ${CMAKE_CURRENT_SOURCE_DIR}/src/net
     ${CMAKE_CURRENT_SOURCE_DIR}/src/playback
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/app
     ${CMAKE_CURRENT_SOURCE_DIR}/external/sqlite
 )
 
@@ -188,6 +189,7 @@ if(CROSSFADE_BUILD_TESTS)
         ${CMAKE_CURRENT_SOURCE_DIR}/src/data
         ${CMAKE_CURRENT_SOURCE_DIR}/src/net
         ${CMAKE_CURRENT_SOURCE_DIR}/src/playback
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/app
         ${CMAKE_CURRENT_SOURCE_DIR}/external/sqlite
         ${CMAKE_CURRENT_SOURCE_DIR}/external/imgui
         ${CMAKE_CURRENT_SOURCE_DIR}/external)
