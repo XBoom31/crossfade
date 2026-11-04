@@ -4,6 +4,15 @@ All notable changes to crossfade are documented here.
 
 ## Unreleased
 
+## 0.1.8 - 2026-11-04
+
+### Fixed
+
+- Party guest page: cover art in Up Next now resolves for host playlist tracks
+  too, not only the current song and guest requests. The host registers cached
+  artwork for the next 40 queue rows and downloads missing thumbnails in the
+  background; the phone retries until they are ready.
+
 ## 0.1.7 - 2026-11-04
 
 ### Added

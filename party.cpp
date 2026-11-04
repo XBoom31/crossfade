@@ -143,6 +143,10 @@ AppState *g_app = nullptr;
 
 std::mutex g_art_mu;
 std::unordered_map<std::string, std::string> g_art;
+// One download attempt per video id per party session. Without this a long
+// queue would spawn a fresh thumbnail worker every tick while the image is
+// still missing.
+std::unordered_set<std::string> g_art_requested;
 
 std::mutex g_search_mu;
 std::unordered_map<std::string, std::pair<double, std::string>> g_search_cache;
@@ -199,6 +203,50 @@ void remember_art(const Track &t)
     if (g_art.size() > 1500)
         g_art.clear();
     g_art[t.id] = path;
+}
+
+void cache_art_async(const std::string &id, const std::string &url);
+
+void sync_queue_art(const std::vector<Track> &queue)
+{
+    std::vector<std::pair<std::string, std::string>> downloads;
+    downloads.reserve(8);
+    // Match the guest snapshot cap: phones only render the next 40 rows, so
+    // never spawn artwork workers for an entire 500-track playlist.
+    constexpr int kQueueArtMax = 40;
+    int seen = 0;
+    for (const Track &t : queue)
+    {
+        if (seen >= kQueueArtMax)
+            break;
+        if (t.id.empty())
+            continue;
+        ++seen;
+        std::string url = t.thumbnail_url;
+        if (url.empty())
+            url = "https://img.youtube.com/vi/" + t.id + "/hqdefault.jpg";
+
+        std::string cached = thumbnail_cache_path(url);
+        if (!cached.empty())
+        {
+            std::lock_guard<std::mutex> lock(g_art_mu);
+            if (g_art.size() > 1500)
+                g_art.clear();
+            g_art[t.id] = cached;
+            continue;
+        }
+        bool fetch = false;
+        {
+            std::lock_guard<std::mutex> lock(g_art_mu);
+            if (g_art.find(t.id) == g_art.end() &&
+                g_art_requested.insert(t.id).second)
+                fetch = true;
+        }
+        if (fetch)
+            downloads.emplace_back(t.id, url);
+    }
+    for (const auto &d : downloads)
+        cache_art_async(d.first, d.second);
 }
 
 void cache_art_async(const std::string &id, const std::string &url)
@@ -652,6 +700,7 @@ bool party_start(const PartySettings &settings, std::string &error)
         {
             std::lock_guard<std::mutex> art_lock(g_art_mu);
             g_art.clear();
+            g_art_requested.clear();
         }
         {
             std::lock_guard<std::mutex> search_lock(g_search_mu);
@@ -706,6 +755,7 @@ void party_stop()
         {
             std::lock_guard<std::mutex> art_lock(g_art_mu);
             g_art.clear();
+            g_art_requested.clear();
         }
     }
     party_server_stop();
@@ -917,6 +967,8 @@ void party_tick(AppState &state, double position_sec, double duration_sec, bool 
 
         std::string sig = make_sig(state, g_pending);
         bool bump = sig != g_last_sig;
+        if (bump)
+            sync_queue_art(state.play_queue);
         // While guests are connected, refresh once a second and bump the
         // version. That delivers seeks and dropped/restarted playback, and
         // lets clients resync their progress instead of extrapolating from a

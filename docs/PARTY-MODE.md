@@ -185,6 +185,10 @@ are **never** persisted. A party never auto-starts on launch.
   dismisses it; starting a party does **not** auto-open fullscreen.
 - QR modules are drawn with `ImDrawList::AddRectFilled`; no texture upload and
   no temporary image file.
+- Queue artwork is registered from the host's thumbnail cache and, when
+  missing, downloaded in the background for the first 40 upcoming rows (the
+  same cap as the guest snapshot). The phone retries the local `/api/art`
+  endpoint before showing the music-note fallback.
 - The demand-driven loop is unchanged. While a party is running, a small
   animation request keeps the live dot, QR rings and scan highlight moving;
   the existing wake event, playback cadence and 1 s safety tick keep guest
