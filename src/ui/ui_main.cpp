@@ -1627,7 +1627,8 @@ void draw_main_ui(AppState &state, MpvPlayer &player, bool show_recommendations)
         else if (state.current_tab == Tab::Artist)
             panel_key += "_" + state.artist_browse_id;
         ImGui::PushID(panel_key.c_str());
-        const bool scroll_self = state.current_tab == Tab::Queue ||
+        const bool scroll_self = state.current_tab == Tab::Settings ||
+                                 state.current_tab == Tab::Queue ||
                                  state.current_tab == Tab::Playlists ||
                                  state.current_tab == Tab::Albums ||
                                  state.current_tab == Tab::Artists ||

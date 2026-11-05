@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <cstring>
 #include <cstdlib>
+#include <filesystem>
 #include <fstream>
 
 // ---- Playlist export (M3U / XSPF) ----
@@ -233,10 +234,16 @@ void draw_playlists_panel(AppState &state)
     ImGui::PopStyleVar();
 
     ImGui::Dummy(ImVec2(0.0f, m.space_2));
-    if (ui_ghost_button("Import from Spotify", ImVec2(180.0f * m.layout_scale, m.control_h)))
+    const bool spotify_connected =
+        std::filesystem::exists(p100_config_path("spotify.json"));
+    if (ui_secondary_button(spotify_connected ? "Import Spotify playlist"
+                                              : "Import from Spotify",
+                            ImVec2(196.0f * m.layout_scale, m.control_h)))
     {
         ImGui::OpenPopup("##spotify_import");
     }
+    if (state.spotify_open_import_requested.exchange(false))
+        ImGui::OpenPopup("##spotify_import");
     if (ImGui::BeginPopup("##spotify_import"))
     {
         if (s_spotify_import_complete)
@@ -245,7 +252,18 @@ void draw_playlists_panel(AppState &state)
             ImGui::CloseCurrentPopup();
         }
         ImGui::TextUnformatted("Import a Spotify playlist");
-        ImGui::SetNextItemWidth(360.0f * m.layout_scale);
+        ui_push_small();
+        ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + 430.0f * m.layout_scale);
+        ImGui::TextColored(ui_c().text_muted,
+                           "In Spotify, open a playlist, choose Share -> Copy link to playlist, then paste it here. Private playlists work once Spotify is connected.");
+        ImGui::PopTextWrapPos();
+        ImGui::PopFont();
+        ImGui::Dummy(ImVec2(0.0f, m.space_2));
+        if (spotify_connected)
+            ImGui::TextColored(ui_c().accent_text, "Spotify connected");
+        else
+            ImGui::TextColored(ui_c().text_muted, "Spotify not connected");
+        ImGui::SetNextItemWidth(430.0f * m.layout_scale);
         ImGui::InputTextWithHint("##spotify_url", "open.spotify.com/playlist/...",
                                  s_spotify_url, sizeof(s_spotify_url));
         if (state.spotify_import_running.load())
@@ -260,14 +278,33 @@ void draw_playlists_panel(AppState &state)
             ui_primary_button("Import playlist", ImVec2(160.0f * m.layout_scale, m.control_h)))
             begin_spotify_import(state);
         ImGui::SameLine(0.0f, m.space_2);
-        if (ui_ghost_button("Sign in to Spotify", ImVec2(170.0f * m.layout_scale, m.control_h)))
+        if (!state.spotify_login_running.load() &&
+            ui_ghost_button(spotify_connected ? "Reconnect Spotify" : "Sign in to Spotify",
+                            ImVec2(176.0f * m.layout_scale, m.control_h)))
         {
             const std::string script = p100_share_dir() + "/scripts/crossfade-login-helper.py";
-            tasks::spawn([script]() {
+            state.spotify_login_running = true;
+            AppState *sp = &state;
+            tasks::spawn([sp, script]() {
                 const std::string cmd = "python3 \"" + script + "\" --spotify";
-                (void)std::system(cmd.c_str());
+                const int rc = std::system(cmd.c_str());
+                sp->spotify_login_running = false;
+                if (rc == 0)
+                {
+                    sp->spotify_open_import_requested = true;
+                    ui_notify(UiNotifyType::Success, "Spotify connected",
+                              "Paste a playlist link to import it.", 5.0f);
+                }
+                else
+                {
+                    ui_notify(UiNotifyType::Error, "Spotify sign-in failed",
+                              "The Spotify window was closed before it finished.", 6.0f);
+                }
+                sp->repaint_requested = true;
             });
         }
+        if (state.spotify_login_running.load())
+            ImGui::TextColored(ui_c().text_muted, "Waiting for Spotify sign-in...");
         ImGui::EndPopup();
     }
     finish_spotify_import(state);

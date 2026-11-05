@@ -341,6 +341,8 @@ struct AppState
     bool auth_refresh_requested = false;
     std::shared_ptr<const SpotifyImportResult> spotify_import_result;
     std::atomic<bool> spotify_import_running{false};
+    std::atomic<bool> spotify_login_running{false};
+    std::atomic<bool> spotify_open_import_requested{false};
     std::string queued_podcast_search;
     int podcast_search_id = 0;
 
