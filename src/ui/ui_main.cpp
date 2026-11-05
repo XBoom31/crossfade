@@ -1136,7 +1136,8 @@ static void draw_list_page(AppState &state, const AppLayout &layout, float width
     const float art = ui_elem("list_thumb", 48.0f);
     const float title_line = 24.0f * m.text_scale * 1.22f;
     const float meta_line = 18.0f * m.text_scale * 1.24f;
-    const float row_h = std::max(art, title_line + m.space_1 + meta_line) + m.row_pad_y * 2.0f;
+    const float row_h = std::max(art, title_line + m.space_1 + meta_line) +
+                        m.row_pad_y * 2.0f * ui_elem("list_row", 1.0f);
     const float pitch = row_h + m.row_gap;
 
     std::string reveal_key;

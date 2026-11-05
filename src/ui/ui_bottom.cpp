@@ -422,7 +422,8 @@ void draw_bottom_bar(AppState &state, MpvPlayer &player)
     }
 
     const float side_pad = m.content_pad;
-    const float art = std::min(64.0f * m.layout_scale, bar_h - m.space_4 * 2.0f);
+    const float art = std::min(64.0f * m.layout_scale * ui_elem("bottom_art", 1.0f),
+                               bar_h - m.space_4 * 2.0f);
     const float art_y = (bar_h - art) * 0.5f;
 
     ImGui::SetCursorPos(ImVec2(side_pad, art_y));
@@ -597,12 +598,14 @@ void draw_bottom_bar(AppState &state, MpvPlayer &player)
         }
     }
 
-    const float transport_size = std::min(40.0f * m.layout_scale, bar_h * 0.38f);
+    const float ctrl_scale = ui_elem("bottom_controls", 1.0f);
+    const float transport_size = std::min(40.0f * m.layout_scale * ctrl_scale, bar_h * 0.50f);
     const float side_size = transport_size * 0.82f;
     const float gap = m.space_3;
     const float controls_w = side_size * 3.0f + transport_size + gap * 4.0f;
     const float row_h = transport_size;
-    const float seek_h = 24.0f * m.layout_scale;
+    const float bar_scale = ui_elem("bottom_seekvol", 1.0f);
+    const float seek_h = std::min(24.0f * m.layout_scale * bar_scale, bar_h * 0.28f);
     const float block_h = row_h + m.space_1 + seek_h;
     const float block_y = (bar_h - block_h) * 0.5f;
     const float controls_x = center_x + (center_w - controls_w) * 0.5f;
@@ -712,7 +715,7 @@ void draw_bottom_bar(AppState &state, MpvPlayer &player)
     // transport controls at every size.
     const float right_edge = bar_w - side_pad;
     const float icon_gap = m.space_2;
-    float icon_size = std::min(m.control_h, bar_h * 0.48f);
+    float icon_size = std::min(m.control_h * ctrl_scale, bar_h * 0.52f);
     float icons_w = icon_size * 3.0f + icon_gap * 2.0f;
     const float right_min_x = center_x + center_w + m.space_3;
     const float right_avail = std::max(0.0f, right_edge - right_min_x);
@@ -732,7 +735,7 @@ void draw_bottom_bar(AppState &state, MpvPlayer &player)
     const float speed_text_w = ui_measure_width(g_ui_fonts.body, 14.0f, "0.75×");
     const float speed_w = std::max(42.0f * m.layout_scale, speed_text_w + m.space_2);
     const float min_bar = 40.0f * m.layout_scale;
-    const float desired_bar = 150.0f * m.layout_scale;
+    const float desired_bar = 150.0f * m.layout_scale * bar_scale;
     const float smallest_bar = 12.0f * m.layout_scale;
 
     auto utility_fixed_width = [&](bool show_pct_w, bool show_speed_w_)
