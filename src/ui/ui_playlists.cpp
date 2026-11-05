@@ -6,6 +6,7 @@
 #include "ytdlp.h"
 #include "writeback.h"
 #include "paths.h"
+#include "persist_util.h"
 #include "tasks.h"
 
 #include <algorithm>
@@ -109,6 +110,106 @@ static void finish_spotify_import(AppState &state)
               6.0f);
     std::atomic_store(&state.spotify_import_result,
                       std::shared_ptr<const SpotifyImportResult>());
+}
+
+struct SpotifyProgress
+{
+    int done = 0;
+    int total = 0;
+    std::string phase;
+    std::string name;
+};
+
+static SpotifyProgress read_spotify_progress()
+{
+    SpotifyProgress out;
+    std::ifstream in(p100_config_path("spotify_import_progress.json"));
+    if (!in)
+        return out;
+    std::string json((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    out.done = persist::extract_int_field(json, "done");
+    out.total = persist::extract_int_field(json, "total");
+    out.phase = persist::extract_str_field(json, "phase");
+    out.name = persist::extract_str_field(json, "name");
+    return out;
+}
+
+static void refresh_spotify_library(AppState &state)
+{
+    if (state.spotify_library_running.exchange(true))
+        return;
+    state.spotify_library_loaded = false;
+    AppState *sp = &state;
+    tasks::spawn([sp]() {
+        std::string error;
+        auto list = fetch_spotify_library(error);
+        std::atomic_store(&sp->spotify_playlists,
+                          std::make_shared<const std::vector<SpotifyPlaylistSummary>>(
+                              std::move(list)));
+        std::atomic_store(&sp->spotify_library_error,
+                          std::make_shared<const std::string>(std::move(error)));
+        sp->spotify_library_loaded = true;
+        sp->spotify_library_running = false;
+        sp->repaint_requested = true;
+    });
+}
+
+static void import_spotify_source(AppState &state, const std::string &source)
+{
+    if (state.spotify_import_running.load() || source.empty())
+        return;
+    std::snprintf(s_spotify_url, sizeof(s_spotify_url), "%s", source.c_str());
+    begin_spotify_import(state);
+}
+
+static void spotify_library_row(AppState &state, const SpotifyPlaylistSummary &entry,
+                                float width)
+{
+    const UiMetrics &m = ui_m();
+    ImGui::PushID(entry.id.c_str());
+    const float row_h = 54.0f * m.layout_scale;
+    const ImVec2 pos = ImGui::GetCursorScreenPos();
+    ImGui::InvisibleButton("##spotify_row", ImVec2(width, row_h));
+    const bool hovered = ImGui::IsItemHovered();
+    if (ImGui::IsItemClicked())
+    {
+        const std::string source =
+            entry.kind == "liked" ? std::string("liked")
+                                  : "https://open.spotify.com/playlist/" + entry.id;
+        import_spotify_source(state, source);
+    }
+    ImDrawList *dl = ImGui::GetWindowDrawList();
+    if (hovered)
+        dl->AddRectFilled(pos, ImVec2(pos.x + width, pos.y + row_h),
+                          ui_overlay_u32(0.055f), m.radius_md);
+    const float art = 38.0f * m.layout_scale;
+    const ImVec2 a0(pos.x + m.space_1, pos.y + (row_h - art) * 0.5f);
+    ui_draw_cover(dl, entry.art, a0, ImVec2(a0.x + art, a0.y + art), m.radius_sm,
+                  1.0f, entry.kind == "liked" ? UiIcon::Heart : UiIcon::Playlist,
+                  "spotify_library", false, true);
+    const float tx = a0.x + art + m.space_3;
+    ui_push_medium(17.0f);
+    dl->AddText(g_ui_fonts.medium, 17.0f * m.text_scale,
+                ImVec2(tx, pos.y + 8.0f * m.layout_scale), ui_text_u32(),
+                ui_ellipsize(g_ui_fonts.medium, 17.0f, entry.name,
+                             std::max(80.0f, width - art - 110.0f * m.layout_scale))
+                    .c_str());
+    ImGui::PopFont();
+    std::string meta = entry.kind == "liked"
+                           ? std::to_string(entry.count) + " liked songs"
+                           : (entry.owner.empty() ? "Spotify playlist" : entry.owner);
+    ui_push_small();
+    dl->AddText(g_ui_fonts.body, 14.0f * m.text_scale,
+                ImVec2(tx, pos.y + 30.0f * m.layout_scale), ui_text_muted_u32(),
+                ui_ellipsize(g_ui_fonts.body, 14.0f, meta,
+                             std::max(80.0f, width - art - 110.0f * m.layout_scale))
+                    .c_str());
+    ImGui::PopFont();
+    dl->AddText(g_ui_fonts.medium, 14.0f * m.text_scale,
+                ImVec2(pos.x + width - 52.0f * m.layout_scale,
+                       pos.y + (row_h - 14.0f * m.text_scale) * 0.5f),
+                ui_accent_text_u32(), "Import");
+    ImGui::PopID();
 }
 
 static void open_export(AppState &state, int index, bool xspf)
@@ -251,31 +352,105 @@ void draw_playlists_panel(AppState &state)
             s_spotify_import_complete = false;
             ImGui::CloseCurrentPopup();
         }
-        ImGui::TextUnformatted("Import a Spotify playlist");
+        ImGui::TextUnformatted("Import from Spotify");
         ui_push_small();
         ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + 430.0f * m.layout_scale);
         ImGui::TextColored(ui_c().text_muted,
-                           "In Spotify, open a playlist, choose Share -> Copy link to playlist, then paste it here. Private playlists work once Spotify is connected. Spotify has no share link for Liked Songs: select them in Spotify, add them to a playlist, then share that playlist.");
+                           "Pick a playlist from your Spotify library, or paste a share link. Liked Songs is included once Spotify is connected.");
         ImGui::PopTextWrapPos();
         ImGui::PopFont();
         ImGui::Dummy(ImVec2(0.0f, m.space_2));
+
         if (spotify_connected)
             ImGui::TextColored(ui_c().accent_text, "Spotify connected");
         else
             ImGui::TextColored(ui_c().text_muted, "Spotify not connected");
+        if (spotify_connected)
+        {
+            ImGui::SameLine();
+            if (!state.spotify_library_running.load() &&
+                ui_ghost_button("Refresh library", ImVec2(140.0f * m.layout_scale, m.control_h)))
+            {
+                state.spotify_library_loaded = false;
+                refresh_spotify_library(state);
+            }
+        }
+
+        if (spotify_connected)
+        {
+            if (!state.spotify_library_loaded.load() && !state.spotify_library_running.load())
+                refresh_spotify_library(state);
+
+            if (state.spotify_library_running.load())
+            {
+                ImGui::TextColored(ui_c().text_muted, "Loading your Spotify playlists...");
+                ui_anim_request();
+            }
+            else
+            {
+                auto error = std::atomic_load(&state.spotify_library_error);
+                auto library = std::atomic_load(&state.spotify_playlists);
+                if (error && !error->empty())
+                {
+                    ImGui::TextColored(ImVec4(0.95f, 0.42f, 0.42f, 1.0f), "%s",
+                                       error->c_str());
+                    if (ui_ghost_button("Retry", ImVec2(100.0f * m.layout_scale, m.control_h)))
+                        refresh_spotify_library(state);
+                }
+                else if (library && !library->empty())
+                {
+                    const float list_w = 430.0f * m.layout_scale;
+                    const float list_h = std::min(240.0f * m.layout_scale,
+                                                  ImGui::GetIO().DisplaySize.y * 0.36f);
+                    ImGui::BeginChild("##spotify_library", ImVec2(list_w, list_h),
+                                      ImGuiChildFlags_None,
+                                      ImGuiWindowFlags_NoBackground |
+                                          ImGuiWindowFlags_NoScrollWithMouse);
+                    smooth_scroll_child("##spotify_library");
+                    for (const auto &entry : *library)
+                        spotify_library_row(state, entry, list_w - m.space_2);
+                    ImGui::EndChild();
+                }
+                else
+                {
+                    ImGui::TextColored(ui_c().text_muted,
+                                       "No Spotify playlists were found on this account.");
+                }
+            }
+        }
+
+        ImGui::Dummy(ImVec2(0.0f, m.space_2));
         ImGui::SetNextItemWidth(430.0f * m.layout_scale);
-        ImGui::InputTextWithHint("##spotify_url", "open.spotify.com/playlist/...",
+        ImGui::InputTextWithHint("##spotify_url", "Paste a playlist link or ID",
                                  s_spotify_url, sizeof(s_spotify_url));
         if (state.spotify_import_running.load())
         {
-            ImGui::TextColored(ui_c().text_muted, "Matching tracks on YouTube Music...");
+            const SpotifyProgress progress = read_spotify_progress();
+            if (progress.total > 0)
+            {
+                const float frac = std::min(1.0f, (float)progress.done /
+                                                       (float)progress.total);
+                const std::string label =
+                    (progress.phase == "done" ? "Matched " : "Matching ") +
+                    std::to_string(progress.done) + " / " +
+                    std::to_string(progress.total);
+                ImGui::PushStyleColor(ImGuiCol_PlotHistogram, ui_c().accent);
+                ImGui::ProgressBar(frac, ImVec2(430.0f * m.layout_scale,
+                                                18.0f * m.layout_scale),
+                                   label.c_str());
+                ImGui::PopStyleColor();
+            }
+            else
+            {
+                ImGui::TextColored(ui_c().text_muted, "Reading the Spotify playlist...");
+            }
             ui_anim_request();
         }
         auto result = std::atomic_load(&state.spotify_import_result);
         if (result && !result->error.empty())
             ImGui::TextColored(ImVec4(0.95f, 0.42f, 0.42f, 1.0f), "%s", result->error.c_str());
         if (!state.spotify_import_running.load() &&
-            ui_primary_button("Import playlist", ImVec2(160.0f * m.layout_scale, m.control_h)))
+            ui_primary_button("Import link", ImVec2(140.0f * m.layout_scale, m.control_h)))
             begin_spotify_import(state);
         ImGui::SameLine(0.0f, m.space_2);
         if (!state.spotify_login_running.load() &&
@@ -291,9 +466,10 @@ void draw_playlists_panel(AppState &state)
                 sp->spotify_login_running = false;
                 if (rc == 0)
                 {
+                    sp->spotify_library_loaded = false;
                     sp->spotify_open_import_requested = true;
                     ui_notify(UiNotifyType::Success, "Spotify connected",
-                              "Paste a playlist link to import it.", 5.0f);
+                              "Your playlists are ready to import.", 5.0f);
                 }
                 else
                 {

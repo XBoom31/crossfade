@@ -1919,6 +1919,55 @@ std::vector<PodcastEpisode> fetch_episodes_later()
     return out;
 }
 
+std::vector<SpotifyPlaylistSummary> fetch_spotify_library(std::string &error)
+{
+    error.clear();
+    std::vector<SpotifyPlaylistSummary> out;
+    const std::string response = send_command("spotify_library");
+    if (response.empty())
+    {
+        error = "Backend not running";
+        return out;
+    }
+    if (response.find("\"error\"") != std::string::npos)
+    {
+        error = json_get_string(response, "error");
+        if (error.empty())
+            error = "Could not load your Spotify playlists";
+        return out;
+    }
+    size_t arr = response.find('[');
+    if (arr == std::string::npos)
+        return out;
+    size_t pos = arr + 1;
+    int guard = 0;
+    while (pos < response.size() && guard++ < 1000)
+    {
+        while (pos < response.size() &&
+               (isspace((unsigned char)response[pos]) || response[pos] == ','))
+            ++pos;
+        if (pos >= response.size() || response[pos] == ']')
+            break;
+        if (response[pos] != '{')
+            break;
+        const size_t end = json_object_end(response, pos);
+        if (end == std::string::npos)
+            break;
+        const std::string obj = response.substr(pos, end - pos + 1);
+        SpotifyPlaylistSummary item;
+        item.id = json_get_string(obj, "id");
+        item.kind = json_get_string(obj, "kind");
+        item.name = json_get_string(obj, "name");
+        item.owner = json_get_string(obj, "owner");
+        item.art = json_get_string(obj, "art");
+        item.count = json_get_int(obj, "count");
+        if (!item.id.empty() && !item.name.empty())
+            out.push_back(std::move(item));
+        pos = end + 1;
+    }
+    return out;
+}
+
 SpotifyImportResult fetch_spotify_import(const std::string &link)
 {
     SpotifyImportResult out;

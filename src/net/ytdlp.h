@@ -277,12 +277,23 @@ struct SpotifyImportResult
     int total = 0;
 };
 
+struct SpotifyPlaylistSummary
+{
+    std::string id;
+    std::string kind; // "liked" or "playlist"
+    std::string name;
+    std::string owner;
+    std::string art;
+    int count = 0;
+};
+
 // Podcasts (YouTube Music's podcast show / episode model).
 std::vector<PodcastShow> fetch_podcast_library();
 std::vector<PodcastShow> fetch_podcast_search(const std::string &query);
 PodcastDetails fetch_podcast_details(const std::string &browse_id);
 std::vector<PodcastEpisode> fetch_episodes_later();
 SpotifyImportResult fetch_spotify_import(const std::string &link);
+std::vector<SpotifyPlaylistSummary> fetch_spotify_library(std::string &error);
 
 
 bool fetch_artist(const std::string &browse_id, ArtistInfo &out);

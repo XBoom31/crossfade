@@ -713,6 +713,283 @@ def _spotify_cookie():
         return None
 
 
+SPOTIFY_UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+              "(KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36")
+SPOTIFY_BOOTSTRAP = "37i9dQZF1DXcBWIGoYBM5M"
+SPOTIFY_OPS = ("fetchPlaylist", "fetchLibraryTracks", "libraryV3", "profileAttributes")
+
+
+def _config_dir():
+    return (os.environ.get("P100_CONFIG_DIR")
+            or os.path.join(os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config"),
+                            "crossfade"))
+
+
+def _spotify_progress_path():
+    return os.path.join(_config_dir(), "spotify_import_progress.json")
+
+
+def _spotify_progress(phase, done, total, name):
+    path = _spotify_progress_path()
+    tmp = path + ".tmp"
+    try:
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump({"phase": phase, "done": int(done), "total": int(total),
+                       "name": name or ""}, f, ensure_ascii=False,
+                      separators=(",", ":"))
+        os.replace(tmp, path)
+    except OSError:
+        pass
+
+
+def _spotify_get(url, headers=None, timeout=30):
+    req = urllib.request.Request(url, headers=headers or {})
+    return urllib.request.urlopen(req, timeout=timeout).read()
+
+
+def _spotify_token(playlist_id=None):
+    """The web player's user-scoped token, read from a playlist embed page.
+
+    The embed page includes `settings.session.accessToken`. Unlike
+    /api/token (which Spotify blocks for many networks), this works with just
+    the sp_dc cookie and is valid for the signed-in account.
+    """
+    headers = {"User-Agent": SPOTIFY_UA, "Accept-Language": "en"}
+    sp_dc = _spotify_cookie()
+    if sp_dc:
+        headers["Cookie"] = f"sp_dc={sp_dc}"
+    pid = playlist_id or SPOTIFY_BOOTSTRAP
+    page = _spotify_get(f"https://open.spotify.com/embed/playlist/{pid}",
+                        headers).decode("utf-8", "replace")
+    m = re.search(r'<script id="__NEXT_DATA__" type="application/json">(.*?)</script>',
+                  page, re.S)
+    if not m:
+        raise RuntimeError("Spotify did not return a playlist page")
+    data = json.loads(m.group(1))
+    session = (data.get("props", {}).get("pageProps", {}).get("state", {})
+               .get("settings", {}).get("session") or {})
+    token = session.get("accessToken")
+    if not token:
+        raise RuntimeError("Spotify did not return an access token")
+    return token, bool(session.get("isAnonymous"))
+
+
+def _spotify_hashes():
+    """Persisted-query hashes from the web-player bundle, cached per bundle."""
+    cache = os.path.join(_config_dir(), "spotify_queries.json")
+    try:
+        with open(cache, encoding="utf-8") as f:
+            saved = json.load(f)
+    except Exception:
+        saved = {}
+    html = _spotify_get("https://open.spotify.com", {"User-Agent": SPOTIFY_UA}).decode(
+        "utf-8", "replace")
+    m = re.search(r'<script[^>]+src="([^"]+)"', html)
+    bundle = None
+    for src in re.findall(r'<script[^>]+src="([^"]+)"', html):
+        if "web-player/web-player" in src and src.endswith(".js"):
+            bundle = src
+            break
+    if not bundle:
+        raise RuntimeError("Spotify's web-player bundle was not found")
+    if saved.get("bundle") == bundle and saved.get("ops", {}).get("fetchPlaylist"):
+        return saved["ops"]
+    js = _spotify_get(bundle, {"User-Agent": SPOTIFY_UA}).decode("utf-8", "replace")
+    ops = {}
+    for op in SPOTIFY_OPS:
+        hit = re.search(r'"%s","query","([0-9a-f]{64})"' % re.escape(op), js)
+        if hit:
+            ops[op] = hit.group(1)
+    if "fetchPlaylist" not in ops:
+        raise RuntimeError("Spotify's playlist query was not found")
+    try:
+        with open(cache, "w", encoding="utf-8") as f:
+            json.dump({"bundle": bundle, "ops": ops}, f)
+    except OSError:
+        pass
+    return ops
+
+
+def _spotify_query(token, operation, variables):
+    ops = _spotify_hashes()
+    h = ops.get(operation)
+    if not h:
+        raise RuntimeError(f"Spotify's {operation} query is unavailable")
+    ext = json.dumps({"persistedQuery": {"version": 1, "sha256Hash": h}},
+                     separators=(",", ":"))
+    params = urllib.parse.urlencode({
+        "operationName": operation,
+        "variables": json.dumps(variables, separators=(",", ":")),
+        "extensions": ext,
+    })
+    data = json.loads(_spotify_get(
+        "https://api-partner.spotify.com/pathfinder/v1/query?" + params,
+        {"Authorization": f"Bearer {token}", "User-Agent": SPOTIFY_UA,
+         "Accept": "application/json"}))
+    if data.get("errors"):
+        raise RuntimeError(str(data["errors"][0].get("message") or data["errors"][0]))
+    return data.get("data") or {}
+
+
+def _spotify_image(obj):
+    """Pick the smallest usable image URL from Spotify's nested image shapes."""
+    if isinstance(obj, dict):
+        if isinstance(obj.get("sources"), list):
+            sources = [x for x in obj["sources"] if isinstance(x, dict) and x.get("url")]
+            sources.sort(key=lambda x: x.get("width") or 0)
+            chosen = next((x for x in sources if (x.get("width") or 0) >= 60), None)
+            if chosen or sources:
+                return (chosen or sources[0])["url"]
+        for key in ("image", "images", "coverArt"):
+            if key in obj:
+                found = _spotify_image(obj[key])
+                if found:
+                    return found
+        for value in obj.values():
+            if isinstance(value, (dict, list)):
+                found = _spotify_image(value)
+                if found:
+                    return found
+    elif isinstance(obj, list):
+        for value in obj:
+            found = _spotify_image(value)
+            if found:
+                return found
+    return ""
+
+
+def _spotify_library():
+    token, anonymous = _spotify_token()
+    if anonymous:
+        raise RuntimeError("Sign in to Spotify to browse your playlists")
+    out = []
+    offset = 0
+    total = 0
+    while True:
+        data = _spotify_query(token, "libraryV3", {
+            "filters": ["Playlists"], "order": None, "textFilter": None,
+            "features": ["LIKED_SONGS"], "limit": 50, "offset": offset,
+            "flatten": True, "folderUri": None, "includeFoldersWhenFlattening": True,
+        })
+        lib = ((data.get("me") or {}).get("libraryV3") or {})
+        page = lib.get("items") or []
+        total = int(lib.get("totalCount") or 0)
+        for raw in page:
+            wrapper = raw.get("item") or raw
+            node = wrapper.get("data") if isinstance(wrapper.get("data"), dict) else wrapper
+            uri = (node.get("uri") or node.get("_uri")
+                   or wrapper.get("uri") or wrapper.get("_uri") or "")
+            name = (node.get("name") or wrapper.get("name") or "").strip()
+            if uri.endswith(":collection") or name == "Liked Songs":
+                out.append({"id": "liked", "kind": "liked", "name": "Liked Songs",
+                            "owner": "", "count": int(node.get("count") or 0),
+                            "art": _spotify_image(node.get("image"))})
+            elif uri.startswith("spotify:playlist:"):
+                pid = uri.rsplit(":", 1)[-1]
+                owner = ((node.get("ownerV2") or {}).get("data") or {}).get("name") or ""
+                count = int((node.get("content") or {}).get("totalCount")
+                            or node.get("count") or 0)
+                out.append({"id": pid, "kind": "playlist", "name": name,
+                            "owner": owner, "count": count,
+                            "art": _spotify_image(node.get("images") or node.get("image"))})
+        offset += len(page)
+        if not page or offset >= total:
+            break
+    # Liked Songs first, then the library order.
+    out.sort(key=lambda x: 0 if x["kind"] == "liked" else 1)
+    return out
+
+
+def _spotify_liked_items(token):
+    items = []
+    offset = 0
+    total = 0
+    while True:
+        data = _spotify_query(token, "fetchLibraryTracks",
+                              {"offset": offset, "limit": 50})
+        tracks = ((data.get("me") or {}).get("library") or {}).get("tracks") or {}
+        page = tracks.get("items") or []
+        total = int(tracks.get("totalCount") or 0)
+        items.extend(page)
+        offset += len(page)
+        if not page or offset >= total:
+            break
+    return items
+
+
+def _spotify_playlist_items(token, playlist_id):
+    items = []
+    offset = 0
+    total = 0
+    name = ""
+    while True:
+        data = _spotify_query(token, "fetchPlaylist", {
+            "uri": f"spotify:playlist:{playlist_id}", "offset": offset,
+            "limit": 343, "enableWatchFeedEntrypoint": False,
+        })
+        playlist = data.get("playlistV2") or {}
+        if not playlist or playlist.get("__typename") == "NotFound":
+            raise RuntimeError("Spotify could not find that playlist")
+        name = name or (playlist.get("name") or "Spotify playlist")
+        content = playlist.get("content") or {}
+        page = content.get("items") or []
+        total = int(content.get("totalCount") or 0)
+        items.extend(page)
+        offset += len(page)
+        if not page or offset >= total:
+            break
+    return name, items
+
+
+def _spotify_track(item):
+    track = item.get("itemV2") or item.get("item") or item.get("track") or item
+    if isinstance(track, dict) and isinstance(track.get("data"), dict):
+        track = track["data"]
+    if not isinstance(track, dict):
+        return None
+    title = (track.get("name") or "").strip()
+    artists = []
+    raw_artists = track.get("artists")
+    if isinstance(raw_artists, dict):
+        raw_artists = raw_artists.get("items") or []
+    if isinstance(raw_artists, list):
+        for artist in raw_artists:
+            if not isinstance(artist, dict):
+                continue
+            name = ((artist.get("profile") or {}).get("name")
+                    or artist.get("name") or "")
+            if name:
+                artists.append(name)
+    if not artists:
+        artists = [x.strip() for x in (track.get("artistName") or "").split(",") if x.strip()]
+    if not title or not artists:
+        return None
+    duration = 0
+    for key in ("trackDuration", "duration"):
+        value = track.get(key)
+        if isinstance(value, dict) and value.get("totalMilliseconds"):
+            duration = int(value["totalMilliseconds"]) // 1000
+            break
+    return {
+        "title": title,
+        "subtitle": ", ".join(artists),
+        "duration_sec": duration,
+        "thumbnail_url": _spotify_image((track.get("albumOfTrack") or {}).get("coverArt")),
+    }
+
+
+def _spotify_sources(link):
+    """Return (kind, id_or_None, display_name)."""
+    link = (link or "").strip()
+    if link.lower() in ("liked", "collection", "spotify:collection:tracks") or \
+            link.endswith("/collection/tracks"):
+        return "liked", None, "Liked Songs"
+    pid = _spotify_id(link)
+    if not pid:
+        raise RuntimeError("Paste a Spotify playlist link or ID")
+    return "playlist", pid, ""
+
+
 def _spotify_entity(link):
     playlist_id = _spotify_id(link)
     if not playlist_id:
@@ -750,35 +1027,63 @@ def _spotify_entity(link):
 
 
 def import_spotify(yt, link):
+    _spotify_progress("loading", 0, 0, "")
     try:
-        name, items = _spotify_entity(link)
+        kind, pid, display = _spotify_sources(link)
+        token, anonymous = _spotify_token(pid)
+        if kind == "liked":
+            if anonymous:
+                raise RuntimeError("Sign in to Spotify to import Liked Songs")
+            name = "Liked Songs"
+            items = _spotify_liked_items(token)
+        else:
+            name, items = _spotify_playlist_items(token, pid)
+        parsed = [x for x in (_spotify_track(i) for i in items) if x]
     except Exception as e:
-        return _err(str(e))
-    tracks = []
-    skipped = 0
-    for item in items[:60]:
-        title = (item.get("title") or "").strip()
-        artist = (item.get("subtitle") or "").strip()
-        if not title:
-            skipped += 1
-            continue
-        query = f"{title} {artist}".strip()
-        found = search_tracks(yt, query, limit=3)
-        if isinstance(found, dict) and "error" in found:
-            return found
-        if not found:
-            skipped += 1
-            continue
-        t = dict(found[0])
-        # Keep the richer YouTube Music metadata, but make the Spotify intent
-        # visible in the title when the match has no album.
-        if not t.get("album"):
-            t["album"] = "Imported from Spotify"
-        tracks.append(t)
-    if not tracks:
-        return _err("No Spotify tracks could be matched on YouTube Music")
-    return {"name": name, "tracks": tracks, "skipped": skipped, "total": len(items)}
+        # Last-resort public embed reader (100 tracks, no sign-in needed).
+        try:
+            name, embed_items = _spotify_entity(link)
+            parsed = [{"title": (x.get("title") or "").strip(),
+                       "subtitle": (x.get("subtitle") or "").strip(),
+                       "duration_sec": 0, "thumbnail_url": ""}
+                      for x in embed_items if (x.get("title") or "").strip()]
+        except Exception:
+            return _err(str(e))
 
+    total = len(parsed)
+    if not total:
+        return _err("That Spotify playlist has no playable songs")
+    if len(parsed) < len(items):
+        _spotify_progress("matching", 0, total, name)
+    else:
+        _spotify_progress("matching", 0, total, name)
+
+    def match(item):
+        query = f"{item['title']} {item['subtitle']}".strip()
+        try:
+            found = search_tracks(yt, query, limit=3)
+        except Exception:
+            return None
+        if isinstance(found, dict) and "error" in found:
+            return None
+        return found[0] if found else None
+
+    tracks = [None] * total
+    done = 0
+    workers = 4 if total >= 8 else 1
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        for index, found in enumerate(pool.map(match, parsed)):
+            tracks[index] = found
+            done += 1
+            if done % 5 == 0 or done == total:
+                _spotify_progress("matching", done, total, name)
+
+    matched = [t for t in tracks if t]
+    _spotify_progress("done", total, total, name)
+    if not matched:
+        return _err("No Spotify tracks could be matched on YouTube Music")
+    return {"name": name, "tracks": matched, "skipped": total - len(matched),
+            "total": total}
 
 def get_episodes_later(yt):
     try:
@@ -1573,6 +1878,11 @@ def run_command_loop(yt, stdin=None, stdout=None):
                 result = get_mood_playlists(yt, arg)
             elif cmd == 'spotify_import':
                 result = import_spotify(yt, arg) if arg else {'error': 'Missing Spotify playlist'}
+            elif cmd == 'spotify_library':
+                try:
+                    result = _spotify_library()
+                except Exception as e:
+                    result = _err(str(e))
             elif cmd == 'podcasts_library':
                 result = get_podcast_library(yt)
             elif cmd == 'podcasts_search':

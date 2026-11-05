@@ -343,6 +343,10 @@ struct AppState
     std::atomic<bool> spotify_import_running{false};
     std::atomic<bool> spotify_login_running{false};
     std::atomic<bool> spotify_open_import_requested{false};
+    std::shared_ptr<const std::vector<SpotifyPlaylistSummary>> spotify_playlists;
+    std::shared_ptr<const std::string> spotify_library_error;
+    std::atomic<bool> spotify_library_running{false};
+    std::atomic<bool> spotify_library_loaded{false};
     std::string queued_podcast_search;
     int podcast_search_id = 0;
 
