@@ -260,10 +260,17 @@ jobs:
           cmake --build build -j"$(nproc)" > /tmp/build.log 2>&1 || code=$?
           echo "BUILD EXIT CODE: $code"
           if [ "$code" -ne 0 ]; then
-            grep -E "error" /tmp/build.log | head -12 |
+            grep -E "error:|undefined reference|collect2" /tmp/build.log | head -24 |
               while IFS= read -r line; do echo "::error::${line:0:400}"; done
             exit "$code"
           fi
+      - name: Upload Windows build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-build-log
+          path: /tmp/build.log
+          if-no-files-found: ignore
       - name: Run unit tests
         run: ctest --test-dir build --output-on-failure
       - name: Bundle runtime DLLs
