@@ -4,29 +4,39 @@ All notable changes to crossfade are documented here.
 
 ## Unreleased
 
+## 0.2.0 - 2026-11-05
+
 ### Added
 
 - **Local SQLite library.** Likes, playlists, the queue, history, play counts and log,
   saved albums/artists, and downloaded-track metadata now live in `library.db`, backed
-  by the vendored SQLite amalgamation with FTS5. Audio files stay in `audio_cache/`. `settings.json` and `session.json` remain JSON. Existing JSON
-  data is imported once, backed up to `library-backup-*`, and left in place as a fallback
-  if the database can't be opened.
-- **Library search scope.** The Home search box has a **Library** button that searches the
-  local database (titles, artists, albums, playlists) instead of YouTube Music.
+  by the vendored SQLite amalgamation with FTS5. Audio files stay in `audio_cache/`.
+  `settings.json` and `session.json` remain JSON. Existing JSON data is imported once,
+  backed up to `library-backup-*`, and left in place as a fallback if the database can't
+  be opened.
+- **Local library in every search.** Normal search now merges library matches ahead of
+  YouTube results, so downloaded and liked tracks are one query away. Search animates
+  its first batch once and only new rows after that.
 - **Diagnostics panel** in Settings: copy a diagnostics bundle, run an SQLite integrity
   check, back up the library, open the config folder, view recent log lines, and toggle
   **Safe mode on next launch**. Crashes now write local `crash-*.log` (Linux) or
   `crash-*.dmp` (Windows) files.
 - **Undo** for clearing Up Next, deleting a playlist, and the Danger Zone reset buttons.
 - **Onboarding copy** in the empty Home state.
-- **Tests and CI.** A CTest target covers migration, CRUD, FTS5 search, integrity checks,
-  backups, second init, and failed database open. Linux CI runs the suite plus an
-  ASan/UBSan build.
+- **Tests and CI.** CTest now covers the library, party queue/link helpers, crossfade
+  decisions, cache eviction, JSON/lyrics parsing, sessions, playlists and settings.
+  CI runs GCC and Clang builds, ASan/UBSan, TSan, the Python backend protocol test, and
+  a `scripts/bench.sh` resource report.
 
 ### Changed
 
 - Empty Home states now point at search, party mode, and the shortcut help instead of
   only suggesting a refresh.
+- Search and Refresh stay pinned to the right edge and adapt to narrow windows.
+- The source tree is split under `src/` (app, core, playback, data, net, ui, party).
+- Cookie and OAuth backends share one command loop in `py/cf_backend/core.py`.
+- Short-lived workers are tracked and drained on shutdown; SIGTERM exits cleanly and
+  closes SQLite without leaving a WAL behind.
 
 ## 0.1.10 - 2026-11-04
 

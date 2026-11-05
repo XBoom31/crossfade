@@ -27,6 +27,7 @@
 #include <cmath>
 #include <unordered_set>
 #include "config.h"
+#include "version.h"
 #include "accent.h"
 #include "paths.h"
 #include "ytdlp.h"
@@ -1978,8 +1979,21 @@ static bool advance_playback(bool manual)
 // ----------------------------------------------------------------------
 // Main
 // ----------------------------------------------------------------------
-int app_run()
+int app_run(int argc, char **argv)
 {
+    bool autoplay_last = false;
+    for (int i = 1; i < argc; ++i)
+    {
+        const std::string arg = argv[i] ? argv[i] : "";
+        if (arg == "--version")
+        {
+            std::printf("%s\n", CROSSFADE_VERSION);
+            return 0;
+        }
+        if (arg == "--autoplay-last")
+            autoplay_last = true;
+    }
+    DLOG("boot: app_run at %lld", DNOW());
     load_config();
     ensure_cache_dir();
 
@@ -2247,7 +2261,7 @@ int app_run()
         // Seed the play/pause intent from the saved state now (not when the
         // track finishes resolving) so a click during the resolve window is
         // not overwritten later.
-        g_state.playing = r.playing;
+        g_state.playing = r.playing || autoplay_last;
         g_state.loading = true;
         g_loading_since = std::chrono::steady_clock::now();
         g_state.pending_manual_play = true;
@@ -2271,6 +2285,12 @@ int app_run()
     g_main_event_cb = [&](const std::string &event)
     {
         if (event == "start") {
+            static bool logged_first_audio = false;
+            if (!logged_first_audio)
+            {
+                DLOG("boot: first audio at %lld", DNOW());
+                logged_first_audio = true;
+            }
             g_state.loading = false;
             g_state.status_text = "Playing";
             g_state.repaint_requested = true;
@@ -2592,6 +2612,7 @@ int app_run()
     auto next_frame = last_save_time;
     auto last_activity_time = last_save_time;
 
+    DLOG("boot: loop at %lld", DNOW());
     while (running && !g_quit_requested)
     {
 #ifndef P100_WINDOWS

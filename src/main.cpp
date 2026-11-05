@@ -1,6 +1,6 @@
 #include "app.h"
 
-int main(int, char **)
+int main(int argc, char **argv)
 {
-    return app_run();
+    return app_run(argc, argv);
 }

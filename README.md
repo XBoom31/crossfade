@@ -2,12 +2,14 @@
 
 # crossfade
 
-**The YouTube Music player your desktop deserves.**
+**A native YouTube Music client for Linux. No Electron. No browser tab.**
 
-Instant starts. Offline without thinking about it. Synced lyrics, your real library,
-media keys, and yes — real crossfade. Native C++, not a browser tab.
+Instant starts. Automatic offline cache. Synced lyrics, your real library, media keys,
+and real crossfade.
 
 C++17 · SDL2 + OpenGL + Dear ImGui · playback by `mpv` · music data by a Python backend (`ytmusicapi`)
+
+[Download](../../releases) · [Screenshots](#screens) · [How it works](#how-it-works)
 
 [![Platform](https://img.shields.io/badge/platform-Linux-blue)](#platform-support)
 [![Build](https://img.shields.io/badge/build-CMake%20%2B%20Make-green)](#install-linux)
@@ -28,8 +30,74 @@ C++17 · SDL2 + OpenGL + Dear ImGui · playback by `mpv` · music data by a Pyth
 
 ---
 
+## At a glance
+
+Measured on the author's Linux desktop with `./scripts/bench.sh` plus a cached-track
+playback run. Numbers are machine-dependent; the method is below.
+
+| Metric | crossfade |
+|---|---:|
+| Cold start → first audio (cached session) | **~0.9 s** |
+| Idle RAM (paused, 5 s) | **~115 MB** |
+| Playing RAM (cached track) | **~128 MB** |
+| Binary + assets + backend package | **~7.3 MB** |
+| Source | **~34k lines** of C++/headers |
+
+<details>
+<summary>How these were measured</summary>
+
+- `./scripts/bench.sh` for idle RSS/CPU, binary and source size.
+- `P100_CONFIG_DIR=~/.config/crossfade ./build/crossfade --autoplay-last`, timestamped
+  from process start to the `boot: first audio` log line. Three runs: 0.81 s, 0.81 s,
+  0.90 s on this machine.
+- `ps -o rss= -p <pid>` after 4 s of cached playback.
+- Install size excludes the Python venv and the audio/thumbnail caches; packaged
+  AppImage/deb/rpm sizes are larger.
+
+</details>
+
+## How it compares
+
+| | Electron clients¹ | Native players² | **crossfade** |
+|---|:---:|:---:|:---:|
+| YouTube Music account & library | ✅ | ❌ | ✅ |
+| Real crossfade between tracks | ❌ | ✅ | ✅ |
+| Automatic offline cache | partial | ❌ | ✅ |
+| LAN party mode (phone queue) | ❌ | ❌ | ✅ |
+| Synced lyrics + click-to-seek | ✅ | mixed | ✅ |
+| Native C++ / no bundled Chromium | ❌ | ✅ | ✅ |
+| Media keys / MPRIS | ✅ | ✅ | ✅ |
+| Windows / macOS | ✅ | mixed | Linux (Windows beta) |
+
+¹ th-ch/youtube-music, ytmdesktop · ² Tauon, Feishin, Nuclear, mpv+yt-dlp
+
+## Common questions
+
+**Isn't signing in annoying?**
+One-time, about 30 seconds: copy the request headers, run `crossfade-login`, done.
+Cookies expire every few weeks to months; re-running the same command fixes it. OAuth
+is available as an alternative.
+
+**Is this allowed?**
+It uses your own account through `ytmusicapi`/`yt-dlp`, the same tools other clients
+use. Not affiliated with or endorsed by Google. MIT licensed. No telemetry, no server;
+requests go to YouTube and nowhere else.
+
+**Why not Electron?**
+Because the point was to stop a music player from using a gigabyte of RAM. One native
+binary, libmpv, no bundled browser.
+
+**Linux only?**
+Linux is the primary target. Windows works with a one-click installer (beta). macOS is
+not started.
+
+---
+
 ## Contents
 
+- [At a glance](#at-a-glance)
+- [How it compares](#how-it-compares)
+- [Common questions](#common-questions)
 - [Why crossfade](#why-crossfade)
 - [Screens](#screens)
 - [Install (Linux)](#install-linux)
@@ -43,6 +111,7 @@ C++17 · SDL2 + OpenGL + Dear ImGui · playback by `mpv` · music data by a Pyth
 - [Development](#development)
 - [Platform support](#platform-support)
 - [Troubleshooting](#troubleshooting)
+- [Known limitations](#known-limitations)
 - [Contributing](#contributing)
 - [License](#license)
 - [Acknowledgments](#acknowledgments)
@@ -830,6 +899,15 @@ cat ~/.config/crossfade/audio_cache/<videoId>.meta.json
 
 </details>
 
+## Known limitations
+
+- Linux is the primary target; Windows is beta and macOS is not started.
+- Cookie auth needs a periodic refresh; OAuth avoids most of that.
+- Manual skip crossfade only applies when the next track is already cached.
+- Party mode is LAN-only by design; it does not cross networks or VPNs.
+- No Flathub package yet; AppImage, deb, rpm and AUR are the current channels.
+- Two instances using the same config can briefly contend on the SQLite database.
+
 ## Contributing
 
 Issues and pull requests are welcome.
@@ -866,4 +944,6 @@ YouTube's terms of service.
 
 <div align="center">
 <i>Built for personal use, shared in case it's useful.</i>
+
+If crossfade replaced a browser tab for you, a star helps other people find it.
 </div>
