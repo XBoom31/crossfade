@@ -39,7 +39,7 @@ playback run. Numbers are machine-dependent; the method is below.
 |---|---:|
 | Cold start → first audio (cached session) | **~0.9 s** |
 | Idle RAM (paused, 5 s) | **~115 MB** |
-| Playing RAM (cached track) | **~128 MB** |
+| Playing RAM (cached track) | **~125 MB** |
 | Binary + assets + backend package | **~7.3 MB** |
 | Source | **~34k lines** of C++/headers |
 
