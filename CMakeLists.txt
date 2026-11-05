@@ -294,7 +294,8 @@ if(CROSSFADE_BUILD_TESTS)
         ${CMAKE_CURRENT_SOURCE_DIR}/src/playback
         ${CMAKE_CURRENT_SOURCE_DIR}/external/sqlite
         ${CMAKE_CURRENT_SOURCE_DIR}/external/imgui
-        ${MPV_INCLUDE_DIRS})
+        ${MPV_INCLUDE_DIRS}
+        ${MPV_INCLUDE_DIR})
     target_compile_definitions(test_session PRIVATE
         SQLITE_ENABLE_FTS5=1 SQLITE_OMIT_LOAD_EXTENSION=1 SQLITE_THREADSAFE=1)
     target_link_libraries(test_session Threads::Threads)
