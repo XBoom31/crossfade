@@ -2,6 +2,10 @@
 # AppImage launcher: the squashfs is read-only, so the Python venv lives in
 # the user's data dir and is bootstrapped on first run.
 APPDIR="${APPDIR:-$(dirname "$(readlink -f "$0")")/..}"
+# Bundled libraries that linuxdeploy classifies as "system" (notably
+# libjack.so.0, which libmpv loads at runtime) live next to the AppImage
+# payload. Put them ahead of the host loader path.
+export LD_LIBRARY_PATH="$APPDIR/usr/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 VENV="${HOME}/.local/share/crossfade/venv"
 REQ="$APPDIR/usr/share/crossfade/requirements.txt"
 

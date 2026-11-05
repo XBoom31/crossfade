@@ -52,6 +52,7 @@ std::string session_json(const AppState &state, double position, int volume)
     case PlaylistSource::PLAYLIST:  out << "playlist"; break;
     case PlaylistSource::ALBUM:     out << "album"; break;
     case PlaylistSource::ARTIST:    out << "artist"; break;
+    case PlaylistSource::PODCAST:   out << "podcast"; break;
     default:                        out << "home"; break;
     }
     out << "\","

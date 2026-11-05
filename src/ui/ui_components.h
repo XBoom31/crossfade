@@ -18,6 +18,7 @@ struct TrackRowOptions
     bool show_duration = true;
     bool show_plays = false;
     bool show_delete = false;
+    bool show_download = false;
     bool show_art_play = true;
     bool compact = false;
     float art_size = 0.0f;
@@ -44,6 +45,8 @@ struct TrackRowResult
     bool double_clicked = false;
     bool deleted = false;
     bool menu_open = false;
+    bool download_requested = false;
+    bool download_remove = false;
     bool clicked = false;
     bool ctrl_clicked = false;
     bool shift_clicked = false;
@@ -102,7 +105,9 @@ inline void ui_prune_hover_map(MapT &m)
             ++it;
     }
 }
-void ui_track_context_menu(AppState &state, const Track &track, bool allow_delete);
+void ui_track_context_menu(AppState &state, const Track &track, bool allow_delete,
+                           bool show_download = false, bool *download_requested = nullptr,
+                           bool *download_remove = nullptr);
 void ui_play_track(AppState &state, const Track &track, int index);
 void ui_selection_bar(AppState &state, const std::vector<Track> &visible, const char *context,
                       bool allow_like, bool allow_delete, int playlist_index = -1);

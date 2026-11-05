@@ -324,6 +324,26 @@ struct AppState
     std::string lyrics_requested_id;                   // track to fetch (main thread)
     bool lyrics_dirty = false;                         // set on track start (main thread)
 
+    // Podcasts (custom panel; loaded on demand).
+    std::shared_ptr<const std::vector<PodcastShow>> podcast_shows;
+    std::shared_ptr<const std::vector<PodcastShow>> podcast_search_results;
+    std::shared_ptr<const std::vector<PodcastEpisode>> podcast_episodes;
+    std::shared_ptr<const std::vector<PodcastEpisode>> podcast_later;
+    std::vector<Track> podcast_tracks;
+    std::vector<PodcastShow> saved_podcasts;
+    bool saved_podcasts_loaded = false;
+    PodcastShow podcast_selected;
+    bool podcast_library_loaded = false;
+    bool podcast_library_loading = false;
+    bool podcast_details_loading = false;
+    bool podcast_search_loading = false;
+    bool podcast_search_dirty = false;
+    bool auth_refresh_requested = false;
+    std::shared_ptr<const SpotifyImportResult> spotify_import_result;
+    std::atomic<bool> spotify_import_running{false};
+    std::string queued_podcast_search;
+    int podcast_search_id = 0;
+
     // Settings
     Settings settings;
 

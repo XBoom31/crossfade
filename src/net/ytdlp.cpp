@@ -1821,6 +1821,188 @@ std::vector<YouTubePlaylist> fetch_mood_playlists(const std::string &params)
     return parse_youtube_playlists_response(response);
 }
 
+static PodcastShow parse_podcast_show(const std::string &obj)
+{
+    PodcastShow p;
+    p.browse_id = json_get_string(obj, "browse_id");
+    p.title = json_get_string(obj, "title");
+    p.author = json_get_string(obj, "author");
+    p.thumbnail_url = json_get_string(obj, "thumbnail_url");
+    p.description = json_get_string(obj, "description");
+    p.saved = json_get_bool(obj, "saved");
+    return p;
+}
+
+static PodcastEpisode parse_podcast_episode(const std::string &obj)
+{
+    PodcastEpisode e;
+    e.video_id = json_get_string(obj, "video_id");
+    e.title = json_get_string(obj, "title");
+    e.author = json_get_string(obj, "author");
+    e.thumbnail_url = json_get_string(obj, "thumbnail_url");
+    e.date = json_get_string(obj, "date");
+    e.description = json_get_string(obj, "description");
+    e.duration_sec = json_get_int(obj, "duration_sec");
+    return e;
+}
+
+static std::vector<PodcastShow> parse_podcast_shows(const std::string &json)
+{
+    std::vector<PodcastShow> out;
+    size_t arr = json.find('[');
+    if (arr == std::string::npos)
+        return out;
+    size_t pos = arr + 1;
+    int guard = 0;
+    while (pos < json.size() && guard++ < 500)
+    {
+        while (pos < json.size() && (isspace((unsigned char)json[pos]) || json[pos] == ','))
+            ++pos;
+        if (pos >= json.size() || json[pos] == ']')
+            break;
+        if (json[pos] != '{')
+            break;
+        const size_t end = json_object_end(json, pos);
+        if (end == std::string::npos)
+            break;
+        PodcastShow p = parse_podcast_show(json.substr(pos, end - pos + 1));
+        if (!p.browse_id.empty() || !p.title.empty())
+            out.push_back(std::move(p));
+        pos = end + 1;
+    }
+    return out;
+}
+
+std::vector<PodcastShow> fetch_podcast_library()
+{
+    const std::string response = send_command("podcasts_library");
+    if (response.empty() || response.find("\"error\"") != std::string::npos)
+        return {};
+    return parse_podcast_shows(response);
+}
+
+std::vector<PodcastShow> fetch_podcast_search(const std::string &query)
+{
+    if (query.empty())
+        return {};
+    const std::string response = send_command("podcasts_search " + query);
+    if (response.empty() || response.find("\"error\"") != std::string::npos)
+        return {};
+    return parse_podcast_shows(response);
+}
+
+std::vector<PodcastEpisode> fetch_episodes_later()
+{
+    const std::string response = send_command("episodes_later");
+    if (response.empty() || response.find("\"error\"") != std::string::npos)
+        return {};
+    std::vector<PodcastEpisode> out;
+    size_t arr = response.find('[');
+    if (arr == std::string::npos)
+        return out;
+    size_t pos = arr + 1;
+    int guard = 0;
+    while (pos < response.size() && guard++ < 1000)
+    {
+        while (pos < response.size() && (isspace((unsigned char)response[pos]) || response[pos] == ','))
+            ++pos;
+        if (pos >= response.size() || response[pos] == ']')
+            break;
+        if (response[pos] != '{')
+            break;
+        const size_t end = json_object_end(response, pos);
+        if (end == std::string::npos)
+            break;
+        out.push_back(parse_podcast_episode(response.substr(pos, end - pos + 1)));
+        pos = end + 1;
+    }
+    return out;
+}
+
+SpotifyImportResult fetch_spotify_import(const std::string &link)
+{
+    SpotifyImportResult out;
+    if (link.empty())
+    {
+        out.error = "Paste a Spotify playlist link or ID";
+        return out;
+    }
+    const std::string response = send_command("spotify_import " + link);
+    if (response.empty())
+    {
+        out.error = "Backend not running";
+        return out;
+    }
+    if (response.find("\"error\"") != std::string::npos)
+    {
+        out.error = json_get_string(response, "error");
+        if (out.error.empty())
+            out.error = "Spotify import failed";
+        return out;
+    }
+    out.name = json_get_string(response, "name");
+    out.skipped = json_get_int(response, "skipped");
+    out.total = json_get_int(response, "total");
+    size_t key = response.find("\"tracks\":");
+    if (key != std::string::npos)
+        out.tracks = parse_track_array(response.substr(key));
+    if (out.tracks.empty())
+        out.error = "No Spotify tracks could be matched on YouTube Music";
+    return out;
+}
+
+PodcastDetails fetch_podcast_details(const std::string &browse_id)
+{
+    PodcastDetails details;
+    if (browse_id.empty())
+        return details;
+    const std::string response = send_command("podcast " + browse_id);
+    if (response.empty() || response.find("\"error\"") != std::string::npos)
+        return details;
+
+    size_t show_key = response.find("\"show\":");
+    if (show_key != std::string::npos)
+    {
+        size_t obj = response.find('{', show_key);
+        if (obj != std::string::npos)
+        {
+            size_t end = json_object_end(response, obj);
+            if (end != std::string::npos)
+                details.show = parse_podcast_show(response.substr(obj, end - obj + 1));
+        }
+    }
+    if (details.show.browse_id.empty())
+        details.show.browse_id = browse_id;
+
+    size_t eps_key = response.find("\"episodes\":");
+    if (eps_key != std::string::npos)
+    {
+        size_t arr = response.find('[', eps_key);
+        if (arr != std::string::npos)
+        {
+            size_t pos = arr + 1;
+            int guard = 0;
+            while (pos < response.size() && guard++ < 1000)
+            {
+                while (pos < response.size() &&
+                       (isspace((unsigned char)response[pos]) || response[pos] == ','))
+                    ++pos;
+                if (pos >= response.size() || response[pos] == ']')
+                    break;
+                if (response[pos] != '{')
+                    break;
+                size_t end = json_object_end(response, pos);
+                if (end == std::string::npos)
+                    break;
+                details.episodes.push_back(
+                    parse_podcast_episode(response.substr(pos, end - pos + 1)));
+                pos = end + 1;
+            }
+        }
+    }
+    return details;
+}
+
 bool fetch_album(const std::string &browse_id, Album &out)
 {
     if (browse_id.empty())

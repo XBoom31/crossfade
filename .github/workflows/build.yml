@@ -121,6 +121,7 @@ jobs:
           mkdir -p "dist/${PKG}"
           cp build/crossfade "dist/${PKG}/"
           cp scripts/crossfade-login "dist/${PKG}/"
+          cp -r scripts "dist/${PKG}/"
           cp p100-backend.py p100-backend-oauth.py requirements.txt "dist/${PKG}/"
           cp -r py "dist/${PKG}/"
           cp -r assets/fonts "dist/${PKG}/assets-fonts"
@@ -136,6 +137,8 @@ jobs:
           mkdir -p "$STAGE/usr/bin" "$STAGE/usr/share/crossfade/assets"                    "$STAGE/usr/share/applications"                    "$STAGE/usr/share/icons/hicolor/scalable/apps"
           cp build/crossfade "$STAGE/usr/bin/"
           cp scripts/crossfade-login "$STAGE/usr/bin/"
+          mkdir -p "$STAGE/usr/share/crossfade/scripts"
+          cp scripts/crossfade-login-helper.py "$STAGE/usr/share/crossfade/scripts/"
           cp p100-backend.py p100-backend-oauth.py requirements.txt "$STAGE/usr/share/crossfade/"
           mkdir -p "$STAGE/usr/share/crossfade/py"
           cp -r py/cf_backend "$STAGE/usr/share/crossfade/py/"
@@ -161,6 +164,8 @@ jobs:
           cp packaging/linux/crossfade-appimage-wrapper.sh AppDir/usr/bin/crossfade
           chmod +x AppDir/usr/bin/crossfade
           cp p100-backend.py p100-backend-oauth.py requirements.txt AppDir/usr/share/crossfade/
+          mkdir -p AppDir/usr/share/crossfade/scripts
+          cp scripts/crossfade-login-helper.py AppDir/usr/share/crossfade/scripts/
           mkdir -p AppDir/usr/share/crossfade/py
           cp -r py/cf_backend AppDir/usr/share/crossfade/py/
           cp -r assets/fonts AppDir/usr/share/crossfade/assets/
@@ -170,6 +175,16 @@ jobs:
           mkdir -p AppDir/usr/share/icons/hicolor/256x256/apps
           rsvg-convert -w 256 -h 256 assets/crossfade.svg               -o AppDir/usr/share/icons/hicolor/256x256/apps/crossfade.png || true
           export P100_SOURCE_DIR="$PWD"
+          # linuxdeploy treats libjack as a system library and leaves it out of
+          # the bundle even though libmpv dlopens it. Ship it explicitly and
+          # let the launcher put AppDir/usr/lib on the loader path.
+          JACK_LIB="$(ldconfig -p | awk '/libjack\.so\.0/ {print $NF; exit}')"
+          if [ -n "$JACK_LIB" ]; then
+            mkdir -p AppDir/usr/lib
+            cp -L "$JACK_LIB" AppDir/usr/lib/
+          else
+            echo "::warning::libjack.so.0 not found; AppImage may fail on systems without JACK"
+          fi
           ./linuxdeploy-x86_64.AppImage --appimage-extract-and-run               --appdir AppDir --output appimage
           mkdir -p dist
           # Move the packaging tool away first, so the only *.AppImage left in

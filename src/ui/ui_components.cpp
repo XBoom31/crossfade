@@ -2,6 +2,8 @@
 #include "ui.h"
 #include "ui_theme.h"
 #include "ui_backdrop.h"
+#include "ytdlp.h"
+#include "tasks.h"
 #include "texture.h"
 #include "writeback.h"
 
@@ -115,6 +117,8 @@ void ui_play_track(AppState &state, const Track &track, int index)
         state.current_playlist_source = PlaylistSource::YOUTUBE_PLAYLIST;
     else if (state.current_tab == Tab::Smart)
         state.current_playlist_source = PlaylistSource::SMART;
+    else if (state.current_tab == Tab::Podcasts)
+        state.current_playlist_source = PlaylistSource::PODCAST;
     else
         state.current_playlist_source = PlaylistSource::HOME;
 
@@ -263,7 +267,9 @@ void ui_selection_bar(AppState &state, const std::vector<Track> &visible, const 
     ImGui::Dummy(ImVec2(0.0f, m.space_1));
 }
 
-void ui_track_context_menu(AppState &state, const Track &track, bool allow_delete)
+void ui_track_context_menu(AppState &state, const Track &track, bool allow_delete,
+                           bool show_download, bool *download_requested,
+                           bool *download_remove)
 {
     if (!ImGui::BeginPopup("TrackContextMenu"))
         return;
@@ -402,6 +408,19 @@ void ui_track_context_menu(AppState &state, const Track &track, bool allow_delet
                          tracks.end());
             save_playlist(state.playlists[state.selected_playlist_index].name, tracks);
             wb_sync_playlist(state.playlists[state.selected_playlist_index].name, tracks);
+        }
+    }
+
+    if (show_download)
+    {
+        ImGui::Separator();
+        const bool cached = !find_cached_audio_path(track.id).empty();
+        if (ImGui::MenuItem(cached ? "Remove download" : "Download episode"))
+        {
+            if (download_requested)
+                *download_requested = true;
+            if (download_remove)
+                *download_remove = cached;
         }
     }
 
@@ -918,7 +937,8 @@ TrackRowResult ui_track_row(AppState &state, const Track &track, int index, cons
         }
     }
 
-    ui_track_context_menu(state, track, opt.show_delete);
+    ui_track_context_menu(state, track, opt.show_delete, opt.show_download,
+                          &result.download_requested, &result.download_remove);
 
     if ((double_clicked || (result.clicked && ui_touch_tap_recent())) &&
         !result.deleted && opt.auto_play_double_click)

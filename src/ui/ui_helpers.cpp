@@ -261,6 +261,8 @@ TrackListPtr get_playlist(const AppState &state)
         return alias_of(state.album_tracks);
     case PlaylistSource::ARTIST:
         return alias_of(state.artist_songs);
+    case PlaylistSource::PODCAST:
+        return alias_of(state.podcast_tracks);
     case PlaylistSource::HISTORY:
         return alias_of(state.playback_history);
     case PlaylistSource::STATS:

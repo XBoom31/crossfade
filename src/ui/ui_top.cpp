@@ -6,6 +6,7 @@
 #include "ui_theme.h"
 #include "ytdlp.h"
 #include "library.h"
+#include "tasks.h"
 
 #include <algorithm>
 #include <cmath>
@@ -92,6 +93,25 @@ static void activate_tab(AppState &s, Tab tab)
         break;
     case Tab::Radio:
         s.current_playlist_source = PlaylistSource::RADIO;
+        break;
+    case Tab::Podcasts:
+        s.current_playlist_source = PlaylistSource::PODCAST;
+        if (!s.podcast_library_loaded && !s.podcast_library_loading)
+        {
+            s.podcast_library_loading = true;
+            AppState *sp = &s;
+            tasks::spawn([sp]() {
+                auto shows = fetch_podcast_library();
+                auto later = fetch_episodes_later();
+                std::atomic_store(&sp->podcast_shows,
+                                  std::make_shared<const std::vector<PodcastShow>>(std::move(shows)));
+                std::atomic_store(&sp->podcast_later,
+                                  std::make_shared<const std::vector<PodcastEpisode>>(std::move(later)));
+                sp->podcast_library_loaded = true;
+                sp->podcast_library_loading = false;
+                sp->repaint_requested = true;
+            });
+        }
         break;
     case Tab::Liked:
         s.current_playlist_source = PlaylistSource::LIKED;
@@ -404,6 +424,14 @@ void draw_sidebar(AppState &state)
     nav_item(state, Tab::Home, UiIcon::Home, "Home", rail);
     nav_item(state, Tab::Downloads, UiIcon::Download, "Downloads", rail);
     nav_item(state, Tab::Radio, UiIcon::Radio, "Radio", rail);
+    nav_item(state, Tab::Podcasts, UiIcon::Podcast, "Podcasts", rail);
+    if (!state.settings.hide_visualizer)
+        nav_item(state, Tab::Visualizer, UiIcon::Visualizer, "Visualizer", rail);
+    else if (state.current_tab == Tab::Visualizer)
+    {
+        state.current_tab = Tab::Home;
+        state.current_playlist_source = PlaylistSource::HOME;
+    }
     nav_item(state, Tab::Liked, UiIcon::Heart, "Liked", rail);
     nav_item(state, Tab::History, UiIcon::History, "History", rail);
     nav_item(state, Tab::Stats, UiIcon::Stats, "Stats", rail);
@@ -528,6 +556,23 @@ static void dispatch_search(AppState &state)
             state.search_loading = true;
         }
     }
+    else if (state.current_tab == Tab::Podcasts)
+    {
+        if (query.empty())
+        {
+            state.podcast_search_loading = false;
+            state.podcast_search_dirty = false;
+            std::atomic_store(&state.podcast_search_results,
+                              std::make_shared<const std::vector<PodcastShow>>());
+        }
+        else
+        {
+            state.queued_podcast_search = query;
+            state.podcast_search_dirty = true;
+            state.podcast_search_loading = true;
+            ++state.podcast_search_id;
+        }
+    }
     else if (state.current_tab == Tab::Artists)
     {
         if (query.empty())
@@ -593,6 +638,8 @@ static const char *view_title(const AppState &s)
     case Tab::Party: return "Party";
     case Tab::Album: return "Album";
     case Tab::Artist: return "Artist";
+    case Tab::Podcasts: return "Podcasts";
+    case Tab::Visualizer: return "Visualizer";
     case Tab::Settings: return "Settings";
     case Tab::Smart: return "Smart";
     }
@@ -626,6 +673,8 @@ static std::string view_subtitle(const AppState &s)
     case Tab::Stats: return "Your listening, at a glance";
     case Tab::Queue: return "Playback queue";
     case Tab::Party: return "Let guests add songs from their phones";
+    case Tab::Podcasts: return "Shows and episodes";
+    case Tab::Visualizer: return "A little light for your music";
     case Tab::Settings: return "Make crossfade yours";
     default: return s.status_text;
     }
@@ -791,7 +840,8 @@ void draw_content_header(AppState &state)
                             state.current_tab == Tab::Downloads ||
                             state.current_tab == Tab::Liked ||
                             state.current_tab == Tab::Artists ||
-                            state.current_tab == Tab::Playlists;
+                            state.current_tab == Tab::Playlists ||
+                            state.current_tab == Tab::Podcasts;
     const bool home_feed =
         state.current_tab == Tab::Home && state.search_buffer[0] == '\0';
 

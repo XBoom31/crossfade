@@ -5,6 +5,8 @@
 #include "ui_notify.h"
 #include "ytdlp.h"
 #include "writeback.h"
+#include "paths.h"
+#include "tasks.h"
 
 #include <algorithm>
 #include <cstring>
@@ -56,6 +58,56 @@ static void export_playlist_file(const Playlist &pl, const std::string &path_raw
     ui_notify(UiNotifyType::Success,
               xspf ? "Exported as XSPF" : "Exported as M3U",
               std::to_string(pl.tracks.size()) + " tracks → " + path);
+}
+
+static char s_spotify_url[512] = "";
+static bool s_spotify_import_complete = false;
+
+static void begin_spotify_import(AppState &state)
+{
+    if (state.spotify_import_running.load())
+        return;
+    const std::string link = s_spotify_url;
+    if (link.empty())
+        return;
+    state.spotify_import_running = true;
+    std::atomic_store(&state.spotify_import_result,
+                      std::shared_ptr<const SpotifyImportResult>());
+    AppState *sp = &state;
+    tasks::spawn([sp, link]() {
+        auto result = fetch_spotify_import(link);
+        std::atomic_store(&sp->spotify_import_result,
+                          std::make_shared<const SpotifyImportResult>(std::move(result)));
+        sp->spotify_import_running = false;
+        sp->repaint_requested = true;
+    });
+}
+
+static void finish_spotify_import(AppState &state)
+{
+    auto result = std::atomic_load(&state.spotify_import_result);
+    if (!result)
+        return;
+    if (!result->error.empty())
+        return;
+    if (result->tracks.empty())
+        return;
+    std::string name = result->name.empty() ? "Spotify import" : result->name;
+    auto names = get_playlist_names();
+    std::string unique = name;
+    int suffix = 2;
+    while (std::find(names.begin(), names.end(), unique) != names.end())
+        unique = name + " (" + std::to_string(suffix++) + ")";
+    state.playlists.push_back(Playlist{unique, result->tracks});
+    save_playlist(unique, result->tracks);
+    wb_sync_playlist(unique, result->tracks);
+    state.selected_playlist_index = (int)state.playlists.size() - 1;
+    state.current_playlist_source = PlaylistSource::PLAYLIST;
+    ui_notify(UiNotifyType::Success, "Spotify playlist imported",
+              std::to_string(result->tracks.size()) + " tracks added as \"" + unique + "\".",
+              6.0f);
+    std::atomic_store(&state.spotify_import_result,
+                      std::shared_ptr<const SpotifyImportResult>());
 }
 
 static void open_export(AppState &state, int index, bool xspf)
@@ -179,6 +231,46 @@ void draw_playlists_panel(AppState &state)
         }
     }
     ImGui::PopStyleVar();
+
+    ImGui::Dummy(ImVec2(0.0f, m.space_2));
+    if (ui_ghost_button("Import from Spotify", ImVec2(180.0f * m.layout_scale, m.control_h)))
+    {
+        ImGui::OpenPopup("##spotify_import");
+    }
+    if (ImGui::BeginPopup("##spotify_import"))
+    {
+        if (s_spotify_import_complete)
+        {
+            s_spotify_import_complete = false;
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::TextUnformatted("Import a Spotify playlist");
+        ImGui::SetNextItemWidth(360.0f * m.layout_scale);
+        ImGui::InputTextWithHint("##spotify_url", "open.spotify.com/playlist/...",
+                                 s_spotify_url, sizeof(s_spotify_url));
+        if (state.spotify_import_running.load())
+        {
+            ImGui::TextColored(ui_c().text_muted, "Matching tracks on YouTube Music...");
+            ui_anim_request();
+        }
+        auto result = std::atomic_load(&state.spotify_import_result);
+        if (result && !result->error.empty())
+            ImGui::TextColored(ImVec4(0.95f, 0.42f, 0.42f, 1.0f), "%s", result->error.c_str());
+        if (!state.spotify_import_running.load() &&
+            ui_primary_button("Import playlist", ImVec2(160.0f * m.layout_scale, m.control_h)))
+            begin_spotify_import(state);
+        ImGui::SameLine(0.0f, m.space_2);
+        if (ui_ghost_button("Sign in to Spotify", ImVec2(170.0f * m.layout_scale, m.control_h)))
+        {
+            const std::string script = p100_share_dir() + "/scripts/crossfade-login-helper.py";
+            tasks::spawn([script]() {
+                const std::string cmd = "python3 \"" + script + "\" --spotify";
+                (void)std::system(cmd.c_str());
+            });
+        }
+        ImGui::EndPopup();
+    }
+    finish_spotify_import(state);
 
     ImGui::Dummy(ImVec2(0.0f, m.space_3));
 

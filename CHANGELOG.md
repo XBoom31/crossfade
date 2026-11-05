@@ -4,6 +4,43 @@ All notable changes to crossfade are documented here.
 
 ## Unreleased
 
+## 0.3.0 - 2026-11-05
+
+### Added
+
+- **Podcasts.** A first-class Podcasts tab backed by `ytmusicapi`: browse your
+  saved shows, search the YouTube Music podcast catalogue, open a show with its
+  recent episodes, play episodes through the normal queue, save shows locally,
+  and download a single episode or a whole show for offline listening.
+- **Audio-reactive visualizer.** A new full-canvas Visualizer page with Bars,
+  Waves and Orbits modes. It captures the default PipeWire/PulseAudio monitor
+  with `parec` and runs a real FFT on the audio, so the spectrum, waveform,
+  radial spokes and bass pulses follow the music instead of a canned animation.
+  Falls back gracefully when capture is unavailable.
+- **Spotify playlist import.** Paste a public Spotify playlist link in
+  Playlists; crossfade reads its track list and matches each song on YouTube
+  Music, then creates a local playlist. Optional Spotify sign-in stores an
+  `sp_dc` cookie for private playlists.
+- **Seamless Google sign-in.** Settings can open a real WebKitGTK sign-in popup
+  (WebKit 6/GTK4 or WebKit2GTK 4.1/GTK3) and write `browser.json` directly once
+  the session cookie appears. If WebKitGTK is missing it imports the existing
+  Firefox session instead. No OAuth client keys or manual header copying.
+- **Visualizer visibility toggle** in Settings, since the page is still
+  experimental.
+
+### Changed
+
+- **Settings redesigned.** A two-pane layout with a vertical category rail,
+  rounded section cards, a live scale preview, custom sliders, switches and
+  segmented controls. The centred column is gone; content stays left-aligned
+  and reflows cleanly at 75%, 100% and 200% scale.
+- **Fine-tune works for every element.** Top navigation, search bar, bottom bar,
+  track thumbnails, row spacing, bottom cover, transport controls, seek/volume
+  bars and the lyrics cover all honour their individual multiplier.
+- **AppImage** now ships `libjack.so.0` and puts the bundled library directory
+  on the loader path, fixing the startup failure on systems without JACK.
+
+
 ## 0.2.0 - 2026-11-05
 
 ### Added

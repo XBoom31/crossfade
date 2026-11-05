@@ -226,6 +226,26 @@ void ui_draw_icon(ImDrawList *dl, UiIcon icon, ImVec2 c, float s, ImU32 col, flo
         dl->AddCircleFilled(off, r * 0.78f, ImGui::GetColorU32(ui_c().bg), 24);
         break;
     }
+    case UiIcon::Podcast:
+        // Microphone: capsule, grille, stand.
+        dl->AddRect(p(c, s, -0.22f, -0.44f), p(c, s, 0.22f, 0.08f), col, s * 0.18f, 0, t);
+        dl->AddLine(p(c, s, -0.14f, -0.20f), p(c, s, 0.14f, -0.20f), col, t);
+        dl->AddLine(p(c, s, -0.14f, -0.08f), p(c, s, 0.14f, -0.08f), col, t);
+        dl->PathClear();
+        dl->PathArcTo(p(c, s, 0.0f, 0.04f), h * 0.52f, 0.35f, 2.79f, 18);
+        dl->PathStroke(col, 0, t);
+        dl->AddLine(p(c, s, 0.0f, 0.56f), p(c, s, 0.0f, 0.40f), col, t);
+        dl->AddLine(p(c, s, -0.24f, 0.56f), p(c, s, 0.24f, 0.56f), col, t);
+        break;
+    case UiIcon::Visualizer:
+        // A little spectrum: five bars with rounded caps.
+        for (int i = 0; i < 5; ++i)
+        {
+            const float x = -0.36f + i * 0.18f;
+            const float hh = 0.14f + 0.12f * (float)((i * 7 + 3) % 5);
+            dl->AddLine(p(c, s, x, 0.40f), p(c, s, x, 0.40f - hh), col, t);
+        }
+        break;
     case UiIcon::Qr:
     {
         // Three finder patterns and a few data modules.

@@ -1,5 +1,6 @@
 #include "ui.h"
 #include "tasks.h"
+#include <cstdlib>
 #include "party_util.h"
 #include "ytdlp.h"
 #include "texture.h"
@@ -25,6 +26,8 @@
 #include <thread>
 #include <atomic>
 #include <vector>
+#include <unordered_map>
+#include <functional>
 
 // ----------------------------------------------------------------------
 // Undo for the destructive reset buttons
@@ -288,6 +291,8 @@ void save_settings(const Settings &settings)
         << "\"album_backdrop_strength\":" << settings.album_backdrop_strength << ","
         << "\"backdrop_shader\":" << (settings.backdrop_shader ? "true" : "false") << ","
         << "\"safe_mode\":" << (settings.safe_mode ? "true" : "false") << ","
+        << "\"visualizer_mode\":" << std::max(0, std::min(2, settings.visualizer_mode)) << ","
+        << "\"hide_visualizer\":" << (settings.hide_visualizer ? "true" : "false") << ","
         << "\"glow_separators\":" << (settings.glow_separators ? "true" : "false") << ","
         << "\"glow_separator_strength\":" << settings.glow_separator_strength << ","
         << "\"backdrop_drift\":" << (settings.backdrop_drift ? "true" : "false") << ","
@@ -526,6 +531,10 @@ Settings load_settings()
             s.backdrop_shader = get_bool("backdrop_shader");
         if (json.find("\"safe_mode\"") != std::string::npos)
             s.safe_mode = get_bool("safe_mode");
+        if (json.find("\"visualizer_mode\"") != std::string::npos)
+            s.visualizer_mode = std::max(0, std::min(2, (int)std::lround(get_float("visualizer_mode"))));
+        if (json.find("\"hide_visualizer\"") != std::string::npos)
+            s.hide_visualizer = get_bool("hide_visualizer");
         if (json.find("\"glow_separators\"") != std::string::npos)
             s.glow_separators = get_bool("glow_separators");
         if (json.find("\"glow_separator_strength\"") != std::string::npos)
@@ -775,71 +784,436 @@ enum SettingsCategory
 
 static int s_settings_category = SC_APPEARANCE;
 
+static ImU32 settings_lerp_col(ImU32 a, ImU32 b, float t)
+{
+    t = std::max(0.0f, std::min(1.0f, t));
+    const int ar = (a >> 0) & 0xFF, ag = (a >> 8) & 0xFF, ab = (a >> 16) & 0xFF;
+    const int br = (b >> 0) & 0xFF, bg = (b >> 8) & 0xFF, bb = (b >> 16) & 0xFF;
+    return IM_COL32((int)(ar + (br - ar) * t), (int)(ag + (bg - ag) * t),
+                    (int)(ab + (bb - ab) * t),
+                    (int)(((a >> 24) & 0xFF) + (((b >> 24) & 0xFF) - ((a >> 24) & 0xFF)) * t));
+}
+
+static ImU32 settings_with_alpha(ImU32 col, float alpha)
+{
+    const int a = (int)(((col >> 24) & 0xFF) * std::max(0.0f, std::min(1.0f, alpha)));
+    return (col & 0x00FFFFFF) | ((ImU32)a << 24);
+}
+
+struct SettingsNavEntry
+{
+    int category;
+    UiIcon icon;
+    const char *label;
+    const char *group;
+};
+
+static const SettingsNavEntry kSettingsNav[] = {
+    {SC_APPEARANCE, UiIcon::Equalizer, "Appearance", "PERSONALISE"},
+    {SC_PLAYBACK, UiIcon::Play, "Playback", nullptr},
+    {SC_LYRICS, UiIcon::Lyrics, "Lyrics", nullptr},
+    {SC_PARTY, UiIcon::Party, "Party", "SOCIAL"},
+    {SC_YOUTUBE, UiIcon::Playlist, "YouTube Music", nullptr},
+    {SC_LIBRARY, UiIcon::Download, "Library", "SYSTEM"},
+    {SC_SHORTCUTS, UiIcon::More, "Shortcuts", nullptr},
+    {SC_DIAGNOSTICS, UiIcon::Stats, "Diagnostics", nullptr},
+    {SC_NOTES, UiIcon::Settings, "Notes", nullptr},
+    {SC_DANGER, UiIcon::Close, "Danger Zone", nullptr},
+};
+
+// Vertical settings navigation. Lives in its own child window so it stays
+// put while the content column scrolls independently.
 static int settings_category_rail()
 {
-    static const char *labels[SC_COUNT] = {
-        "Appearance", "Playback", "Party", "Lyrics", "YouTube Music",
-        "Shortcuts", "Library", "Diagnostics", "Notes", "Danger Zone"};
     const UiMetrics &m = ui_m();
-    const float gap = m.space_2;
-    const float h = std::max(30.0f * m.layout_scale, m.control_h * 0.82f);
-    const float fs = 16.0f * m.text_scale;
-    const float avail = std::max(1.0f, ImGui::GetContentRegionAvail().x);
-    const ImVec2 origin = ImGui::GetCursorScreenPos();
+    const float h = std::max(34.0f * m.layout_scale, m.control_h * 0.92f);
+    const float fs = 16.5f * m.text_scale;
     ImDrawList *dl = ImGui::GetWindowDrawList();
-    float x = 0.0f;
-    float y = 0.0f;
-    for (int i = 0; i < SC_COUNT; ++i)
+
+    for (const auto &entry : kSettingsNav)
     {
-        ImGui::PushID(i);
-        const ImVec2 ts = g_ui_fonts.medium->CalcTextSizeA(fs, FLT_MAX, 0.0f, labels[i]);
-        const float w = ts.x + m.space_4 * 2.0f;
-        if ((i > 0 && x + w > avail) || i == 5)
+        if (entry.group)
         {
-            x = 0.0f;
-            y += h + gap;
+            ImGui::Dummy(ImVec2(0.0f, m.space_2));
+            ui_push_small();
+            ImGui::TextColored(ImVec4(ui_c().text_dim.x, ui_c().text_dim.y, ui_c().text_dim.z, 0.72f),
+                               "%s", entry.group);
+            ImGui::PopFont();
+            ImGui::Dummy(ImVec2(0.0f, m.space_1));
         }
-        const ImVec2 p(origin.x + x, origin.y + y);
-        const ImVec2 p1(p.x + w, p.y + h);
-        ImGui::SetCursorScreenPos(p);
-        ImGui::InvisibleButton("##settings_cat", ImVec2(w, h));
+        ImGui::PushID(entry.category);
+        const ImVec2 pos = ImGui::GetCursorScreenPos();
+        const float avail = ImGui::GetContentRegionAvail().x;
+        ImGui::InvisibleButton("##cat", ImVec2(avail, h));
         const bool hovered = ImGui::IsItemHovered();
-        const bool active = s_settings_category == i;
+        const bool active = s_settings_category == entry.category;
         if (ImGui::IsItemClicked())
         {
-            s_settings_category = i;
+            s_settings_category = entry.category;
             ImGui::SetScrollY(0.0f);
         }
-        static float alpha[SC_COUNT] = {0};
-        const float target = active ? 1.0f : (hovered ? 0.36f : 0.0f);
-        alpha[i] = ui_anim_approach(alpha[i], target, 16.0f);
-        if (std::fabs(alpha[i] - target) > 0.002f)
+        static float active_t[SC_COUNT] = {0};
+        static float hover_t[SC_COUNT] = {0};
+        active_t[entry.category] = ui_anim_approach(active_t[entry.category], active ? 1.0f : 0.0f, 18.0f);
+        hover_t[entry.category] = ui_anim_approach(hover_t[entry.category], hovered ? 1.0f : 0.0f, 20.0f);
+        const float at = active_t[entry.category];
+        const float ht = hover_t[entry.category];
+        if (std::fabs(at - (active ? 1.0f : 0.0f)) > 0.002f ||
+            std::fabs(ht - (hovered ? 1.0f : 0.0f)) > 0.002f)
             ui_anim_request();
-        const ImU32 bg = active ? ui_accent_u32(0.16f + 0.05f * alpha[i])
-                                : ui_overlay_u32(0.045f * alpha[i] + 0.02f);
-        dl->AddRectFilled(p, p1, bg, h * 0.5f);
-        dl->AddRect(p, p1, active ? ui_accent_u32(0.42f)
-                                   : ui_with_alpha(ui_border_u32(), 0.75f),
-                    h * 0.5f, 0, 1.0f);
+
+        const ImVec2 p1(pos.x + avail, pos.y + h);
+        if (at > 0.01f)
+            dl->AddRectFilled(pos, p1, ui_accent_u32(0.11f * at + 0.035f * ht), m.radius_md);
+        else if (ht > 0.01f)
+            dl->AddRectFilled(pos, p1, ui_overlay_u32(0.045f * ht), m.radius_md);
+        if (at > 0.01f)
+            dl->AddRectFilled(ImVec2(pos.x, pos.y + h * 0.24f),
+                              ImVec2(pos.x + 2.5f * m.layout_scale, pos.y + h * 0.76f),
+                              ui_accent_u32(0.85f * at), 1.5f);
+
+        const ImU32 icon_col = active ? ui_accent_text_u32()
+                                      : ui_with_alpha(ui_text_muted_u32(), 0.85f);
+        ui_draw_icon(dl, entry.icon,
+                     ImVec2(pos.x + m.space_3 + 9.0f * m.layout_scale, pos.y + h * 0.5f),
+                     18.0f * m.layout_scale, icon_col, 1.55f);
         dl->AddText(g_ui_fonts.medium, fs,
-                    ImVec2(p.x + (w - ts.x) * 0.5f, p.y + (h - ts.y) * 0.5f),
-                    active ? ui_text_u32() : ui_text_dim_u32(), labels[i]);
-        if (active)
-        {
-            const float uw = std::max(18.0f * m.layout_scale, w * 0.34f);
-            dl->AddRectFilled(ImVec2(p.x + (w - uw) * 0.5f, p1.y - 2.5f * m.layout_scale),
-                              ImVec2(p.x + (w + uw) * 0.5f, p1.y - 0.5f * m.layout_scale),
-                              ui_accent_u32(0.85f), 1.0f);
-        }
-        x += w + gap;
+                    ImVec2(pos.x + m.space_3 + 30.0f * m.layout_scale,
+                           pos.y + (h - fs * 1.2f) * 0.5f),
+                    active ? ui_text_u32() : ui_with_alpha(ui_text_dim_u32(), 0.92f),
+                    entry.label);
+        ImGui::Dummy(ImVec2(0.0f, 1.0f));
         ImGui::PopID();
     }
-    ImGui::SetCursorScreenPos(ImVec2(origin.x, origin.y + y + h + m.space_4));
+    ImGui::Dummy(ImVec2(0.0f, m.space_3));
     return s_settings_category;
 }
 
-// A tiny live player card so the scale slider has an immediate, readable
-// effect instead of making the user hunt for a misaligned control.
+// ----------------------------------------------------------------------
+// Settings content primitives
+// ----------------------------------------------------------------------
+// A rounded surface that sizes itself to its contents. Drawing happens in a
+// second ImDrawList channel so the card sits behind every widget without
+// needing a fixed height up front.
+class SettingsCard
+{
+public:
+    SettingsCard(const char *title, const char *subtitle, UiIcon icon)
+    {
+        const UiMetrics &m = ui_m();
+        m_dl = ImGui::GetWindowDrawList();
+        m_dl->ChannelsSplit(2);
+        m_dl->ChannelsSetCurrent(1);
+        m_start = ImGui::GetCursorScreenPos();
+        m_width = ImGui::GetContentRegionAvail().x;
+        ImGui::Indent(m.space_4);
+        ImGui::Dummy(ImVec2(0.0f, m.space_4));
+
+        const float icon_box = 36.0f * m.layout_scale;
+        const ImVec2 ip = ImGui::GetCursorScreenPos();
+        ImGui::Dummy(ImVec2(icon_box, icon_box));
+        m_dl->AddRectFilled(ip, ImVec2(ip.x + icon_box, ip.y + icon_box),
+                            ui_accent_u32(0.12f), m.radius_md);
+        m_dl->AddRect(ip, ImVec2(ip.x + icon_box, ip.y + icon_box),
+                      ui_accent_u32(0.22f), m.radius_md, 0, 1.0f);
+        ui_draw_icon(m_dl, icon, ImVec2(ip.x + icon_box * 0.5f, ip.y + icon_box * 0.5f),
+                     icon_box * 0.52f, ui_accent_text_u32(), 1.6f);
+        ImGui::SameLine(0.0f, m.space_3);
+        ImGui::BeginGroup();
+        ui_push_semibold(22.0f);
+        ImGui::TextUnformatted(title);
+        ImGui::PopFont();
+        if (subtitle && *subtitle)
+        {
+            ui_push_small();
+            ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x);
+            ImGui::TextColored(ui_c().text_muted, "%s", subtitle);
+            ImGui::PopTextWrapPos();
+            ImGui::PopFont();
+        }
+        ImGui::EndGroup();
+        ImGui::Dummy(ImVec2(0.0f, m.space_3));
+    }
+
+    ~SettingsCard() { close(); }
+
+    void close()
+    {
+        if (!m_dl)
+            return;
+        const UiMetrics &m = ui_m();
+        ImGui::Dummy(ImVec2(0.0f, m.space_3));
+        const ImVec2 end = ImGui::GetCursorScreenPos();
+        ImGui::Unindent(m.space_4);
+        m_dl->ChannelsSetCurrent(0);
+        const ImVec2 p0(m_start.x, m_start.y);
+        const ImVec2 p1(m_start.x + m_width, end.y + m.space_3);
+        m_dl->AddRectFilled(p0, p1, ui_overlay_u32(0.028f), m.radius_lg);
+        m_dl->AddRect(p0, p1, ui_with_alpha(ui_border_u32(), 0.70f), m.radius_lg, 0, 1.0f);
+        m_dl->ChannelsMerge();
+        m_dl = nullptr;
+    }
+
+private:
+    ImDrawList *m_dl = nullptr;
+    ImVec2 m_start{};
+    float m_width = 0.0f;
+};
+
+static void settings_group_label(const char *text)
+{
+    const UiMetrics &m = ui_m();
+    ImGui::Dummy(ImVec2(0.0f, m.space_2));
+    ui_push_semibold(16.0f);
+    ImGui::TextColored(ImVec4(ui_c().text_muted.x, ui_c().text_muted.y, ui_c().text_muted.z, 0.95f),
+                       "%s", text);
+    ImGui::PopFont();
+    ImGui::Dummy(ImVec2(0.0f, m.space_1));
+}
+
+static void settings_row_label(const char *label, const char *value, const char *help)
+{
+    const UiMetrics &m = ui_m();
+    const float avail = ImGui::GetContentRegionAvail().x;
+    const ImVec2 pos = ImGui::GetCursorScreenPos();
+    const float title_fs = 18.0f * m.text_scale;
+    const float val_fs = 15.5f * m.text_scale;
+    float val_w = 0.0f;
+    if (value)
+        val_w = ImGui::CalcTextSize(value).x;
+    ImGui::Dummy(ImVec2(0.0f, title_fs * 1.3f));
+    ImGui::GetWindowDrawList()->AddText(g_ui_fonts.medium, title_fs,
+                                        ImVec2(pos.x, pos.y + 1.5f * m.layout_scale),
+                                        ui_text_u32(), label);
+    if (value)
+        ImGui::GetWindowDrawList()->AddText(g_ui_fonts.medium, val_fs,
+                                            ImVec2(pos.x + avail - val_w,
+                                                   pos.y + 3.5f * m.layout_scale),
+                                            ui_accent_text_u32(), value);
+    if (help)
+        settings_help(help);
+}
+
+static bool settings_slider_row(const char *id, const char *label, float *value,
+                                float lo, float hi, const char *value_fmt,
+                                const char *help, float drag_speed = 1.0f,
+                                const std::function<std::string(float)> &value_text = {})
+{
+    const UiMetrics &m = ui_m();
+    char buf[96];
+    if (value_text)
+        std::snprintf(buf, sizeof(buf), "%s", value_text(*value).c_str());
+    else
+        std::snprintf(buf, sizeof(buf), value_fmt, (double)*value);
+    settings_row_label(label, buf, help);
+
+    ImGui::PushID(id);
+    const float track_h = 28.0f * m.layout_scale;
+    const ImVec2 p = ImGui::GetCursorScreenPos();
+    const float w = std::max(60.0f, ImGui::GetContentRegionAvail().x);
+    ImGui::InvisibleButton("##slider", ImVec2(w, track_h));
+    const bool hovered = ImGui::IsItemHovered();
+    const bool active = ImGui::IsItemActive();
+    bool changed = false;
+    if (active)
+    {
+        const float t = std::max(0.0f, std::min(1.0f,
+                                                 (ImGui::GetIO().MousePos.x - p.x) / w));
+        const float nv = lo + t * (hi - lo);
+        if (std::fabs(nv - *value) > 1e-6f)
+        {
+            *value = nv;
+            changed = true;
+        }
+    }
+    (void)changed;
+
+    static std::unordered_map<ImGuiID, float> hover_map;
+    float &hover_t = hover_map[ImGui::GetItemID()];
+    hover_t = ui_anim_approach(hover_t, (hovered || active) ? 1.0f : 0.0f, 20.0f);
+    const float t = std::max(0.0f, std::min(1.0f, (*value - lo) / (hi - lo)));
+    const float cy = p.y + track_h * 0.5f;
+    const float knob_r = (4.8f + 1.2f * hover_t) * m.layout_scale;
+    ImDrawList *dl = ImGui::GetWindowDrawList();
+    const ImVec2 t0(p.x, cy - 1.6f * m.layout_scale);
+    const ImVec2 t1(p.x + w, cy + 1.6f * m.layout_scale);
+    dl->AddRectFilled(t0, t1, ui_overlay_u32(0.075f), 2.0f);
+    const ImVec2 f1(p.x + w * t, cy + 1.6f * m.layout_scale);
+    if (t > 0.001f)
+    {
+        dl->AddRectFilledMultiColor(t0, f1,
+                                    ui_accent_u32(0.55f), ui_accent_u32(0.95f),
+                                    ui_accent_u32(0.95f), ui_accent_u32(0.55f));
+        dl->AddCircleFilled(ImVec2(p.x + w * t, cy), knob_r * 3.4f,
+                            ui_accent_u32(0.10f + 0.06f * hover_t), 24);
+        dl->AddCircleFilled(ImVec2(p.x + w * t, cy), knob_r,
+                            ui_text_u32(), 18);
+        dl->AddCircle(ImVec2(p.x + w * t, cy), knob_r + 1.2f,
+                      ui_accent_u32(0.75f), 18, 1.4f);
+    }
+    static std::unordered_map<ImGuiID, bool> active_map;
+    bool &was_active = active_map[ImGui::GetItemID()];
+    const bool released = was_active && !active;
+    was_active = active;
+    ImGui::PopID();
+    ImGui::Dummy(ImVec2(0.0f, m.space_2));
+    return released;
+}
+
+static bool settings_slider_int_row(const char *id, const char *label, int *value,
+                                    int lo, int hi, const char *value_fmt,
+                                    const char *help,
+                                    const std::function<std::string(int)> &value_text = {})
+{
+    const UiMetrics &m = ui_m();
+    char buf[96];
+    if (value_text)
+        std::snprintf(buf, sizeof(buf), "%s", value_text(*value).c_str());
+    else
+        std::snprintf(buf, sizeof(buf), value_fmt, *value);
+    settings_row_label(label, buf, help);
+
+    ImGui::PushID(id);
+    const float track_h = 28.0f * m.layout_scale;
+    const ImVec2 p = ImGui::GetCursorScreenPos();
+    const float w = std::max(60.0f, ImGui::GetContentRegionAvail().x);
+    ImGui::InvisibleButton("##slider", ImVec2(w, track_h));
+    const bool hovered = ImGui::IsItemHovered();
+    const bool active = ImGui::IsItemActive();
+    if (active)
+    {
+        const float t = std::max(0.0f, std::min(1.0f,
+                                                 (ImGui::GetIO().MousePos.x - p.x) / w));
+        const int nv = (int)std::lround(lo + t * (hi - lo));
+        if (nv != *value)
+            *value = nv;
+    }
+    static std::unordered_map<ImGuiID, float> hover_map;
+    float &hover_t = hover_map[ImGui::GetItemID()];
+    hover_t = ui_anim_approach(hover_t, (hovered || active) ? 1.0f : 0.0f, 20.0f);
+    const float t = hi > lo ? std::max(0.0f, std::min(1.0f,
+                                                     (float)(*value - lo) / (float)(hi - lo)))
+                            : 0.0f;
+    const float cy = p.y + track_h * 0.5f;
+    const float knob_r = (4.8f + 1.2f * hover_t) * m.layout_scale;
+    ImDrawList *dl = ImGui::GetWindowDrawList();
+    const ImVec2 t0(p.x, cy - 1.6f * m.layout_scale);
+    const ImVec2 t1(p.x + w, cy + 1.6f * m.layout_scale);
+    dl->AddRectFilled(t0, t1, ui_overlay_u32(0.075f), 2.0f);
+    if (t > 0.001f)
+    {
+        const ImVec2 f1(p.x + w * t, cy + 1.6f * m.layout_scale);
+        dl->AddRectFilledMultiColor(t0, f1,
+                                    ui_accent_u32(0.55f), ui_accent_u32(0.95f),
+                                    ui_accent_u32(0.95f), ui_accent_u32(0.55f));
+        dl->AddCircleFilled(ImVec2(p.x + w * t, cy), knob_r * 3.4f,
+                            ui_accent_u32(0.10f + 0.06f * hover_t), 24);
+        dl->AddCircleFilled(ImVec2(p.x + w * t, cy), knob_r, ui_text_u32(), 18);
+        dl->AddCircle(ImVec2(p.x + w * t, cy), knob_r + 1.2f, ui_accent_u32(0.75f), 18, 1.4f);
+    }
+    static std::unordered_map<ImGuiID, bool> active_map;
+    bool &was_active = active_map[ImGui::GetItemID()];
+    const bool released = was_active && !active;
+    was_active = active;
+    ImGui::PopID();
+    ImGui::Dummy(ImVec2(0.0f, m.space_2));
+    return released;
+}
+
+static bool settings_toggle_row(const char *id, const char *label, bool *value, const char *help)
+{
+    const UiMetrics &m = ui_m();
+    const float avail = std::max(80.0f, ImGui::GetContentRegionAvail().x);
+    const float switch_w = 44.0f * m.layout_scale;
+    const float switch_h = 24.0f * m.layout_scale;
+    const float pad = m.space_2;
+    const float title_fs = 18.0f * m.text_scale;
+    const float wrap_w = std::max(60.0f, avail - switch_w - pad * 3.0f);
+    const float help_h = help ? ImGui::CalcTextSize(help, nullptr, false, wrap_w).y : 0.0f;
+    const float row_h = pad * 2.0f + title_fs * 1.3f + (help ? m.space_1 + help_h : 0.0f);
+
+    const ImVec2 pos = ImGui::GetCursorScreenPos();
+    ImGui::PushID(id);
+    ImGui::InvisibleButton("##toggle", ImVec2(avail, row_h));
+    const bool hovered = ImGui::IsItemHovered();
+    bool changed = false;
+    if (ImGui::IsItemClicked())
+    {
+        *value = !*value;
+        changed = true;
+    }
+    static std::unordered_map<ImGuiID, float> hover_map;
+    static std::unordered_map<ImGuiID, float> on_map;
+    float &hover_t = hover_map[ImGui::GetItemID()];
+    float &on_t = on_map[ImGui::GetItemID()];
+    hover_t = ui_anim_approach(hover_t, hovered ? 1.0f : 0.0f, 20.0f);
+    on_t = ui_anim_approach(on_t, *value ? 1.0f : 0.0f, 22.0f);
+    ImDrawList *dl = ImGui::GetWindowDrawList();
+    if (hover_t > 0.01f)
+        dl->AddRectFilled(pos, ImVec2(pos.x + avail, pos.y + row_h),
+                          ui_overlay_u32(0.030f * hover_t), m.radius_md);
+    dl->AddText(g_ui_fonts.medium, title_fs,
+                ImVec2(pos.x + pad, pos.y + pad), ui_text_u32(), label);
+    if (help)
+    {
+        ImGui::PushTextWrapPos(pos.x + wrap_w);
+        ui_push_small();
+        dl->AddText(g_ui_fonts.body, 14.5f * m.text_scale,
+                    ImVec2(pos.x + pad, pos.y + pad + title_fs * 1.3f + m.space_1),
+                    ui_text_muted_u32(), help, nullptr, wrap_w);
+        ImGui::PopFont();
+        ImGui::PopTextWrapPos();
+    }
+    const ImVec2 sp(pos.x + avail - switch_w - pad,
+                    pos.y + pad + (title_fs * 1.3f - switch_h) * 0.5f);
+    const ImVec2 sp1(sp.x + switch_w, sp.y + switch_h);
+    dl->AddRectFilled(sp, sp1,
+                      settings_lerp_col(ui_overlay_u32(0.12f), ui_accent_u32(0.92f), on_t),
+                      switch_h * 0.5f);
+    dl->AddRect(sp, sp1, ui_with_alpha(ui_border_u32(), 0.8f), switch_h * 0.5f, 0, 1.0f);
+    const float knob_x = sp.x + switch_h * 0.5f + on_t * (switch_w - switch_h);
+    dl->AddCircleFilled(ImVec2(knob_x, sp.y + switch_h * 0.5f),
+                        (switch_h * 0.5f - 3.0f * m.layout_scale),
+                        on_t > 0.5f ? ui_col(ui_c().on_accent) : ui_text_u32(), 20);
+    ImGui::PopID();
+    ImGui::Dummy(ImVec2(0.0f, m.space_1));
+    return changed;
+}
+
+static bool settings_button_row(const char *label, const char *desc, const char *button,
+                                bool primary = false, float width = 190.0f)
+{
+    const UiMetrics &m = ui_m();
+    const float avail = ImGui::GetContentRegionAvail().x;
+    const float bw = width * m.layout_scale;
+    const bool stacked = avail < 520.0f * m.layout_scale;
+    const ImVec2 pos = ImGui::GetCursorScreenPos();
+    const float title_fs = 18.0f * m.text_scale;
+    const float text_w = stacked ? avail - m.space_2 * 2.0f
+                                 : std::max(80.0f, avail - bw - m.space_4);
+    const float desc_h = desc ? ImGui::CalcTextSize(desc, nullptr, false, text_w).y : 0.0f;
+    const float text_h = m.space_2 * 2.0f + title_fs * 1.3f + (desc ? m.space_1 + desc_h : 0.0f);
+    const float row_h = text_h + (stacked ? m.button_h + m.space_2 : 0.0f);
+    ImGui::Dummy(ImVec2(0.0f, row_h));
+    ImDrawList *dl = ImGui::GetWindowDrawList();
+    dl->AddText(g_ui_fonts.medium, title_fs, ImVec2(pos.x + m.space_2, pos.y + m.space_2),
+                ui_text_u32(), label);
+    if (desc)
+        dl->AddText(g_ui_fonts.body, 14.5f * m.text_scale,
+                    ImVec2(pos.x + m.space_2, pos.y + m.space_2 + title_fs * 1.3f + m.space_1),
+                    ui_text_muted_u32(), desc, nullptr, text_w);
+    if (stacked)
+        ImGui::SetCursorScreenPos(ImVec2(pos.x + m.space_2, pos.y + text_h));
+    else
+        ImGui::SetCursorScreenPos(ImVec2(pos.x + avail - bw,
+                                         pos.y + (row_h - m.button_h) * 0.5f));
+    const bool clicked = primary ? ui_primary_button(button, ImVec2(stacked ? text_w : bw, m.button_h))
+                                 : ui_ghost_button(button, ImVec2(stacked ? text_w : bw, m.button_h));
+    ImGui::SetCursorScreenPos(ImVec2(pos.x, pos.y + row_h));
+    ImGui::Dummy(ImVec2(0.0f, 1.0f));
+    return clicked;
+}
+
 static void settings_preview_card(const UiMetrics &m, float width)
 {
     const float h = std::max(112.0f * m.layout_scale, m.control_h * 2.35f);
@@ -922,429 +1296,496 @@ static void settings_intro(const char *text)
 void draw_settings_panel(AppState &state)
 {
     const UiMetrics &m = ui_m();
-    const float avail_w = std::max(1.0f, ImGui::GetContentRegionAvail().x);
-    const float content_w = std::min(780.0f * m.layout_scale, avail_w);
-    const float field_w = std::max(180.0f * m.layout_scale,
-                                   std::min(420.0f * m.layout_scale,
-                                            content_w - m.space_4 * 2.0f));
+    const float panel_avail = std::max(1.0f, ImGui::GetContentRegionAvail().x);
+    const float nav_w = std::min(210.0f * m.layout_scale,
+                                 std::max(160.0f * m.layout_scale, panel_avail * 0.26f));
+    const float content_w = std::min(840.0f * m.layout_scale,
+                                     std::max(240.0f, panel_avail - nav_w - m.space_5));
+    const float field_w = std::min(520.0f * m.layout_scale,
+                                   std::max(180.0f * m.layout_scale, content_w));
     bool save = false;
 
     if (state.settings_focus_party)
         s_settings_category = SC_PARTY;
 
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.0f, 0.0f, 0.0f, 0.0f));
+    ImGui::BeginChild("##settings_nav", ImVec2(nav_w, 0), ImGuiChildFlags_None,
+                      ImGuiWindowFlags_NoBackground);
     settings_category_rail();
+    ImGui::EndChild();
+
+    ImGui::SameLine(0.0f, m.space_5);
+    ImGui::BeginChild("##settings_content", ImVec2(content_w, 0), ImGuiChildFlags_None,
+                      ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoScrollbar);
+    smooth_scroll_child("##settings_content");
+    ImGui::PopStyleColor();
+
     if (s_settings_category == SC_APPEARANCE)
     {
-    settings_intro("Type, spacing and scale");
-
-    ImGui::SetNextItemWidth(field_w);
-    ImGui::SliderFloat("##ui_scale", &state.settings.ui_scale, 0.75f, 2.0f, "UI scale  %.2fx");
-    if (ImGui::IsItemDeactivatedAfterEdit())
-        save = true;
-    settings_help("Scales text, widgets and layout together. Most people only need this one.");
-    if (ui_ghost_button("Reset to 1.00x", ImVec2(170.0f * m.layout_scale, m.control_h)))
-    {
-        state.settings.ui_scale = 1.0f;
-        save = true;
-    }
-    settings_preview_card(m, content_w);
-
-    // Accent colour: automatic by default. Editing the swatch stores an
-    // explicit override, which is the only option on Windows and on Linux
-    // desktops that don't expose org.freedesktop.appearance.
-    ImGui::TextColored(ui_c().text_muted, "Accent colour");
-    if (ImGui::ColorButton("##accent_swatch", g_accent,
-                           ImGuiColorEditFlags_NoAlpha | ImGuiColorEditFlags_NoTooltip,
-                           ImVec2(field_w, m.control_h)))
-    {
-        ImGui::OpenPopup("##accent_picker");
-        ImGui::SetNextWindowPos(
-            ImVec2(ImGui::GetItemRectMin().x,
-                   ImGui::GetItemRectMax().y + ImGui::GetStyle().ItemSpacing.y));
-    }
-    static bool accent_picker_was_open = false;
-    if (ImGui::BeginPopup("##accent_picker"))
-    {
-        accent_picker_was_open = true;
-        ImVec4 accent = g_accent;
-        if (ImGui::ColorPicker4("##accent_picker_edit", &accent.x,
-                                ImGuiColorEditFlags_NoAlpha))
         {
-            state.settings.accent_color = accent_to_hex(accent);
-            update_accent(state.settings);
-            ui_theme_refresh_accent();
-        }
-        ImGui::EndPopup();
-    }
-    else if (accent_picker_was_open)
-    {
-        accent_picker_was_open = false;
-        save = true;
-    }
-    if (state.settings.accent_color.empty())
-    {
-        ImGui::TextDisabled("Automatic - system colour or today's colour");
-    }
-    else
-    {
-        ImGui::TextDisabled("Custom colour %s", state.settings.accent_color.c_str());
-        ImGui::SameLine();
-        if (ui_ghost_button("Use automatic", ImVec2(150.0f * m.layout_scale, m.control_h)))
-        {
-            state.settings.accent_color.clear();
-            update_accent(state.settings);
-            ui_theme_refresh_accent();
-            save = true;
-        }
-    }
-    settings_help("Used for highlights, progress bars and glows. Automatic follows your desktop accent, or a new daily colour when the system doesn't provide one. Pick a colour to use your own everywhere.");
+            SettingsCard card("Interface", "Scale the whole app, or fine-tune one part at a time.",
+                              UiIcon::Equalizer);
+            settings_preview_card(m, ImGui::GetContentRegionAvail().x);
 
-    ImGui::TextColored(ui_c().text_muted, "Animations");
-    const char *animations[] = {"Off", "Subtle", "Standard", "Playful"};
-    ImGui::SetNextItemWidth(field_w);
-    if (ImGui::Combo("##animations", &state.settings.animations, animations, 4))
-        save = true;
-    settings_help("Motion for track changes, list reveals and scrolling. Standard is the default.");
-
-    if (ImGui::Checkbox("Album colour backdrop", &state.settings.album_backdrop))
-        save = true;
-    settings_help("Tints the background with the dominant colour of the playing album art, or the app accent when nothing is loaded. The colour crossfades on track changes. Night mode stays dim to preserve true blacks.");
-    if (state.settings.album_backdrop)
-    {
-        ImGui::SetNextItemWidth(field_w);
-        ImGui::SliderFloat("##album_backdrop_strength", &state.settings.album_backdrop_strength,
-                           0.10f, 1.0f, "Backdrop glow  %.2f");
-        if (ImGui::IsItemDeactivatedAfterEdit())
-            save = true;
-        if (ImGui::Checkbox("Drifting glow", &state.settings.backdrop_drift))
-            save = true;
-        settings_help("Every so often the glow slowly turns to a different corner, so the backdrop never looks pinned in place. Long, gentle transitions.");
-        if (ImGui::Checkbox("Smooth backdrop shader", &state.settings.backdrop_shader))
-            save = true;
-        settings_help("Draws the ambient wash as one full-screen shader pass with subtle dithering, which removes the colour steps OLED panels expose. It replaces the layered ellipse overdraw, so GPU use stays similar or lower.");
-    }
-
-    if (ImGui::Checkbox("Glowing separators", &state.settings.glow_separators))
-        save = true;
-    settings_help("A soft album-coloured light streak under each section header, plus a faint tint on panel edges and dividers. Follows the playing cover even when the full backdrop is off.");
-    if (state.settings.glow_separators)
-    {
-        ImGui::SetNextItemWidth(field_w);
-        ImGui::SliderFloat("##glow_separator_strength", &state.settings.glow_separator_strength,
-                           0.10f, 1.50f, "Separator glow  %.2f");
-        if (ImGui::IsItemDeactivatedAfterEdit())
-            save = true;
-    }
-
-    if (ImGui::TreeNode("Fine-tune scale"))
-    {
-        ImGui::SetNextItemWidth(field_w);
-        ImGui::SliderFloat("##ui_text_scale", &state.settings.ui_text_scale, 0.5f, 2.0f, "Text  %.2fx");
-        if (ImGui::IsItemDeactivatedAfterEdit())
-            save = true;
-        ImGui::SetNextItemWidth(field_w);
-        ImGui::SliderFloat("##ui_widget_scale", &state.settings.ui_widget_scale, 0.5f, 2.0f, "Widgets & spacing  %.2fx");
-        if (ImGui::IsItemDeactivatedAfterEdit())
-            save = true;
-        ImGui::SetNextItemWidth(field_w);
-        ImGui::SliderFloat("##ui_layout_scale", &state.settings.ui_layout_scale, 0.5f, 2.0f, "Layout & sections  %.2fx");
-        if (ImGui::IsItemDeactivatedAfterEdit())
-            save = true;
-        if (ui_ghost_button("Reset fine-tuning", ImVec2(150.0f * m.layout_scale, m.button_h)))
-        {
-            state.settings.ui_text_scale = 1.0f;
-            state.settings.ui_widget_scale = 1.0f;
-            state.settings.ui_layout_scale = 1.0f;
-            save = true;
-        }
-
-        if (ImGui::TreeNode("Individual elements"))
-        {
-            settings_help("Fine-grained overrides for specific parts of the player. Leave at 1.00x unless one element feels off.");
-            for (const auto &def : ui_element_defs())
+            if (settings_slider_row("##ui_scale", "UI scale", &state.settings.ui_scale,
+                                    0.75f, 2.0f, "%.2fx",
+                                    "Scales text, widgets and layout together. Most people only need this one."))
+                save = true;
+            if (settings_button_row("Reset scale", "Return the whole interface to 100%.",
+                                    "Reset to 1.00x", false, 165.0f))
             {
-                auto it = state.settings.ui_elements.find(def.key);
-                if (it == state.settings.ui_elements.end())
-                    it = state.settings.ui_elements.emplace(def.key, 1.0f).first;
-                ImGui::PushID(def.key);
-                ImGui::SetNextItemWidth(field_w);
-                ImGui::SliderFloat("##v", &it->second, 0.25f, 3.0f, def.label);
-                if (ImGui::IsItemDeactivatedAfterEdit())
-                    save = true;
-                ImGui::PopID();
-            }
-            if (ui_ghost_button("Reset element sizes", ImVec2(160.0f * m.layout_scale, m.button_h)))
-            {
-                for (const auto &def : ui_element_defs())
-                    state.settings.ui_elements[def.key] = 1.0f;
+                state.settings.ui_scale = 1.0f;
                 save = true;
             }
-            ImGui::TreePop();
-        }
-        ImGui::TreePop();
-    }
 
+            settings_group_label("Fine-tune");
+            if (settings_slider_row("##ui_text_scale", "Text size", &state.settings.ui_text_scale,
+                                    0.5f, 2.0f, "%.2fx",
+                                    "Only changes type. Useful when the layout is right but labels are too small."))
+                save = true;
+            if (settings_slider_row("##ui_widget_scale", "Widgets & spacing",
+                                    &state.settings.ui_widget_scale, 0.5f, 2.0f, "%.2fx",
+                                    "Paddings, control heights, scrollbars and gaps between widgets."))
+                save = true;
+            if (settings_slider_row("##ui_layout_scale", "Layout & sections",
+                                    &state.settings.ui_layout_scale, 0.5f, 2.0f, "%.2fx",
+                                    "Section heights, artwork and the big blocks. Text stays where you put it."))
+                save = true;
+
+            static bool show_elements = false;
+            if (settings_toggle_row("##show_elements", "Individual elements", &show_elements,
+                                    "Override one part of the player without moving everything else. Leave at 1.00x unless something feels off."))
+                save = true;
+            if (show_elements)
+            {
+                ImGui::Dummy(ImVec2(0.0f, m.space_1));
+                for (const auto &def : ui_element_defs())
+                {
+                    auto it = state.settings.ui_elements.find(def.key);
+                    if (it == state.settings.ui_elements.end())
+                        it = state.settings.ui_elements.emplace(def.key, 1.0f).first;
+                    ImGui::PushID(def.key);
+                    if (settings_slider_row("##v", def.label, &it->second, 0.25f, 3.0f,
+                                            "%.2fx", nullptr))
+                        save = true;
+                    ImGui::PopID();
+                }
+                if (settings_button_row("Reset element sizes", "Put every individual element back to 100%.",
+                                        "Reset elements", false, 170.0f))
+                {
+                    for (const auto &def : ui_element_defs())
+                        state.settings.ui_elements[def.key] = 1.0f;
+                    save = true;
+                }
+            }
+        }
+
+        {
+            SettingsCard card("Colour & motion", "Make the room feel like yours.",
+                              UiIcon::Sun);
+
+            // Accent swatch row: a live circular preview plus eight presets.
+            settings_row_label("Accent colour",
+                               state.settings.accent_color.empty() ? "Automatic"
+                                                                  : state.settings.accent_color.c_str(),
+                               "Used for highlights, progress bars and the visualizer. Automatic follows your desktop accent or a fresh daily colour.");
+            {
+                const ImVec4 current = g_accent;
+                const ImVec2 row = ImGui::GetCursorScreenPos();
+                const float sw = 26.0f * m.layout_scale;
+                const float gap = m.space_2;
+                ImDrawList *dl = ImGui::GetWindowDrawList();
+                static const ImU32 presets[] = {
+                    IM_COL32(61, 220, 132, 255), IM_COL32(62, 198, 255, 255),
+                    IM_COL32(91, 140, 255, 255), IM_COL32(169, 123, 255, 255),
+                    IM_COL32(255, 122, 200, 255), IM_COL32(255, 93, 115, 255),
+                    IM_COL32(255, 159, 67, 255), IM_COL32(247, 209, 84, 255)};
+                float x = row.x;
+                for (int i = 0; i < 8; ++i)
+                {
+                    ImGui::SetCursorScreenPos(ImVec2(x, row.y));
+                    ImGui::PushID(i);
+                    ImGui::InvisibleButton("##preset", ImVec2(sw, sw));
+                    const bool hov = ImGui::IsItemHovered();
+                    if (ImGui::IsItemClicked())
+                    {
+                        ImVec4 c = ImGui::ColorConvertU32ToFloat4(presets[i]);
+                        state.settings.accent_color = accent_to_hex(c);
+                        update_accent(state.settings);
+                        ui_theme_refresh_accent();
+                        save = true;
+                    }
+                    const ImVec2 c(x + sw * 0.5f, row.y + sw * 0.5f);
+                    if (hov)
+                        dl->AddCircleFilled(c, sw * 0.62f, settings_with_alpha(presets[i], 0.22f), 24);
+                    dl->AddCircleFilled(c, sw * 0.40f, presets[i], 24);
+                    dl->AddCircle(c, sw * 0.40f, IM_COL32(255, 255, 255, 80), 24, 1.0f);
+                    ImGui::PopID();
+                    x += sw + gap;
+                }
+                // Current / automatic swatch.
+                ImGui::SetCursorScreenPos(ImVec2(x + m.space_2, row.y));
+                ImGui::InvisibleButton("##current_accent", ImVec2(sw, sw));
+                if (ImGui::IsItemClicked())
+                    ImGui::OpenPopup("##accent_popup");
+                const ImVec2 c(x + m.space_2 + sw * 0.5f, row.y + sw * 0.5f);
+                dl->AddCircleFilled(c, sw * 0.52f, IM_COL32(0, 0, 0, 90), 24);
+                dl->AddCircleFilled(c, sw * 0.42f, ui_accent_u32(1.0f), 24);
+                dl->AddCircle(c, sw * 0.42f, IM_COL32(255, 255, 255, 150), 24, 1.2f);
+                dl->AddCircle(c, sw * 0.56f, ui_accent_u32(0.45f), 24, 1.0f);
+                (void)current;
+                ImGui::SetCursorScreenPos(ImVec2(row.x, row.y + sw + m.space_2));
+                if (ui_ghost_button("Automatic", ImVec2(130.0f * m.layout_scale, m.control_h)))
+                {
+                    state.settings.accent_color.clear();
+                    update_accent(state.settings);
+                    ui_theme_refresh_accent();
+                    save = true;
+                }
+                ImGui::SameLine(0.0f, m.space_2);
+                if (ui_ghost_button("Custom...", ImVec2(130.0f * m.layout_scale, m.control_h)))
+                    ImGui::OpenPopup("##accent_popup");
+                if (ImGui::BeginPopup("##accent_popup"))
+                {
+                    ImVec4 accent = g_accent;
+                    if (ImGui::ColorPicker4("##accent_picker", &accent.x,
+                                            ImGuiColorEditFlags_NoAlpha))
+                    {
+                        state.settings.accent_color = accent_to_hex(accent);
+                        update_accent(state.settings);
+                        ui_theme_refresh_accent();
+                    }
+                    if (ImGui::IsWindowAppearing())
+                        ImGui::SetNextWindowPos(ImGui::GetMousePos());
+                    ImGui::EndPopup();
+                }
+                else if (ImGui::IsItemDeactivated())
+                {
+                    if (!state.settings.accent_color.empty())
+                        save = true;
+                }
+                ImGui::Dummy(ImVec2(0.0f, m.space_2));
+            }
+
+            // Animations as a segmented control.
+            static const char *animations[] = {"Off", "Subtle", "Standard", "Playful"};
+            settings_row_label("Motion", animations[std::max(0, std::min(3, state.settings.animations))],
+                               "Motion for track changes, list reveals and scrolling. Standard is the default.");
+            {
+                const ImVec2 pos = ImGui::GetCursorScreenPos();
+                const float gap = m.space_2;
+                const float bh = 34.0f * m.layout_scale;
+                const float bw = (ImGui::GetContentRegionAvail().x - gap * 3.0f) / 4.0f;
+                ImDrawList *dl = ImGui::GetWindowDrawList();
+                for (int i = 0; i < 4; ++i)
+                {
+                    ImGui::SetCursorScreenPos(ImVec2(pos.x + i * (bw + gap), pos.y));
+                    ImGui::PushID(i);
+                    ImGui::InvisibleButton("##anim", ImVec2(bw, bh));
+                    const bool hov = ImGui::IsItemHovered();
+                    if (ImGui::IsItemClicked())
+                    {
+                        state.settings.animations = i;
+                        save = true;
+                    }
+                    const bool on = state.settings.animations == i;
+                    const ImVec2 c0(pos.x + i * (bw + gap), pos.y);
+                    const ImVec2 c1(c0.x + bw, c0.y + bh);
+                    dl->AddRectFilled(c0, c1, on ? ui_accent_u32(0.20f)
+                                                 : ui_overlay_u32(hov ? 0.075f : 0.035f),
+                                      m.radius_md);
+                    dl->AddRect(c0, c1, on ? ui_accent_u32(0.45f)
+                                           : ui_with_alpha(ui_border_u32(), 0.6f),
+                                m.radius_md, 0, 1.0f);
+                    const ImVec2 ts = g_ui_fonts.medium->CalcTextSizeA(15.5f * m.text_scale,
+                                                                       FLT_MAX, 0, animations[i]);
+                    dl->AddText(g_ui_fonts.medium, 15.5f * m.text_scale,
+                                ImVec2(c0.x + (bw - ts.x) * 0.5f, c0.y + (bh - ts.y) * 0.5f),
+                                on ? ui_text_u32() : ui_text_dim_u32(), animations[i]);
+                    ImGui::PopID();
+                }
+                ImGui::SetCursorScreenPos(ImVec2(pos.x, pos.y + bh + m.space_2));
+            }
+
+            if (settings_toggle_row("##album_backdrop", "Album colour backdrop",
+                                    &state.settings.album_backdrop,
+                                    "Tint the room with the dominant colour of the playing cover. It crossfades on track changes and stays dim in night mode."))
+                save = true;
+            if (state.settings.album_backdrop)
+            {
+                if (settings_slider_row("##album_backdrop_strength", "Backdrop glow",
+                                        &state.settings.album_backdrop_strength, 0.10f, 1.0f,
+                                        "%.2f", nullptr))
+                    save = true;
+                if (settings_toggle_row("##backdrop_drift", "Drifting glow",
+                                        &state.settings.backdrop_drift,
+                                        "Slowly move the glow to a different corner so the backdrop never looks pinned in place."))
+                    save = true;
+                if (settings_toggle_row("##backdrop_shader", "Smooth backdrop shader",
+                                        &state.settings.backdrop_shader,
+                                        "One full-screen shader pass with subtle dithering. Removes the colour steps OLED panels expose."))
+                    save = true;
+            }
+            if (settings_toggle_row("##glow_separators", "Glowing separators",
+                                    &state.settings.glow_separators,
+                                    "A soft album-coloured light streak under section headers, plus faint tinted dividers."))
+                save = true;
+            if (state.settings.glow_separators)
+            {
+                if (settings_slider_row("##glow_separator_strength", "Separator glow",
+                                        &state.settings.glow_separator_strength, 0.10f, 1.50f,
+                                        "%.2f", nullptr))
+                    save = true;
+            }
+        }
+
+        {
+            SettingsCard card("Navigation", "Choose what shows up in the sidebar.",
+                              UiIcon::Visualizer);
+            bool show_visualizer = !state.settings.hide_visualizer;
+            if (settings_toggle_row("##show_visualizer", "Visualizer in the sidebar",
+                                    &show_visualizer,
+                                    "The visualizer is still experimental. Hide it until you want the extra light show."))
+            {
+                state.settings.hide_visualizer = !show_visualizer;
+                save = true;
+            }
+            static const char *vis_modes[] = {"Bars", "Waves", "Orbits"};
+            settings_row_label("Visualizer style", vis_modes[std::max(0, std::min(2, state.settings.visualizer_mode))],
+                               "Bars is the punchy spectrum, Waves is the oscilloscope, Orbits wraps the spectrum around the cover.");
+            ImGui::SetNextItemWidth(field_w);
+            if (ImGui::Combo("##visualizer_mode", &state.settings.visualizer_mode,
+                             vis_modes, 3))
+                save = true;
+        }
     }
     if (s_settings_category == SC_PLAYBACK)
     {
-    settings_intro("Crossfade, speed and audio");
+        SettingsCard card("Playback", "Crossfade, speed and audio.", UiIcon::Play);
 
-    ImGui::SetNextItemWidth(field_w);
-    ImGui::SliderFloat("##crossfade", &state.settings.crossfade_duration, 0.0f, 20.0f, "Crossfade  %.1f s");
-    if (ImGui::IsItemDeactivatedAfterEdit())
-        save = true;
-    settings_help("Blend the end of one track into the beginning of the next (up to 20 s).");
+        settings_group_label("Crossfade");
+        if (settings_slider_row("##crossfade", "End-of-track crossfade",
+                                &state.settings.crossfade_duration, 0.0f, 20.0f, "%.1f s",
+                                "Blend the end of one track into the beginning of the next.",
+                                1.0f, [](float v) { return v < 0.05f ? std::string("Off")
+                                                                     : std::to_string(v).substr(0, 4) + " s"; }))
+            save = true;
+        if (settings_toggle_row("##skip_fade", "Crossfade manual skips",
+                                &state.settings.skip_crossfade_enabled,
+                                "Blend into the target track when you press Next or Previous, if it is already downloaded."))
+            save = true;
+        if (state.settings.skip_crossfade_enabled)
+        {
+            if (settings_slider_row("##skip_crossfade", "Skip crossfade",
+                                    &state.settings.skip_crossfade_duration, 0.5f, 5.0f, "%.1f s",
+                                    "Shorter than the end-of-track blend. Uncached tracks switch instantly."))
+                save = true;
+            static const char *skip_scopes[] = {
+                "Next / Previous only",
+                "Next / Previous + track clicks",
+                "All manual track changes"};
+            settings_row_label("Applies to",
+                               skip_scopes[std::max(0, std::min(2, state.settings.skip_crossfade_scope))],
+                               nullptr);
+            ImGui::SetNextItemWidth(field_w);
+            if (ImGui::Combo("##skip_crossfade_scope", &state.settings.skip_crossfade_scope,
+                             skip_scopes, 3))
+                save = true;
+            ImGui::Dummy(ImVec2(0.0f, m.space_2));
+        }
 
-    bool skip_fade = state.settings.skip_crossfade_enabled;
-    if (ImGui::Checkbox("Crossfade manual skips", &skip_fade))
-    {
-        state.settings.skip_crossfade_enabled = skip_fade;
-        save = true;
-    }
-    settings_help("When you press Next/Previous, blend into the target track if it is already downloaded.");
+        settings_group_label("Sound");
+        if (settings_slider_row("##playback_speed", "Playback speed",
+                                &state.settings.playback_speed, 0.5f, 2.0f, "%.2fx",
+                                "Applied live to playback. The bottom bar also has quick presets."))
+            save = true;
+        if (settings_toggle_row("##vol_norm", "Volume normalization",
+                                &state.settings.volume_normalization,
+                                "Even out loudness between tracks with EBU R128 loudnorm. Takes effect immediately."))
+            save = true;
+        if (settings_toggle_row("##eq_enabled", "Five-band equalizer",
+                                &state.settings.eq_enabled,
+                                "60 Hz to 14 kHz, applied immediately through the player's audio filter chain."))
+            save = true;
+        if (state.settings.eq_enabled)
+        {
+            const char *bands[5] = {"60 Hz", "230 Hz", "910 Hz", "3.6 kHz", "14 kHz"};
+            for (int i = 0; i < 5; ++i)
+            {
+                ImGui::PushID(i);
+                if (settings_slider_row("##band", bands[i], &state.settings.eq_gains[i],
+                                        -12.0f, 12.0f, "%+.1f dB", nullptr))
+                    save = true;
+                ImGui::PopID();
+            }
+            if (settings_button_row("Reset equalizer", "Put every band back to 0 dB.",
+                                    "Reset bands", false, 160.0f))
+            {
+                for (float &g : state.settings.eq_gains)
+                    g = 0.0f;
+                save = true;
+            }
+        }
 
-    ImGui::BeginDisabled(!state.settings.skip_crossfade_enabled);
-    ImGui::SetNextItemWidth(field_w);
-    ImGui::SliderFloat("##skip_crossfade", &state.settings.skip_crossfade_duration, 0.5f, 5.0f,
-                       "Skip crossfade  %.1f s");
-    if (ImGui::IsItemDeactivatedAfterEdit())
-        save = true;
-    const char *skip_scopes[] = {
-        "Next / Previous only",
-        "Next / Previous + track clicks",
-        "All manual track changes"};
-    ImGui::SetNextItemWidth(field_w);
-    if (ImGui::Combo("##skip_crossfade_scope", &state.settings.skip_crossfade_scope,
-                     skip_scopes, 3))
-        save = true;
-    ImGui::EndDisabled();
-    settings_help("Skip fades are shorter than the end-of-track crossfade. Tracks that are not cached switch instantly.");
-
-    ImGui::SetNextItemWidth(field_w);
-    ImGui::SliderFloat("##playback_speed", &state.settings.playback_speed, 0.5f, 2.0f,
-                       "Playback speed  %.2g×");
-    if (ImGui::IsItemDeactivatedAfterEdit())
-        save = true;
-    settings_help("Rate multiplier applied live to playback (0.5–2×). The bottom bar has quick presets.");
-
-    bool vol_norm = state.settings.volume_normalization;
-    if (ImGui::Checkbox("Volume normalization", &vol_norm))
-    {
-        state.settings.volume_normalization = vol_norm;
-        save = true;
-    }
-    ImGui::SameLine();
-    settings_help("Even out loudness between tracks (EBU R128 loudnorm). Takes effect immediately.");
-
-    bool eq_enabled = state.settings.eq_enabled;
-    if (ImGui::Checkbox("Equalizer", &eq_enabled))
-    {
-        state.settings.eq_enabled = eq_enabled;
-        save = true;
-    }
-    ImGui::BeginDisabled(!state.settings.eq_enabled);
-    const char *band_labels[5] = {"60 Hz", "230 Hz", "910 Hz", "3.6 kHz", "14 kHz"};
-    for (int i = 0; i < 5; ++i)
-    {
+        settings_group_label("Connection");
+        if (settings_toggle_row("##server_sync", "Sync to YouTube Music",
+                                &state.settings.server_sync,
+                                "Mirror likes and playlist edits to your signed-in account. Each playlist gets a private server-side copy that follows renames, adds and removals."))
+        {
+            writeback_set_enabled(state.settings.server_sync);
+            save = true;
+        }
+        settings_row_label("Discord Rich Presence",
+                           state.settings.discord_client_id.empty() ? "Off" : "Configured",
+                           "Paste an application client id from discord.com/developers. Restart crossfade after changing it.");
         ImGui::SetNextItemWidth(field_w);
-        char sid[24];
-        snprintf(sid, sizeof(sid), "##eq_band_%d", i);
-        char label[32];
-        snprintf(label, sizeof(label), "%s  %+.1f dB", band_labels[i],
-                 (double)state.settings.eq_gains[i]);
-        ImGui::SliderFloat(sid, &state.settings.eq_gains[i], -12.0f, 12.0f, label);
+        ImGui::InputTextWithHint("##discord_id", "Application client id",
+                                 &state.settings.discord_client_id);
         if (ImGui::IsItemDeactivatedAfterEdit())
             save = true;
-    }
-    if (ui_ghost_button("Reset equalizer", ImVec2(160.0f * m.layout_scale, m.control_h)))
-    {
-        for (float &g : state.settings.eq_gains)
-            g = 0.0f;
-        save = true;
-    }
-    ImGui::EndDisabled();
-    settings_help("Five-band equalizer (60 Hz – 14 kHz), applied immediately.");
-
-    bool server_sync = state.settings.server_sync;
-    if (ImGui::Checkbox("Sync to YouTube Music", &server_sync))
-    {
-        state.settings.server_sync = server_sync;
-        writeback_set_enabled(server_sync);
-        save = true;
-    }
-    settings_help("Off by default. When on, likes and playlist edits also apply to your signed-in YouTube Music account: each playlist gets a private server-side mirror that keeps in sync (renames, adds, removals, reordering, deletion).");
-
-    ImGui::SetNextItemWidth(field_w);
-    ImGui::InputText("##discord_id", &state.settings.discord_client_id);
-    if (ImGui::IsItemEdited())
-        save = true;
-    settings_help("Discord Rich Presence application client id (empty = off). Create an app at discord.com/developers/applications, copy its Application ID, restart crossfade after pasting.");
-
-    bool notif = state.settings.show_notifications;
-    if (ImGui::Checkbox("Desktop notifications", &notif))
-    {
-        state.settings.show_notifications = notif;
-        save = true;
-    }
-
-    bool endless = state.settings.endless_radio;
-    if (ImGui::Checkbox("Endless music", &endless))
-    {
-        state.settings.endless_radio = endless;
-        save = true;
-    }
-    settings_help("When the list and queue run out, keep playing a radio seeded by the last song.");
-
-    // ------------------------------------------------------------------
-    // Party mode. The Party tab is only the start/live surface; everything
-    // that can be configured ahead of time lives here so the tab stays a
-    // one-click experience.
-    // ------------------------------------------------------------------
+        ImGui::Dummy(ImVec2(0.0f, m.space_2));
+        if (settings_toggle_row("##notifications", "Desktop notifications",
+                                &state.settings.show_notifications,
+                                "Show a toast when the track changes."))
+            save = true;
+        if (settings_toggle_row("##endless", "Endless music",
+                                &state.settings.endless_radio,
+                                "When the list and queue run out, keep playing a radio seeded by the last song."))
+            save = true;
     }
     if (s_settings_category == SC_PARTY)
     {
-    const float party_section_y = ImGui::GetCursorPosY();
-    settings_intro("Let guests add songs from their phones");
-    settings_help("Start a party from the Party tab. Guests scan its QR code with a phone camera, paste a YouTube or YouTube Music link, and their songs join Up Next. Nothing leaves your local network - there is no account, no cloud, and no telemetry.");
+        SettingsCard card("Party", "Let guests add songs from their phones.", UiIcon::Party);
+        const float party_section_y = ImGui::GetCursorPosY();
+        settings_help("Start a party from the Party tab. Guests scan its QR code with a phone camera, paste a YouTube or YouTube Music link, and their songs join Up Next. Nothing leaves your local network - there is no account, no cloud, and no telemetry.");
 
-    PartySettings &ps = state.settings.party;
-    if (party_running())
-    {
-        ImGui::TextColored(ui_c().accent_text,
-                           "A party is running. Changes here apply the next time you start one.");
-    }
+        PartySettings &ps = state.settings.party;
+        if (party_running())
+            ImGui::TextColored(ui_c().accent_text,
+                               "A party is running. Changes here apply the next time you start one.");
 
-    ImGui::TextColored(ui_c().text_muted, "Party name");
-    ImGui::SetNextItemWidth(field_w);
-    ImGui::InputText("##party_name", &ps.name);
-    if (ImGui::IsItemDeactivatedAfterEdit())
-    {
-        ps.name = party_util::clean_utf8(ps.name, 60);
-        if (ps.name.empty())
-            ps.name = "crossfade party";
-        save = true;
-    }
-    settings_help("Shown on the host screen and at the top of the guest page.");
+        settings_group_label("Room");
+        settings_row_label("Party name", nullptr,
+                           "Shown on the host screen and at the top of the guest page.");
+        ImGui::SetNextItemWidth(field_w);
+        ImGui::InputText("##party_name", &ps.name);
+        if (ImGui::IsItemDeactivatedAfterEdit())
+        {
+            ps.name = party_util::clean_utf8(ps.name, 60);
+            if (ps.name.empty())
+                ps.name = "crossfade party";
+            save = true;
+        }
 
-    ImGui::Dummy(ImVec2(0.0f, m.space_3));
-    ImGui::TextColored(ui_c().text_muted, "Network");
-    std::vector<PartyInterfaceInfo> ifaces = party_interfaces();
-    std::vector<std::string> labels;
-    labels.push_back("Automatic (best network)");
-    int current = 0;
-    for (int i = 0; i < (int)ifaces.size(); ++i)
-    {
-        std::string label = ifaces[i].label;
-        if (ifaces[i].is_preferred)
-            label += "  (recommended)";
-        if (ifaces[i].is_secondary)
-            label += "  (alternate address)";
-        if (!ifaces[i].is_private)
-            label += "  (public address)";
-        labels.push_back(label);
-        if (!ps.interface_ip.empty() && ifaces[i].ip == ps.interface_ip)
+        std::vector<PartyInterfaceInfo> ifaces = party_interfaces();
+        std::vector<std::string> labels;
+        labels.push_back("Automatic (best network)");
+        int current = 0;
+        for (int i = 0; i < (int)ifaces.size(); ++i)
+        {
+            std::string label = ifaces[i].label;
+            if (ifaces[i].is_preferred)
+                label += "  (recommended)";
+            if (ifaces[i].is_secondary)
+                label += "  (alternate address)";
+            if (!ifaces[i].is_private)
+                label += "  (public address)";
+            labels.push_back(label);
+            if (!ps.interface_ip.empty() && ifaces[i].ip == ps.interface_ip)
+                current = (int)labels.size() - 1;
+        }
+        if (!ps.interface_ip.empty() && current == 0)
+        {
+            labels.push_back("Saved: " + ps.interface_ip);
             current = (int)labels.size() - 1;
-    }
-    if (!ps.interface_ip.empty() && current == 0)
-    {
-        labels.push_back("Saved: " + ps.interface_ip);
-        current = (int)labels.size() - 1;
-    }
-    std::vector<const char *> ptrs;
-    ptrs.reserve(labels.size());
-    for (const std::string &l : labels)
-        ptrs.push_back(l.c_str());
-    ImGui::SetNextItemWidth(field_w);
-    if (ImGui::Combo("##party_iface", &current, ptrs.data(), (int)ptrs.size()))
-    {
-        if (current == 0)
-            ps.interface_ip.clear();
-        else if (current - 1 < (int)ifaces.size())
-            ps.interface_ip = ifaces[current - 1].ip;
-        else
-            ps.interface_ip.clear();
-        save = true;
-    }
-    settings_help("Pick the Wi-Fi or hotspot address phones can reach. Automatic skips virtual adapters like Docker and VPNs and prefers the address your network actually routes.");
-    if (!ifaces.empty())
-        settings_help(("Automatic will use " + ifaces.front().ip + ".").c_str());
+        }
+        std::vector<const char *> ptrs;
+        ptrs.reserve(labels.size());
+        for (const std::string &l : labels)
+            ptrs.push_back(l.c_str());
+        settings_row_label("Network", nullptr,
+                           "Pick the Wi-Fi or hotspot address phones can reach. Automatic skips Docker and VPN adapters and prefers the address your network routes.");
+        ImGui::SetNextItemWidth(field_w);
+        if (ImGui::Combo("##party_iface", &current, ptrs.data(), (int)ptrs.size()))
+        {
+            if (current == 0)
+                ps.interface_ip.clear();
+            else if (current - 1 < (int)ifaces.size())
+                ps.interface_ip = ifaces[current - 1].ip;
+            else
+                ps.interface_ip.clear();
+            save = true;
+        }
+        if (!ifaces.empty())
+            settings_help(("Automatic will use " + ifaces.front().ip + ".").c_str());
 
-    ImGui::Dummy(ImVec2(0.0f, m.space_2));
-    ImGui::TextColored(ui_c().text_muted, "Port");
-    ImGui::SetNextItemWidth(160.0f * m.layout_scale);
-    ImGui::InputInt("##party_port", &ps.port, 0, 0);
-    if (ImGui::IsItemDeactivatedAfterEdit())
-    {
-        ps.port = std::max(1024, std::min(65535, ps.port));
-        save = true;
-    }
-    settings_help("The guest page is served on this port. If it is busy, start the party again on another port.");
+        settings_row_label("Guest page port", nullptr,
+                           "If the port is busy, start the party again on another one.");
+        ImGui::SetNextItemWidth(160.0f * m.layout_scale);
+        ImGui::InputInt("##party_port", &ps.port, 0, 0);
+        if (ImGui::IsItemDeactivatedAfterEdit())
+        {
+            ps.port = std::max(1024, std::min(65535, ps.port));
+            save = true;
+        }
+        settings_help("Hotspots and public Wi-Fi often isolate clients. If a phone cannot open the link, make this laptop the hotspot, use a normal router, or disable client isolation. On Android 16+ Chrome may also need Nearby devices permission (or try Firefox).");
 
-    ImGui::Dummy(ImVec2(0.0f, m.space_2));
-    ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + content_w);
-    ImGui::TextColored(ui_c().text_muted,
-                       "Hotspots and public Wi-Fi often isolate clients. If a phone cannot open the link, make this laptop the hotspot, use a normal router, or disable client isolation on the network. On Android 16 and newer, Chrome may also need Nearby devices permission (or try Firefox).");
-    ImGui::PopTextWrapPos();
+        settings_group_label("Who can add songs");
+        if (settings_toggle_row("##party_approval", "Host approves every request",
+                                &ps.require_approval,
+                                "New songs wait in the Party tab until you approve them. When off, they join Up Next immediately."))
+            save = true;
+        if (settings_slider_int_row("##party_max_guest", "Per guest",
+                                    &ps.max_per_guest, 0, 20, "%d songs", nullptr,
+                                    [](int v) { return v == 0 ? std::string("Unlimited")
+                                                              : std::to_string(v) + " songs"; }))
+            save = true;
+        if (settings_slider_int_row("##party_cooldown", "Cooldown",
+                                    &ps.cooldown_sec, 0, 60, "%d s", nullptr,
+                                    [](int v) { return v == 0 ? std::string("Off")
+                                                              : std::to_string(v) + " s between adds"; }))
+            save = true;
+        if (settings_slider_int_row("##party_max_minutes", "Max video length",
+                                    &ps.max_video_minutes, 0, 60, "%d min", nullptr,
+                                    [](int v) { return v == 0 ? std::string("Unlimited")
+                                                              : std::to_string(v) + " min"; }))
+            save = true;
+        if (settings_slider_int_row("##party_max_queue", "Queue cap",
+                                    &ps.max_queue, 0, 300, "%d songs", nullptr,
+                                    [](int v) { return v == 0 ? std::string("Unlimited")
+                                                              : std::to_string(v) + " songs"; }))
+            save = true;
+        settings_help("Limits apply per guest. Queue cap counts guest requests waiting in Up Next; your own playlist does not use it.");
 
-    ImGui::Dummy(ImVec2(0.0f, m.space_3));
-    ImGui::TextColored(ui_c().text_muted, "Who can add songs");
-    if (ImGui::Checkbox("Host approves every request", &ps.require_approval))
-        save = true;
-    settings_help("When on, new songs wait in the Party tab until you approve them. When off, they join Up Next immediately.");
+        settings_group_label("Guest experience");
+        if (settings_toggle_row("##party_search", "Let guests search YouTube",
+                                &ps.allow_search,
+                                "When off, the guest page becomes a paste-only field. Search uses the same local backend as the app."))
+            save = true;
+        if (settings_toggle_row("##party_dupes", "Allow duplicate songs",
+                                &ps.allow_duplicates, nullptr))
+            save = true;
+        if (settings_toggle_row("##party_names", "Show guest names next to songs",
+                                &ps.show_names, nullptr))
+            save = true;
 
-    ImGui::SetNextItemWidth(field_w);
-    ImGui::SliderInt("##party_max_guest", &ps.max_per_guest, 0, 20,
-                     ps.max_per_guest == 0 ? "Per guest  unlimited" : "Per guest  %d songs");
-    if (ImGui::IsItemDeactivatedAfterEdit())
-        save = true;
-    ImGui::SetNextItemWidth(field_w);
-    ImGui::SliderInt("##party_cooldown", &ps.cooldown_sec, 0, 60,
-                     ps.cooldown_sec == 0 ? "Cooldown  off" : "Cooldown  %d s between adds");
-    if (ImGui::IsItemDeactivatedAfterEdit())
-        save = true;
-    ImGui::SetNextItemWidth(field_w);
-    ImGui::SliderInt("##party_max_minutes", &ps.max_video_minutes, 0, 60,
-                     ps.max_video_minutes == 0 ? "Max video length  unlimited"
-                                               : "Max video length  %d min");
-    if (ImGui::IsItemDeactivatedAfterEdit())
-        save = true;
-    ImGui::SetNextItemWidth(field_w);
-    ImGui::SliderInt("##party_max_queue", &ps.max_queue, 0, 300,
-                     ps.max_queue == 0 ? "Queue cap  unlimited" : "Queue cap  %d songs");
-    if (ImGui::IsItemDeactivatedAfterEdit())
-        save = true;
-    settings_help("Limits apply per guest. Queue cap counts guest requests waiting in Up Next; your own playlist does not use it.");
-
-    ImGui::Dummy(ImVec2(0.0f, m.space_2));
-    ImGui::TextColored(ui_c().text_muted, "Guest experience");
-    if (ImGui::Checkbox("Let guests search YouTube", &ps.allow_search))
-        save = true;
-    settings_help("Turns the guest search box into a paste-only field when off. Search runs through the same local backend as the app.");
-    if (ImGui::Checkbox("Allow duplicate songs", &ps.allow_duplicates))
-        save = true;
-    if (ImGui::Checkbox("Show guest names next to songs", &ps.show_names))
-        save = true;
-
-    if (state.settings_focus_party)
-    {
-        ImGui::SetScrollY(std::max(0.0f, party_section_y - m.space_4));
-        state.settings_focus_party = false;
-    }
-
+        if (state.settings_focus_party)
+        {
+            ImGui::SetScrollY(std::max(0.0f, party_section_y - m.space_4));
+            state.settings_focus_party = false;
+        }
     }
     if (s_settings_category == SC_LYRICS)
     {
-    settings_intro("Timing and display");
-    ImGui::SetNextItemWidth(field_w);
-    ImGui::SliderFloat("##lyrics_offset", &state.settings.lyrics_offset, -5.0f, 5.0f, "Timing offset  %+.2f s");
-    if (ImGui::IsItemDeactivatedAfterEdit())
-        save = true;
-    settings_help("Positive shows lyrics later, negative earlier. Takes effect immediately.");
-
+        SettingsCard card("Lyrics", "Timing and display.", UiIcon::Lyrics);
+        if (settings_slider_row("##lyrics_offset", "Timing offset",
+                                &state.settings.lyrics_offset, -5.0f, 5.0f, "%+.2f s",
+                                "Positive shows lyrics later, negative earlier. Takes effect immediately."))
+            save = true;
     }
     if (s_settings_category == SC_YOUTUBE)
     {
-    settings_intro("Account, cookies and stream resolving");
+        SettingsCard card("YouTube Music", "Account, cookies and stream resolving.", UiIcon::Playlist);
 
     const char *browsers[] = {"firefox", "chromium", "chrome", "brave", "edge", "librewolf"};
     int current_browser = 0;
@@ -1356,17 +1797,21 @@ void draw_settings_panel(AppState &state)
             break;
         }
     }
+    settings_row_label("Cookie browser",
+                       browsers[current_browser],
+                       "Browser yt-dlp reads cookies from for private or age-restricted tracks.");
     ImGui::SetNextItemWidth(field_w);
     if (ImGui::Combo("##browser", &current_browser, browsers, 6))
     {
         state.settings.ytdl_browser = browsers[current_browser];
         save = true;
     }
-    settings_help("Browser yt-dlp reads cookies from for private or age-restricted tracks.");
-
     settings_gap();
     const char *auth_modes[] = {"Browser cookies (browser.json)", "OAuth (browseroauth.json)"};
     int auth_mode = state.settings.auth_mode == "oauth" ? 1 : 0;
+    settings_row_label("Sign-in method",
+                       auth_modes[auth_mode],
+                       "OAuth opens a browser once and saves a token. Browser mode uses the cookies your normal browser already has. Restart crossfade after changing this.");
     ImGui::SetNextItemWidth(field_w);
     if (ImGui::Combo("##auth_mode", &auth_mode, auth_modes, 2))
     {
@@ -1374,17 +1819,62 @@ void draw_settings_panel(AppState &state)
         set_auth_mode(state.settings.auth_mode);
         save = true;
     }
-    settings_help("Choose how the YouTube Music backend signs in. OAuth opens a browser once and saves browseroauth.json. Restart crossfade after changing this.");
+    ImGui::Dummy(ImVec2(0.0f, m.space_2));
+    if (ui_primary_button("Sign in with browser", ImVec2(210.0f * m.layout_scale, m.button_h)))
+    {
+        const std::string script = p100_share_dir() + "/scripts/crossfade-login-helper.py";
+        AppState *sp = &state;
+        tasks::spawn([sp, script]() {
+            const std::string cmd = "python3 \"" + script + "\" --google";
+            const int rc = std::system(cmd.c_str());
+            if (rc == 0)
+            {
+                sp->auth_refresh_requested = true;
+                ui_notify(UiNotifyType::Success, "Signed in",
+                          "The YouTube Music session was updated.", 4.0f);
+            }
+            else
+            {
+                ui_notify(UiNotifyType::Error, "Sign-in failed",
+                          "The browser login did not complete. See the terminal for details.", 7.0f);
+            }
+            sp->repaint_requested = true;
+        });
+    }
+    ImGui::SameLine(0.0f, m.space_2);
+    if (ui_ghost_button("Import Firefox cookies", ImVec2(210.0f * m.layout_scale, m.button_h)))
+    {
+        const std::string script = p100_share_dir() + "/scripts/crossfade-login-helper.py";
+        AppState *sp = &state;
+        tasks::spawn([sp, script]() {
+            const std::string cmd = "python3 \"" + script + "\" --import-firefox";
+            const int rc = std::system(cmd.c_str());
+            if (rc == 0)
+            {
+                sp->auth_refresh_requested = true;
+                ui_notify(UiNotifyType::Success, "Firefox session imported",
+                          "The YouTube Music session was updated.", 4.0f);
+            }
+            else
+            {
+                ui_notify(UiNotifyType::Error, "Import failed",
+                          "No signed-in Firefox YouTube Music session was found.", 7.0f);
+            }
+            sp->repaint_requested = true;
+        });
+    }
+    settings_help("Sign in without copying request headers. The popup needs WebKitGTK; without it the helper falls back to your Firefox session. No OAuth client keys are involved.");
     if (state.settings.auth_mode == "oauth" && !std::filesystem::exists(backend_auth_file_path()))
         ImGui::TextColored(ui_c().accent_text, "No OAuth token yet - use the login command below.");
 
     settings_gap();
-    if (ImGui::Checkbox("Fast stream resolve (experimental)", &state.settings.warm_stream_resolver))
+    if (settings_toggle_row("##warm_resolver", "Fast stream resolve (experimental)",
+                            &state.settings.warm_stream_resolver,
+                            "Resolve stream links inside the backend instead of spawning yt-dlp each time. Takes effect after a restart; turn it off if playback misbehaves."))
     {
         set_warm_stream_resolver(state.settings.warm_stream_resolver);
         save = true;
     }
-    settings_help("Resolves song stream links inside the backend instead of spawning yt-dlp each time, so uncached songs start faster. Takes effect after restarting p100. Turn this off if playback misbehaves.");
 
     // Read-only snapshot: taking the error here would steal it from the
     // fetch workers and silently suppress their toasts. Workers clear the
@@ -1447,17 +1937,18 @@ void draw_settings_panel(AppState &state)
     }
     if (s_settings_category == SC_SHORTCUTS)
     {
-    settings_intro("Every action, one keystroke");
+        SettingsCard card("Shortcuts", "Every action, one keystroke.", UiIcon::More);
     ImGui::TextDisabled("Space  Play / pause          Left / Right  Seek 5s");
     ImGui::TextDisabled("Shift + arrows  Seek 20s    Ctrl + Left / Right  Previous / next");
     ImGui::TextDisabled("Up / Down  Volume            / or Ctrl+F  Focus search");
     ImGui::TextDisabled("L  Toggle lyrics            S  Toggle sidebar");
+    ImGui::TextDisabled("Ctrl + ,  Open settings");
     ImGui::TextDisabled("Esc  Back / clear search      ?  Shortcut help");
 
     }
     if (s_settings_category == SC_LIBRARY)
     {
-    settings_intro("Caches, downloads and local data");
+        SettingsCard card("Library", "Caches, downloads and local data.", UiIcon::Download);
 
     if (s_repair_running)
     {
@@ -1523,25 +2014,25 @@ void draw_settings_panel(AppState &state)
 
     // Slider from 0 (unlimited, the default) to 20 GB; snaps to whole GB.
     float cap_gb = state.settings.download_cap_gb;
-    ImGui::SetNextItemWidth(field_w);
-    if (ImGui::SliderFloat("##dl_cap", &cap_gb, 0.0f, 20.0f,
-                           cap_gb < 0.5f ? "Unlimited" : "%.0f GB",
-                           ImGuiSliderFlags_AlwaysClamp))
+    if (settings_slider_row("##dl_cap", "Download cache cap", &cap_gb, 0.0f, 20.0f, "%.0f GB",
+                            "Keep at most this much downloaded audio. At zero the cache is unlimited; when a cap is reached, the least-listened songs are removed first.",
+                            1.0f, [](float v) { return v < 0.5f ? std::string("Unlimited")
+                                                                 : std::to_string((int)std::lround(v)) + " GB"; }))
     {
         cap_gb = cap_gb < 0.5f ? 0.0f : std::floor(cap_gb + 0.5f);
-        if (cap_gb != state.settings.download_cap_gb)
-        {
-            state.settings.download_cap_gb = cap_gb;
-            set_audio_cache_cap((double)cap_gb * 1024.0 * 1024.0 * 1024.0);
-            save = true;
-        }
+        state.settings.download_cap_gb = cap_gb;
+        set_audio_cache_cap((double)cap_gb * 1024.0 * 1024.0 * 1024.0);
+        save = true;
     }
-    settings_help("Keep at most this much downloaded audio (0 = unlimited). When the cap is reached, the least-listened songs are removed first.");
+    if (state.settings.download_cap_gb < 0.5f)
+        settings_help("Currently unlimited.");
+    else
+        settings_help(("Currently " + std::to_string((int)state.settings.download_cap_gb) + " GB. Songs re-download if you raise the cap.").c_str());
 
     }
     if (s_settings_category == SC_DIAGNOSTICS)
     {
-    settings_intro("Local-only troubleshooting");
+        SettingsCard card("Diagnostics", "Local-only troubleshooting.", UiIcon::Stats);
     settings_help("Local-only troubleshooting. Nothing here is uploaded automatically.");
     {
         const std::string status = library::status_text();
@@ -1591,13 +2082,10 @@ void draw_settings_panel(AppState &state)
         if (ui_ghost_button("Open config folder", ImVec2(bw, m.control_h)))
             diagnostics::open_folder(p100_config_dir());
 
-        bool safe = state.settings.safe_mode;
-        if (ImGui::Checkbox("Safe mode on next launch", &safe))
-        {
-            state.settings.safe_mode = safe;
+        if (settings_toggle_row("##safe_mode", "Safe mode on next launch",
+                                &state.settings.safe_mode,
+                                "Disables the backdrop shader, auto-update checks and optional background integrations. Use it if a new build crashes or renders badly."))
             save = true;
-        }
-        settings_help("Disables the backdrop shader, auto-update checks and optional background integrations. Use it if a new build crashes or renders badly.");
 
         if (ImGui::TreeNode("Recent diagnostics"))
         {
@@ -1612,7 +2100,7 @@ void draw_settings_panel(AppState &state)
     }
     if (s_settings_category == SC_NOTES)
     {
-    settings_intro("Anything you want to remember");
+        SettingsCard card("Notes", "Anything you want to remember.", UiIcon::Settings);
     ImGui::InputTextMultiline("##notes", &state.settings.notes,
                               ImVec2(content_w, ImGui::GetTextLineHeight() * 6),
                               ImGuiInputTextFlags_AllowTabInput | ImGuiInputTextFlags_WordWrap);
@@ -1623,11 +2111,7 @@ void draw_settings_panel(AppState &state)
     }
     if (s_settings_category == SC_DANGER)
     {
-    settings_gap();
-    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.42f, 0.42f, 1.0f));
-    ImGui::TextUnformatted("Danger Zone");
-    ImGui::PopStyleColor();
-    settings_help("These actions remove local data. Most offer an Undo toast right after they run.");
+        SettingsCard card("Danger Zone", "These actions remove local data. Most offer an Undo toast right after they run.", UiIcon::Close);
 
     const float danger_w = std::max(220.0f * m.layout_scale,
                                     ImGui::CalcTextSize("Clear download cache").x +
@@ -1701,6 +2185,8 @@ void draw_settings_panel(AppState &state)
     }
     ImGui::Dummy(ImVec2(0.0f, m.space_5));
     }
+
+    ImGui::EndChild();
 
     if (save)
         save_settings(state.settings);

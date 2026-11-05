@@ -95,6 +95,8 @@ void rebuild_stats(AppState &state);
 void draw_stats_panel(AppState &state);
 void draw_queue_panel(AppState &state);
 void draw_party_panel(AppState &state);
+void draw_podcasts_panel(AppState &state);
+void draw_visualizer_panel(AppState &state);
 // Fullscreen QR takeover (Esc or the close button returns to the app).
 void draw_party_fullscreen(AppState &state);
 // Small bottom-bar chip shown only while a party is running.

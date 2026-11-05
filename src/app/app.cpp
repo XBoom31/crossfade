@@ -2226,6 +2226,8 @@ int app_run(int argc, char **argv)
                 return PlaylistSource::ALBUM;
             if (s == "artist")
                 return PlaylistSource::ARTIST;
+            if (s == "podcast")
+                return PlaylistSource::PODCAST;
             return PlaylistSource::HOME;
         };
         g_state.current_playlist_source = source_from_str(r.source);
@@ -2884,13 +2886,20 @@ int app_run(int argc, char **argv)
                         g_state.show_shortcuts = !g_state.show_shortcuts;
                         g_state.repaint_requested = true;
                     }
+                    else if (ctrl && key == SDLK_COMMA)
+                    {
+                        ui_invalidate_forward(g_state);
+                        g_state.current_tab = Tab::Settings;
+                        g_state.repaint_requested = true;
+                    }
                     else if (key == SDLK_SLASH || (ctrl && key == SDLK_f))
                     {
                         if (g_state.current_tab != Tab::Home &&
                             g_state.current_tab != Tab::Downloads &&
                             g_state.current_tab != Tab::Liked &&
                             g_state.current_tab != Tab::Artists &&
-                            g_state.current_tab != Tab::Playlists)
+                            g_state.current_tab != Tab::Playlists &&
+                            g_state.current_tab != Tab::Podcasts)
                         {
                             ui_invalidate_forward(g_state);
                             g_state.current_tab = Tab::Home;
@@ -3342,6 +3351,29 @@ int app_run(int argc, char **argv)
                 std::string query = g_state.queued_search;
                 int expect_id = g_state.search_id;
                 tasks::spawn([query, expect_id]() { search_all_and_update(query, expect_id); });
+            }
+            if (g_state.auth_refresh_requested)
+            {
+                g_state.auth_refresh_requested = false;
+                stop_backend();
+                start_backend();
+                g_state.repaint_requested = true;
+            }
+            if (g_state.podcast_search_dirty)
+            {
+                g_state.podcast_search_dirty = false;
+                std::string query = g_state.queued_podcast_search;
+                int expect_id = g_state.podcast_search_id;
+                tasks::spawn([query, expect_id]() {
+                    auto shows = fetch_podcast_search(query);
+                    if (g_state.podcast_search_id != expect_id)
+                        return;
+                    std::atomic_store(&g_state.podcast_search_results,
+                                      std::make_shared<const std::vector<PodcastShow>>(
+                                          std::move(shows)));
+                    g_state.podcast_search_loading = false;
+                    g_state.repaint_requested = true;
+                });
             }
             if (g_state.artist_search_dirty)
             {

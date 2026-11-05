@@ -14,6 +14,7 @@ import sys
 import time
 import urllib.parse
 import urllib.request
+import html as _html
 from concurrent.futures import ThreadPoolExecutor
 
 YTDLP = os.environ.get('P100_YTDLP') or 'yt-dlp'
@@ -605,6 +606,186 @@ def get_mood_playlists(yt, params):
         return yt.get_mood_playlists(params) or []
     except Exception as e:
         return {'error': f"Failed to fetch mood playlists: {str(e)}"}
+
+
+def _duration_seconds(value):
+    """Normalise YT Music's human duration ("1 hr 25 min", "45 min") or seconds."""
+    if isinstance(value, (int, float)):
+        return int(value)
+    text = str(value or "").strip().lower()
+    if not text:
+        return 0
+    m = re.fullmatch(r"(\d+):(\d{1,2})(?::(\d{1,2}))?", text)
+    if m:
+        parts = [int(x) for x in m.groups() if x is not None]
+        if len(parts) == 2:
+            return parts[0] * 60 + parts[1]
+        return parts[0] * 3600 + parts[1] * 60 + parts[2]
+    total = 0
+    for amount, unit in re.findall(r"(\d+)\s*(hr|hour|min|minute|sec|second)", text):
+        n = int(amount)
+        if unit.startswith("h"):
+            total += n * 3600
+        elif unit.startswith("m"):
+            total += n * 60
+        else:
+            total += n
+    return total
+
+
+def _podcast_show(item):
+    channel = item.get("channel") or item.get("author") or {}
+    if not isinstance(channel, dict):
+        channel = {}
+    return {
+        "browse_id": item.get("browseId") or item.get("podcastId") or "",
+        "title": item.get("title") or item.get("name") or "",
+        "author": channel.get("name") or item.get("author_name") or "",
+        "thumbnail_url": _thumb_url(item),
+        "description": item.get("description") or "",
+        "saved": bool(item.get("saved")),
+    }
+
+
+def _podcast_episode(item, show=None):
+    show = show or {}
+    return {
+        "video_id": item.get("videoId") or item.get("id") or "",
+        "title": item.get("title") or "",
+        "author": show.get("author") or item.get("author") or "",
+        "thumbnail_url": _thumb_url(item) or show.get("thumbnail_url") or "",
+        "duration_sec": _duration_seconds(item.get("duration") or item.get("duration_seconds")),
+        "date": item.get("date") or "",
+        "description": item.get("description") or "",
+    }
+
+
+def get_podcast_library(yt, limit=100):
+    try:
+        items = yt.get_library_podcasts(limit=limit)
+    except Exception as e:
+        return _err(f"Could not load podcasts: {e}")
+    return [_podcast_show(x) for x in items if (x.get("title") or "").lower() != "episodes for later"]
+
+
+def search_podcasts(yt, query, limit=20):
+    try:
+        items = yt.search(query, filter="podcasts", limit=limit)
+    except Exception as e:
+        return _err(f"Podcast search failed: {e}")
+    return [_podcast_show(x) for x in items]
+
+
+def get_podcast_details(yt, browse_id, limit=100):
+    if not browse_id:
+        return {"error": "Missing podcast id"}
+    try:
+        data = yt.get_podcast(browse_id, limit=limit)
+    except Exception as e:
+        return _err(f"Could not load podcast: {e}")
+    show = _podcast_show(data)
+    if not show.get("browse_id"):
+        show["browse_id"] = browse_id
+    show["saved"] = bool(data.get("saved"))
+    episodes = [_podcast_episode(x, show) for x in (data.get("episodes") or [])]
+    return {"show": show, "episodes": episodes}
+
+
+def _spotify_id(link):
+    link = (link or "").strip()
+    m = re.search(r"(?:playlist[/:])([A-Za-z0-9]+)", link)
+    if m:
+        return m.group(1)
+    if re.fullmatch(r"[A-Za-z0-9]{16,}", link):
+        return link
+    return ""
+
+
+def _spotify_cookie():
+    path = os.path.join(
+        os.environ.get("P100_CONFIG_DIR")
+        or os.path.join(os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config"), "crossfade"),
+        "spotify.json")
+    try:
+        with open(path, encoding="utf-8") as f:
+            return json.load(f).get("sp_dc") or None
+    except Exception:
+        return None
+
+
+def _spotify_entity(link):
+    playlist_id = _spotify_id(link)
+    if not playlist_id:
+        raise RuntimeError("Paste a Spotify playlist link or ID")
+    headers = {
+        "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+                      "(KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36",
+        "Accept-Language": "en-US,en;q=0.9",
+    }
+    sp_dc = _spotify_cookie()
+    if sp_dc:
+        headers["Cookie"] = f"sp_dc={sp_dc}"
+    last = None
+    for url in (f"https://open.spotify.com/embed/playlist/{playlist_id}",
+                f"https://open.spotify.com/playlist/{playlist_id}"):
+        try:
+            req = urllib.request.Request(url, headers=headers)
+            page = urllib.request.urlopen(req, timeout=20).read().decode("utf-8", "replace")
+            m = re.search(r'<script id="__NEXT_DATA__" type="application/json">(.*?)</script>',
+                          page, re.S)
+            if not m:
+                continue
+            data = json.loads(m.group(1))
+            entity = (data.get("props", {}).get("pageProps", {}).get("state", {})
+                      .get("data", {}).get("entity"))
+            if not entity:
+                continue
+            tracks = entity.get("trackList") or []
+            if not tracks and "collection/tracks" not in link:
+                continue
+            return entity.get("title") or entity.get("name") or "Spotify playlist", tracks
+        except Exception as e:
+            last = e
+    raise RuntimeError(f"Could not read the Spotify playlist: {last or 'no track data'}")
+
+
+def import_spotify(yt, link):
+    try:
+        name, items = _spotify_entity(link)
+    except Exception as e:
+        return _err(str(e))
+    tracks = []
+    skipped = 0
+    for item in items[:60]:
+        title = (item.get("title") or "").strip()
+        artist = (item.get("subtitle") or "").strip()
+        if not title:
+            skipped += 1
+            continue
+        query = f"{title} {artist}".strip()
+        found = search_tracks(yt, query, limit=3)
+        if isinstance(found, dict) and "error" in found:
+            return found
+        if not found:
+            skipped += 1
+            continue
+        t = dict(found[0])
+        # Keep the richer YouTube Music metadata, but make the Spotify intent
+        # visible in the title when the match has no album.
+        if not t.get("album"):
+            t["album"] = "Imported from Spotify"
+        tracks.append(t)
+    if not tracks:
+        return _err("No Spotify tracks could be matched on YouTube Music")
+    return {"name": name, "tracks": tracks, "skipped": skipped, "total": len(items)}
+
+
+def get_episodes_later(yt):
+    try:
+        data = yt.get_saved_episodes(limit=100)
+    except Exception as e:
+        return _err(f"Could not load episodes: {e}")
+    return [_podcast_episode(x) for x in (data.get("tracks") or [])]
 
 
 def check_logged_in(yt):
@@ -1390,6 +1571,17 @@ def run_command_loop(yt, stdin=None, stdout=None):
                 result = get_mood_categories(yt)
             elif cmd == 'mood_playlists':
                 result = get_mood_playlists(yt, arg)
+            elif cmd == 'spotify_import':
+                result = import_spotify(yt, arg) if arg else {'error': 'Missing Spotify playlist'}
+            elif cmd == 'podcasts_library':
+                result = get_podcast_library(yt)
+            elif cmd == 'podcasts_search':
+                result = (_cached_search(arg, lambda: search_podcasts(yt, arg))
+                          if arg else {'error': 'Missing query'})
+            elif cmd == 'podcast':
+                result = get_podcast_details(yt, arg) if arg else {'error': 'Missing podcast_id'}
+            elif cmd == 'episodes_later':
+                result = get_episodes_later(yt)
             elif cmd == 'rate_song':
                 payload = _json_arg(arg) or {}
                 vid = payload.get('videoId')

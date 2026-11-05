@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(crossfade VERSION 0.2.0 LANGUAGES C CXX)
+project(crossfade VERSION 0.3.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -84,6 +84,8 @@ set(SOURCES
     src/ui/ui_settings.cpp
     src/ui/ui_stats.cpp
     src/ui/ui_party.cpp
+    src/ui/ui_podcasts.cpp
+    src/ui/ui_visualizer.cpp
     src/net/texture.cpp
     src/data/writeback.cpp
     src/party/party.cpp
@@ -188,6 +190,8 @@ install(DIRECTORY py/cf_backend
 )
 install(DIRECTORY assets/fonts DESTINATION ${CMAKE_INSTALL_DATADIR}/crossfade/assets)
 install(PROGRAMS scripts/crossfade-login DESTINATION ${CMAKE_INSTALL_BINDIR})
+install(PROGRAMS scripts/crossfade-login-helper.py
+    DESTINATION ${CMAKE_INSTALL_DATADIR}/crossfade/scripts)
 
 # ---- Party mode unit tests (off by default; ./mk stays unchanged) ----
 option(CROSSFADE_BUILD_TESTS "Build crossfade unit tests" ON)

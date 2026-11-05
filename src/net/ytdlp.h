@@ -241,6 +241,50 @@ struct SearchAllResult
     std::vector<ArtistSummary> artists;
 };
 
+struct PodcastShow
+{
+    std::string browse_id;
+    std::string title;
+    std::string author;
+    std::string thumbnail_url;
+    std::string description;
+    bool saved = false;
+};
+
+struct PodcastEpisode
+{
+    std::string video_id;
+    std::string title;
+    std::string author;
+    std::string thumbnail_url;
+    std::string date;
+    std::string description;
+    int duration_sec = 0;
+};
+
+struct PodcastDetails
+{
+    PodcastShow show;
+    std::vector<PodcastEpisode> episodes;
+};
+
+struct SpotifyImportResult
+{
+    std::string name;
+    std::string error;
+    std::vector<Track> tracks;
+    int skipped = 0;
+    int total = 0;
+};
+
+// Podcasts (YouTube Music's podcast show / episode model).
+std::vector<PodcastShow> fetch_podcast_library();
+std::vector<PodcastShow> fetch_podcast_search(const std::string &query);
+PodcastDetails fetch_podcast_details(const std::string &browse_id);
+std::vector<PodcastEpisode> fetch_episodes_later();
+SpotifyImportResult fetch_spotify_import(const std::string &link);
+
+
 bool fetch_artist(const std::string &browse_id, ArtistInfo &out);
 bool fetch_artist_songs(const std::string &songs_browse_id, int offset, int count,
                         std::vector<Track> &out);

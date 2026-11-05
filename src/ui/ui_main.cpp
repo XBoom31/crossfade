@@ -1573,6 +1573,8 @@ void draw_main_ui(AppState &state, MpvPlayer &player, bool show_recommendations)
                               state.current_tab == Tab::Radio ||
                               state.current_tab == Tab::Queue ||
                               state.current_tab == Tab::Party ||
+                              state.current_tab == Tab::Podcasts ||
+                              state.current_tab == Tab::Visualizer ||
                               state.current_tab == Tab::Playlists ||
                               state.current_tab == Tab::Albums ||
                               state.current_tab == Tab::Artists ||
@@ -1646,6 +1648,10 @@ void draw_main_ui(AppState &state, MpvPlayer &player, bool show_recommendations)
             draw_queue_panel(state);
         else if (state.current_tab == Tab::Party)
             draw_party_panel(state);
+        else if (state.current_tab == Tab::Podcasts)
+            draw_podcasts_panel(state);
+        else if (state.current_tab == Tab::Visualizer)
+            draw_visualizer_panel(state);
         else if (state.current_tab == Tab::Playlists)
             draw_playlists_panel(state);
         else if (state.current_tab == Tab::Albums)

@@ -48,6 +48,8 @@ static inline ImVec4 accent_alpha(const ImVec4 &c, float a)
         Queue,
         Album,
         Artist,
+        Podcasts,
+        Visualizer,
         Settings,
         YouTube,
         Smart,
@@ -68,6 +70,7 @@ static inline ImVec4 accent_alpha(const ImVec4 &c, float a)
         STATS,
         ALBUM,
         ARTIST,
+        PODCAST,
         YOUTUBE_LIKED,
         YOUTUBE_PLAYLIST,
         SMART
@@ -207,6 +210,10 @@ struct Settings
     // Diagnostic switch: next launch disables the shader backdrop, updater
     // checks and optional background integrations.
     bool safe_mode = false;
+    // Visualizer page: 0 bars, 1 waves, 2 orbits.
+    int visualizer_mode = 0;
+    // Hide the experimental Visualizer navigation entry.
+    bool hide_visualizer = false;
     // Glowing separators: a soft album-coloured light streak under each
     // section header, plus album-tinted structural hairlines. Uses the same
     // dominant-colour tint as the backdrop, but works with the backdrop off.
@@ -280,6 +287,8 @@ struct Settings
                album_backdrop_strength == o.album_backdrop_strength &&
                backdrop_shader == o.backdrop_shader &&
                safe_mode == o.safe_mode &&
+               visualizer_mode == o.visualizer_mode &&
+               hide_visualizer == o.hide_visualizer &&
                glow_separators == o.glow_separators &&
                glow_separator_strength == o.glow_separator_strength &&
                backdrop_drift == o.backdrop_drift &&
