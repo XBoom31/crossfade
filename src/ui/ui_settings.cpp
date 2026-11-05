@@ -1317,7 +1317,7 @@ void draw_settings_panel(AppState &state)
     ImGui::SameLine(0.0f, m.space_5);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
     ImGui::BeginChild("##settings_content", ImVec2(content_w, 0), ImGuiChildFlags_None,
-                      ImGuiWindowFlags_NoBackground);
+                      ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoScrollWithMouse);
     ImGui::PopStyleVar();
     smooth_scroll_child("##settings_content");
     ImGui::PopStyleColor();

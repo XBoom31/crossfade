@@ -255,7 +255,7 @@ void draw_playlists_panel(AppState &state)
         ui_push_small();
         ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + 430.0f * m.layout_scale);
         ImGui::TextColored(ui_c().text_muted,
-                           "In Spotify, open a playlist, choose Share -> Copy link to playlist, then paste it here. Private playlists work once Spotify is connected.");
+                           "In Spotify, open a playlist, choose Share -> Copy link to playlist, then paste it here. Private playlists work once Spotify is connected. Spotify has no share link for Liked Songs: select them in Spotify, add them to a playlist, then share that playlist.");
         ImGui::PopTextWrapPos();
         ImGui::PopFont();
         ImGui::Dummy(ImVec2(0.0f, m.space_2));
