@@ -96,22 +96,7 @@ static void activate_tab(AppState &s, Tab tab)
         break;
     case Tab::Podcasts:
         s.current_playlist_source = PlaylistSource::PODCAST;
-        if (!s.podcast_library_loaded && !s.podcast_library_loading)
-        {
-            s.podcast_library_loading = true;
-            AppState *sp = &s;
-            tasks::spawn([sp]() {
-                auto shows = fetch_podcast_library();
-                auto later = fetch_episodes_later();
-                std::atomic_store(&sp->podcast_shows,
-                                  std::make_shared<const std::vector<PodcastShow>>(std::move(shows)));
-                std::atomic_store(&sp->podcast_later,
-                                  std::make_shared<const std::vector<PodcastEpisode>>(std::move(later)));
-                sp->podcast_library_loaded = true;
-                sp->podcast_library_loading = false;
-                sp->repaint_requested = true;
-            });
-        }
+        load_podcast_library(s);
         break;
     case Tab::Liked:
         s.current_playlist_source = PlaylistSource::LIKED;

@@ -1245,7 +1245,7 @@ void ui_searching_state(UiIcon icon, const char *title, const char *subtitle)
 
 MediaCardResult ui_media_card(const char *id, const std::string &title, const std::string &meta,
                               const std::string &thumb_url, float width, float art_size,
-                              bool circular, bool current)
+                              bool circular, bool current, float alpha)
 {
     MediaCardResult r;
     const UiMetrics &m = ui_m();
@@ -1256,7 +1256,8 @@ MediaCardResult ui_media_card(const char *id, const std::string &title, const st
     const float caption_h = title_h + (meta.empty() ? 0.0f : m.space_1 + meta_h);
     const float card_h = art_size + m.space_3 + caption_h + m.space_2;
     const ImVec2 pos = ImGui::GetCursorScreenPos();
-    const float edge_alpha = ui_content_edge_alpha(pos.y, pos.y + card_h);
+    const float edge_alpha = ui_content_edge_alpha(pos.y, pos.y + card_h) *
+                             std::max(0.0f, std::min(1.0f, alpha));
 
     ImGui::InvisibleButton(id, ImVec2(width, card_h),
                            ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight);

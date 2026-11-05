@@ -97,6 +97,7 @@ void draw_queue_panel(AppState &state);
 void draw_party_panel(AppState &state);
 void draw_podcasts_panel(AppState &state);
 void close_podcast_show(AppState &state);
+void load_podcast_library(AppState &state);
 void draw_visualizer_panel(AppState &state);
 // Fullscreen QR takeover (Esc or the close button returns to the app).
 void draw_party_fullscreen(AppState &state);

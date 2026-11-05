@@ -136,4 +136,4 @@ struct MediaCardResult
 
 MediaCardResult ui_media_card(const char *id, const std::string &title, const std::string &meta,
                               const std::string &thumb_url, float width, float art_size,
-                              bool circular, bool current = false);
+                              bool circular, bool current = false, float alpha = 1.0f);
