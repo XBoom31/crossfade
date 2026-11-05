@@ -423,7 +423,8 @@ float ui_track_row_pitch(float art_size, bool compact)
     const float art = art_size > 0.0f ? art_size : ui_elem("list_thumb", compact ? 40.0f : 48.0f);
     const float title_line = (compact ? 21.0f : 24.0f) * m.text_scale * 1.22f;
     const float meta_line = (compact ? 16.5f : 18.0f) * m.text_scale * 1.24f;
-    const float pad_y = compact ? m.space_1 : m.row_pad_y;
+    const float row_scale = ui_elem("list_row", 1.0f);
+    const float pad_y = (compact ? m.space_1 : m.row_pad_y) * row_scale;
     const float row_h = std::max(art, title_line + m.space_1 + meta_line) + pad_y * 2.0f;
     return row_h + ImGui::GetStyle().ItemSpacing.y;
 }
@@ -676,7 +677,8 @@ TrackRowResult ui_track_row(AppState &state, const Track &track, int index, cons
     const float meta_base = opt.compact ? 16.5f : 18.0f;
     const float title_line = title_base * m.text_scale * 1.22f;
     const float meta_line = meta_base * m.text_scale * 1.24f;
-    const float pad_y = opt.compact ? m.space_1 : m.row_pad_y;
+    const float row_scale = ui_elem("list_row", 1.0f);
+    const float pad_y = (opt.compact ? m.space_1 : m.row_pad_y) * row_scale;
 
     const float rank_w = opt.show_rank ? 34.0f * m.layout_scale : 0.0f;
     const float more_w = 32.0f * m.layout_scale;
