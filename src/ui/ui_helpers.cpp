@@ -122,6 +122,10 @@ void ui_go_back(AppState &state)
     {
         state.current_tab = state.pre_queue_tab;
     }
+    else if (state.current_tab == Tab::Podcasts && !state.podcast_selected.browse_id.empty())
+    {
+        close_podcast_show(state);
+    }
     else if (state.current_tab == Tab::Settings)
     {
         state.current_tab = Tab::Home;

@@ -453,6 +453,7 @@ bool legacy_import(std::string &error)
                      "DELETE FROM playlists; DELETE FROM playlist_items;"
                      "DELETE FROM play_counts; DELETE FROM play_log;"
                      "DELETE FROM saved_albums; DELETE FROM saved_artists;"
+                     "DELETE FROM saved_podcasts;"
                      "DELETE FROM tracks; DELETE FROM tracks_fts;"))
         return false;
 
@@ -510,6 +511,8 @@ bool schema_setup()
         " track_count INTEGER DEFAULT 0);"
         "CREATE TABLE IF NOT EXISTS saved_artists(browse_id TEXT PRIMARY KEY, position INTEGER,"
         " name TEXT, thumbnail_url TEXT, subscribers TEXT, monthly_listeners TEXT);"
+        "CREATE TABLE IF NOT EXISTS saved_podcasts(browse_id TEXT PRIMARY KEY, position INTEGER,"
+        " title TEXT, author TEXT, thumbnail_url TEXT, description TEXT);"
         "CREATE TABLE IF NOT EXISTS downloads(video_id TEXT PRIMARY KEY,"
         " position INTEGER NOT NULL);"
         "CREATE VIRTUAL TABLE IF NOT EXISTS tracks_fts USING fts5("
@@ -1071,6 +1074,61 @@ std::vector<SavedArtist> load_saved_artists()
         a.subscribers = text_col(st, 3);
         a.monthly_listeners = text_col(st, 4);
         out.push_back(std::move(a));
+    }
+    sqlite3_finalize(st);
+    return out;
+}
+
+void save_saved_podcasts(const std::vector<PodcastShow> &shows)
+{
+    std::lock_guard<std::recursive_mutex> lock(g_mu);
+    if (!g_db || !begin_tx())
+        return;
+    exec_locked("DELETE FROM saved_podcasts");
+    for (size_t i = 0; i < shows.size(); ++i)
+    {
+        const auto &s = shows[i];
+        sqlite3_stmt *st = nullptr;
+        if (sqlite3_prepare_v2(g_db,
+                               "INSERT OR REPLACE INTO saved_podcasts(browse_id,position,title,"
+                               "author,thumbnail_url,description) VALUES(?,?,?,?,?,?)",
+                               -1, &st, nullptr) == SQLITE_OK)
+        {
+            sqlite3_bind_text(st, 1, s.browse_id.c_str(), -1, SQLITE_TRANSIENT);
+            sqlite3_bind_int(st, 2, (int)i);
+            sqlite3_bind_text(st, 3, s.title.c_str(), -1, SQLITE_TRANSIENT);
+            sqlite3_bind_text(st, 4, s.author.c_str(), -1, SQLITE_TRANSIENT);
+            sqlite3_bind_text(st, 5, s.thumbnail_url.c_str(), -1, SQLITE_TRANSIENT);
+            sqlite3_bind_text(st, 6, s.description.c_str(), -1, SQLITE_TRANSIENT);
+            sqlite3_step(st);
+            sqlite3_finalize(st);
+        }
+    }
+    commit_tx();
+}
+
+std::vector<PodcastShow> load_saved_podcasts()
+{
+    std::lock_guard<std::recursive_mutex> lock(g_mu);
+    std::vector<PodcastShow> out;
+    if (!g_db)
+        return out;
+    sqlite3_stmt *st = nullptr;
+    if (sqlite3_prepare_v2(g_db,
+                           "SELECT browse_id,title,author,thumbnail_url,description"
+                           " FROM saved_podcasts ORDER BY position",
+                           -1, &st, nullptr) != SQLITE_OK)
+        return out;
+    while (sqlite3_step(st) == SQLITE_ROW)
+    {
+        PodcastShow s;
+        s.browse_id = text_col(st, 0);
+        s.title = text_col(st, 1);
+        s.author = text_col(st, 2);
+        s.thumbnail_url = text_col(st, 3);
+        s.description = text_col(st, 4);
+        s.saved = true;
+        out.push_back(std::move(s));
     }
     sqlite3_finalize(st);
     return out;

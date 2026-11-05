@@ -292,7 +292,7 @@ void save_settings(const Settings &settings)
         << "\"backdrop_shader\":" << (settings.backdrop_shader ? "true" : "false") << ","
         << "\"safe_mode\":" << (settings.safe_mode ? "true" : "false") << ","
         << "\"visualizer_mode\":" << std::max(0, std::min(2, settings.visualizer_mode)) << ","
-        << "\"hide_visualizer\":" << (settings.hide_visualizer ? "true" : "false") << ","
+        << "\"show_visualizer\":" << (settings.show_visualizer ? "true" : "false") << ","
         << "\"glow_separators\":" << (settings.glow_separators ? "true" : "false") << ","
         << "\"glow_separator_strength\":" << settings.glow_separator_strength << ","
         << "\"backdrop_drift\":" << (settings.backdrop_drift ? "true" : "false") << ","
@@ -533,8 +533,8 @@ Settings load_settings()
             s.safe_mode = get_bool("safe_mode");
         if (json.find("\"visualizer_mode\"") != std::string::npos)
             s.visualizer_mode = std::max(0, std::min(2, (int)std::lround(get_float("visualizer_mode"))));
-        if (json.find("\"hide_visualizer\"") != std::string::npos)
-            s.hide_visualizer = get_bool("hide_visualizer");
+        if (json.find("\"show_visualizer\"") != std::string::npos)
+            s.show_visualizer = get_bool("show_visualizer");
         if (json.find("\"glow_separators\"") != std::string::npos)
             s.glow_separators = get_bool("glow_separators");
         if (json.find("\"glow_separator_strength\"") != std::string::npos)
@@ -812,7 +812,7 @@ static const SettingsNavEntry kSettingsNav[] = {
     {SC_APPEARANCE, UiIcon::Equalizer, "Appearance", "PERSONALISE"},
     {SC_PLAYBACK, UiIcon::Play, "Playback", nullptr},
     {SC_LYRICS, UiIcon::Lyrics, "Lyrics", nullptr},
-    {SC_PARTY, UiIcon::Party, "Party", "SOCIAL"},
+    {SC_PARTY, UiIcon::Party, "Party", "CONNECT"},
     {SC_YOUTUBE, UiIcon::Playlist, "YouTube Music", nullptr},
     {SC_LIBRARY, UiIcon::Download, "Library", "SYSTEM"},
     {SC_SHORTCUTS, UiIcon::More, "Shortcuts", nullptr},
@@ -1315,8 +1315,10 @@ void draw_settings_panel(AppState &state)
     ImGui::EndChild();
 
     ImGui::SameLine(0.0f, m.space_5);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
     ImGui::BeginChild("##settings_content", ImVec2(content_w, 0), ImGuiChildFlags_None,
-                      ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoScrollbar);
+                      ImGuiWindowFlags_NoBackground);
+    ImGui::PopStyleVar();
     smooth_scroll_child("##settings_content");
     ImGui::PopStyleColor();
 
@@ -1542,14 +1544,10 @@ void draw_settings_panel(AppState &state)
         {
             SettingsCard card("Navigation", "Choose what shows up in the sidebar.",
                               UiIcon::Visualizer);
-            bool show_visualizer = !state.settings.hide_visualizer;
             if (settings_toggle_row("##show_visualizer", "Visualizer in the sidebar",
-                                    &show_visualizer,
-                                    "The visualizer is still experimental. Hide it until you want the extra light show."))
-            {
-                state.settings.hide_visualizer = !show_visualizer;
+                                    &state.settings.show_visualizer,
+                                    "The visualizer is still experimental. It stays hidden unless you turn this on."))
                 save = true;
-            }
             static const char *vis_modes[] = {"Bars", "Waves", "Orbits"};
             settings_row_label("Visualizer style", vis_modes[std::max(0, std::min(2, state.settings.visualizer_mode))],
                                "Bars is the punchy spectrum, Waves is the oscilloscope, Orbits wraps the spectrum around the cover.");
@@ -2012,18 +2010,22 @@ void draw_settings_panel(AppState &state)
     }
     settings_help("Removes all downloaded audio (except the song currently playing). Songs re-download on next play.");
 
-    // Slider from 0 (unlimited, the default) to 20 GB; snaps to whole GB.
+    // The slider drives a local value, so mirror it into settings while the
+    // user drags; only persist on release.
     float cap_gb = state.settings.download_cap_gb;
-    if (settings_slider_row("##dl_cap", "Download cache cap", &cap_gb, 0.0f, 20.0f, "%.0f GB",
-                            "Keep at most this much downloaded audio. At zero the cache is unlimited; when a cap is reached, the least-listened songs are removed first.",
-                            1.0f, [](float v) { return v < 0.5f ? std::string("Unlimited")
-                                                                 : std::to_string((int)std::lround(v)) + " GB"; }))
+    const bool cap_released = settings_slider_row(
+        "##dl_cap", "Download cache cap", &cap_gb, 0.0f, 20.0f, "%.0f GB",
+        "Keep at most this much downloaded audio. At zero the cache is unlimited; when a cap is reached, the least-listened songs are removed first.",
+        1.0f, [](float v) { return v < 0.5f ? std::string("Unlimited")
+                                            : std::to_string((int)std::lround(v)) + " GB"; });
+    const float snapped = cap_gb < 0.5f ? 0.0f : std::floor(cap_gb + 0.5f);
+    if (std::fabs(snapped - state.settings.download_cap_gb) > 0.01f)
     {
-        cap_gb = cap_gb < 0.5f ? 0.0f : std::floor(cap_gb + 0.5f);
-        state.settings.download_cap_gb = cap_gb;
-        set_audio_cache_cap((double)cap_gb * 1024.0 * 1024.0 * 1024.0);
-        save = true;
+        state.settings.download_cap_gb = snapped;
+        set_audio_cache_cap((double)snapped * 1024.0 * 1024.0 * 1024.0);
     }
+    if (cap_released)
+        save = true;
     if (state.settings.download_cap_gb < 0.5f)
         settings_help("Currently unlimited.");
     else

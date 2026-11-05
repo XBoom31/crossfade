@@ -6,6 +6,7 @@
 #include "ytdlp.h"
 #include "paths.h"
 #include "persist_util.h"
+#include "library.h"
 #include "ui_notify.h"
 
 #include "imgui.h"
@@ -21,22 +22,22 @@
 
 namespace
 {
-std::string saved_podcasts_path()
+std::string legacy_saved_podcasts_path()
 {
     return p100_config_path("saved_podcasts.json");
 }
 
-void load_saved_podcasts(AppState &state)
+// One-time import from the pre-0.3 JSON file. New saves live in library.db
+// alongside likes, playlists and downloaded-track metadata.
+void migrate_legacy_saved_podcasts(AppState &state)
 {
-    if (state.saved_podcasts_loaded)
-        return;
-    state.saved_podcasts_loaded = true;
-    std::ifstream in(saved_podcasts_path());
+    std::ifstream in(legacy_saved_podcasts_path());
     if (!in)
         return;
     std::string json((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
     int depth = 0;
     size_t start = std::string::npos;
+    std::vector<PodcastShow> migrated;
     for (size_t i = 0; i < json.size(); ++i)
     {
         if (json[i] == '{')
@@ -57,34 +58,42 @@ void load_saved_podcasts(AppState &state)
                 show.description = persist::extract_str_field(obj, "description");
                 show.saved = true;
                 if (!show.browse_id.empty() && !show.title.empty())
-                    state.saved_podcasts.push_back(std::move(show));
+                    migrated.push_back(std::move(show));
             }
         }
+    }
+    if (!migrated.empty())
+    {
+        state.saved_podcasts = migrated;
+        library::save_saved_podcasts(state.saved_podcasts);
+    }
+    std::error_code ec;
+    std::filesystem::remove(legacy_saved_podcasts_path(), ec);
+}
+
+void load_saved_podcasts(AppState &state)
+{
+    if (state.saved_podcasts_loaded)
+        return;
+    state.saved_podcasts_loaded = true;
+    if (library::available())
+    {
+        state.saved_podcasts = library::load_saved_podcasts();
+        if (state.saved_podcasts.empty())
+            migrate_legacy_saved_podcasts(state);
+    }
+    else
+    {
+        // DB unavailable: the UI still works for this session, but there is
+        // no JSON side-channel to silently drift out of sync.
+        state.saved_podcasts.clear();
     }
 }
 
 void save_saved_podcasts(const AppState &state)
 {
-    std::error_code ec;
-    std::filesystem::create_directories(
-        std::filesystem::path(saved_podcasts_path()).parent_path(), ec);
-    std::ofstream out(saved_podcasts_path(), std::ios::trunc);
-    if (!out)
-        return;
-    out << "[";
-    for (size_t i = 0; i < state.saved_podcasts.size(); ++i)
-    {
-        const auto &s = state.saved_podcasts[i];
-        if (i)
-            out << ",";
-        out << "{\"browse_id\":\"" << persist::json_escape(s.browse_id)
-            << "\",\"title\":\"" << persist::json_escape(s.title)
-            << "\",\"author\":\"" << persist::json_escape(s.author)
-            << "\",\"thumbnail_url\":\"" << persist::json_escape(s.thumbnail_url)
-            << "\",\"description\":\"" << persist::json_escape(s.description)
-            << "\"}";
-    }
-    out << "]";
+    if (library::available())
+        library::save_saved_podcasts(state.saved_podcasts);
 }
 
 bool is_show_saved(const AppState &state, const std::string &browse_id)
@@ -319,6 +328,14 @@ bool podcast_grid(AppState &state, const std::vector<PodcastShow> &shows, const 
 }
 } // namespace
 
+void close_podcast_show(AppState &state)
+{
+    state.podcast_selected = PodcastShow{};
+    state.podcast_episodes.reset();
+    state.podcast_tracks.clear();
+    state.repaint_requested = true;
+}
+
 void draw_podcasts_panel(AppState &state)
 {
     const UiMetrics &m = ui_m();
@@ -352,6 +369,10 @@ void draw_podcasts_panel(AppState &state)
 
     if (!state.podcast_selected.browse_id.empty())
     {
+        if (ui_ghost_button("<  All shows", ImVec2(130.0f * m.layout_scale, m.control_h)))
+            close_podcast_show(state);
+        ImGui::Dummy(ImVec2(0.0f, m.space_2));
+
         const PodcastShow &show = state.podcast_selected;
         const float cover = std::min(168.0f * m.layout_scale, width * 0.28f);
         const ImVec2 start = ImGui::GetCursorScreenPos();
@@ -393,11 +414,7 @@ void draw_podcasts_panel(AppState &state)
         }
         ImGui::SameLine(0.0f, m.space_2);
         if (ui_ghost_button("Back to shows", ImVec2(140.0f * m.layout_scale, m.button_h)))
-        {
-            state.podcast_selected = PodcastShow{};
-            state.podcast_episodes.reset();
-            state.podcast_tracks.clear();
-        }
+            close_podcast_show(state);
 
         if (!state.podcast_tracks.empty())
         {

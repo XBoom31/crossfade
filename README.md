@@ -388,7 +388,7 @@ The window has four persistent regions:
 
 | Region | What lives there |
 |---|---|
-| **Sidebar** | **Browse:** Home, Downloads, Radio, Podcasts, Visualizer, Liked, History, Stats, Smart, Party. **Library:** Albums, Artists, Playlists, YouTube. Settings is pinned at the bottom; the experimental Visualizer entry can be hidden in Settings. |
+| **Sidebar** | **Browse:** Home, Downloads, Radio, Podcasts, Liked, History, Stats, Smart, Party. **Library:** Albums, Artists, Playlists, YouTube. Settings is pinned at the bottom. |
 | **Top bar** | Back / forward, the current view title and subtitle, search, and Refresh where it applies. |
 | **Main area** | Track lists, album/artist detail pages, grids, the queue, stats, or the settings panel. |
 | **Bottom bar** | Cover art, track + artist, like, previous / play-pause / next, sleep timer, Up Next, lyrics, volume, and the speed preset. |
@@ -419,7 +419,6 @@ The window has four persistent regions:
 - **Up Next** — the playback queue, with a **Nothing queued** empty state and instructions
   for adding tracks.
 - **Podcasts** — saved shows, catalogue search, episode playback, local show saving and offline downloads, powered by `ytmusicapi`.
-- **Visualizer** — Bars, Waves and Orbits modes driven by a real FFT of the audio monitor.
 - **Settings** — a two-pane, card-based appearance, playback, lyrics, YouTube Music, cache, shortcuts, and a
   danger zone.
 

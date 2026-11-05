@@ -212,8 +212,9 @@ struct Settings
     bool safe_mode = false;
     // Visualizer page: 0 bars, 1 waves, 2 orbits.
     int visualizer_mode = 0;
-    // Hide the experimental Visualizer navigation entry.
-    bool hide_visualizer = false;
+    // Show the experimental Visualizer navigation entry. Off by default
+    // until the page is ready for a wider audience.
+    bool show_visualizer = false;
     // Glowing separators: a soft album-coloured light streak under each
     // section header, plus album-tinted structural hairlines. Uses the same
     // dominant-colour tint as the backdrop, but works with the backdrop off.
@@ -288,7 +289,7 @@ struct Settings
                backdrop_shader == o.backdrop_shader &&
                safe_mode == o.safe_mode &&
                visualizer_mode == o.visualizer_mode &&
-               hide_visualizer == o.hide_visualizer &&
+               show_visualizer == o.show_visualizer &&
                glow_separators == o.glow_separators &&
                glow_separator_strength == o.glow_separator_strength &&
                backdrop_drift == o.backdrop_drift &&

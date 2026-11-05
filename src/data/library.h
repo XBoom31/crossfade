@@ -50,6 +50,12 @@ std::vector<SavedAlbum> load_saved_albums();
 void save_saved_artists(const std::vector<SavedArtist> &artists);
 std::vector<SavedArtist> load_saved_artists();
 
+// Saved podcast shows. Stored in the same SQLite library as the rest of the
+// user's collection; the old saved_podcasts.json is only used for a one-time
+// migration.
+void save_saved_podcasts(const std::vector<PodcastShow> &shows);
+std::vector<PodcastShow> load_saved_podcasts();
+
 // Downloaded tracks stay on disk; this keeps their metadata in the library so
 // Library search and diagnostics see the full collection even before the
 // Downloads tab is opened.

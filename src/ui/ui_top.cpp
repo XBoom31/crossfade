@@ -425,7 +425,7 @@ void draw_sidebar(AppState &state)
     nav_item(state, Tab::Downloads, UiIcon::Download, "Downloads", rail);
     nav_item(state, Tab::Radio, UiIcon::Radio, "Radio", rail);
     nav_item(state, Tab::Podcasts, UiIcon::Podcast, "Podcasts", rail);
-    if (!state.settings.hide_visualizer)
+    if (state.settings.show_visualizer)
         nav_item(state, Tab::Visualizer, UiIcon::Visualizer, "Visualizer", rail);
     else if (state.current_tab == Tab::Visualizer)
     {
