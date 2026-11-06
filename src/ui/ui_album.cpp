@@ -142,6 +142,7 @@ static void fetch_album_into(AppState &state, const std::string &browse_id)
     {
         prefetch_urls_for(album.tracks, album.tracks.size());
         save_album_cache(album);
+        std::lock_guard<std::recursive_mutex> lock(state.album_mutex);
         state.album_browse_id = album.browse_id.empty() ? browse_id : album.browse_id;
         state.album_title = album.title;
         state.album_artist = album.artist;
@@ -158,6 +159,7 @@ static void fetch_album_into(AppState &state, const std::string &browse_id)
     else
     {
         BackendError err = take_backend_error();
+        std::lock_guard<std::recursive_mutex> lock(state.album_mutex);
         state.album_ready = true;
         // Only flag the failure when there's nothing to show; a stale cached
         // album on screen just gets the toast.
@@ -169,7 +171,10 @@ static void fetch_album_into(AppState &state, const std::string &browse_id)
         }
         state.repaint_requested = true;
     }
-    state.album_loading = false;
+    {
+        std::lock_guard<std::recursive_mutex> lock(state.album_mutex);
+        state.album_loading = false;
+    }
 }
 
 void open_album_view(AppState &state, const std::string &browse_id)
@@ -178,6 +183,7 @@ void open_album_view(AppState &state, const std::string &browse_id)
         return;
     if (state.current_tab == Tab::Album)
         return;
+    std::lock_guard<std::recursive_mutex> lock(state.album_mutex);
     ui_invalidate_forward(state);
     state.album_return_tab = state.current_tab;
     state.album_return_source = state.current_playlist_source;
@@ -225,6 +231,7 @@ void open_album_view(AppState &state, const std::string &browse_id)
 
 void open_album_from_track(AppState &state, const Track &track)
 {
+    std::lock_guard<std::recursive_mutex> state_lock(state.album_mutex);
     if (!track.album_id.empty())
     {
         if (!track.album.empty() && track.album != state.album_title)
@@ -267,6 +274,7 @@ void open_album_from_track(AppState &state, const Track &track)
             {
                 prefetch_urls_for(album.tracks, album.tracks.size());
                 save_album_cache(album);
+                std::lock_guard<std::recursive_mutex> lock(state.album_mutex);
                 state.album_browse_id = album.browse_id.empty() ? bid : album.browse_id;
                 if (album.title.empty() && !bname.empty())
                     state.album_title = bname;
@@ -291,6 +299,7 @@ void open_album_from_track(AppState &state, const Track &track)
         else if (state.album_tracks.empty())
         {
             BackendError err = take_backend_error();
+            std::lock_guard<std::recursive_mutex> lock(state.album_mutex);
             if (err)
             {
                 state.album_failed = true;
@@ -298,9 +307,12 @@ void open_album_from_track(AppState &state, const Track &track)
                 ui_notify_backend_error(err);
             }
         }
-        state.album_ready = true;
-        state.album_loading = false;
-        state.repaint_requested = true;
+        {
+            std::lock_guard<std::recursive_mutex> lock(state.album_mutex);
+            state.album_ready = true;
+            state.album_loading = false;
+            state.repaint_requested = true;
+        }
     });
 }
 
@@ -469,6 +481,7 @@ void draw_albums_panel(AppState &state)
 
 void draw_album_panel(AppState &state)
 {
+    std::lock_guard<std::recursive_mutex> album_lock(state.album_mutex);
     const UiMetrics &m = ui_m();
     refresh_saved_album_metadata(state);
 

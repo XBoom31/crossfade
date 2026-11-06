@@ -2,6 +2,8 @@
 
 #include "types.h"
 
+#include <mutex>
+
 // ----------------------------------------------------------------------
 // Application state
 //
@@ -123,6 +125,10 @@ struct AppState
     std::string album_description;
     std::string album_thumbnail_url;
     std::vector<Track> album_tracks;
+    // Background album fetches mutate the album_* fields above; draw_album_panel
+    // holds this mutex for the whole frame so a fetch can never replace the
+    // vector while rows are being drawn (that race caused a real segfault).
+    std::recursive_mutex album_mutex;
     bool album_loading = false;
     // Set when the album fetch failed with no cached copy to show.
     bool album_failed = false;

@@ -1398,7 +1398,7 @@ void draw_settings_panel(AppState &state)
                 const float gap = m.space_2;
                 ImDrawList *dl = ImGui::GetWindowDrawList();
                 static const ImU32 presets[] = {
-                    IM_COL32(61, 220, 132, 255), IM_COL32(62, 198, 255, 255),
+                    IM_COL32(29, 185, 84, 255), IM_COL32(62, 198, 255, 255),
                     IM_COL32(91, 140, 255, 255), IM_COL32(169, 123, 255, 255),
                     IM_COL32(255, 122, 200, 255), IM_COL32(255, 93, 115, 255),
                     IM_COL32(255, 159, 67, 255), IM_COL32(247, 209, 84, 255)};

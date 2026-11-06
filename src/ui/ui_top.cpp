@@ -384,7 +384,7 @@ void draw_sidebar(AppState &state)
         dl->AddText(g_ui_fonts.semibold, 27.0f * m.text_scale, ImVec2(tx, logo_pos.y + logo_h * 0.5f - 21.0f * m.text_scale),
                     ui_text_u32(), "crossfade");
         dl->AddText(g_ui_fonts.body, 15.0f * m.text_scale, ImVec2(tx, logo_pos.y + logo_h * 0.5f + 7.0f * m.text_scale),
-                    ui_text_muted_u32(), "music");
+                    ui_text_muted_u32(), "music \xC2\xB7 made with love");
     }
     if (!rail)
     {
