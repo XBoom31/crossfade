@@ -357,11 +357,11 @@ std::string build_state_json(AppState &state, const std::vector<Track> &queue,
     }
     j += "],\"queueMore\":" + std::to_string(hidden) + ",";
 
+    // The caller's own counters ("you") are appended per request in
+    // state_json_for_guest(), so the shared snapshot stays identical.
     j += "\"limits\":{\"maxPerGuest\":" + std::to_string(g_settings.max_per_guest) +
          ",\"cooldownSec\":" + std::to_string(g_settings.cooldown_sec) +
-         ",\"maxVideoMinutes\":" + std::to_string(g_settings.max_video_minutes) + "},";
-    // The server patches this marker with the caller's own counters.
-    j += "\"you\":{\"queued\":0,\"nextAddInSec\":0,\"ids\":[]}}";
+         ",\"maxVideoMinutes\":" + std::to_string(g_settings.max_video_minutes) + "}}";
     return j;
 }
 
@@ -404,7 +404,8 @@ std::string make_sig(AppState &state, const std::vector<PendingRequest> &pending
     return s;
 }
 
-void publish_locked(AppState &state, double pos, double dur, bool paused, bool bump)
+void publish_locked(AppState &state, double pos, double dur, bool paused, bool bump,
+                    const std::string *known_sig = nullptr)
 {
     if (bump)
         ++g_version;
@@ -416,7 +417,7 @@ void publish_locked(AppState &state, double pos, double dur, bool paused, bool b
     snap->json = build_state_json(state, snap->queue, snap->pending, g_version, pos, dur, paused);
     g_snapshot = std::move(snap);
     g_last_build = now_sec();
-    g_last_sig = make_sig(state, g_pending);
+    g_last_sig = known_sig ? *known_sig : make_sig(state, g_pending);
 }
 
 party_api::AddResult process_add(AppState &state, InboxAdd item)
@@ -889,6 +890,7 @@ void party_tick(AppState &state, double position_sec, double duration_sec, bool 
 
     std::vector<AddedNotice> notifications;
     std::string prefetch_ids;
+    std::vector<Track> prefetch_tracks;
 
     {
         std::lock_guard<std::mutex> lock(g_mu);
@@ -947,7 +949,7 @@ void party_tick(AppState &state, double position_sec, double duration_sec, bool 
         const bool periodic = !g_guests.empty() && t - g_last_build >= 1.0;
         if (bump || periodic)
         {
-            publish_locked(state, position_sec, duration_sec, paused, bump || periodic);
+            publish_locked(state, position_sec, duration_sec, paused, bump || periodic, &sig);
         }
 
         // Prefetch warm stream URLs for guest songs at the head of Up Next.
@@ -961,6 +963,7 @@ void party_tick(AppState &state, double position_sec, double duration_sec, bool 
             {
                 ids += tr.id;
                 ids += ',';
+                prefetch_tracks.push_back(tr);
                 ++n;
             }
         }
@@ -987,20 +990,8 @@ void party_tick(AppState &state, double position_sec, double duration_sec, bool 
     {
         // Warm the first guest entries so crossfade into them is as smooth as
         // for host songs. prefetch_urls_for() runs on a background thread.
-        std::vector<Track> warm;
-        int count = 0;
-        for (const Track &tr : state.play_queue)
-        {
-            if (count >= 2)
-                break;
-            if (tr.from_party)
-            {
-                warm.push_back(tr);
-                ++count;
-            }
-        }
-        if (!warm.empty())
-            prefetch_urls_for(warm, warm.size());
+        if (!prefetch_tracks.empty())
+            prefetch_urls_for(prefetch_tracks, prefetch_tracks.size());
     }
 }
 
@@ -1117,13 +1108,11 @@ std::string state_json(const std::string &guest_id, const std::string &since)
         }
     }
     std::string json = snap->json;
-    const std::string marker = "\"you\":{\"queued\":0,\"nextAddInSec\":0,\"ids\":[]}";
-    std::string repl = "\"you\":{\"queued\":" + std::to_string(queued) +
-                       ",\"nextAddInSec\":" + std::to_string(std::max(0, next_add)) +
-                       ",\"ids\":[" + ids + "]}";
-    size_t pos = json.rfind(marker);
-    if (pos != std::string::npos)
-        json.replace(pos, marker.size(), repl);
+    if (!json.empty() && json.back() == '}')
+        json.pop_back();
+    json += ",\"you\":{\"queued\":" + std::to_string(queued) +
+            ",\"nextAddInSec\":" + std::to_string(std::max(0, next_add)) +
+            ",\"ids\":[" + ids + "]}}";
     return json;
 }
 
@@ -1137,7 +1126,6 @@ AddResult add(const std::string &guest_id, const std::string &input)
         return error_result(400, "invalid_link", parsed.message);
 
     const double t = now_sec();
-    int max_video_minutes = 0;
     {
         std::lock_guard<std::mutex> lock(g_mu);
         auto git = g_guests.find(guest_id);
@@ -1145,7 +1133,6 @@ AddResult add(const std::string &guest_id, const std::string &input)
             return error_result(401, "no_session", "Scan the QR code again.");
         Guest &g = git->second;
         g.last_seen = t;
-        max_video_minutes = g_settings.max_video_minutes;
         if (g_settings.cooldown_sec > 0)
         {
             if (!g.add_bucket.take(t))
@@ -1175,17 +1162,6 @@ AddResult add(const std::string &guest_id, const std::string &input)
         std::lock_guard<std::mutex> lock(g_mu);
         meta = meta_cache_get(parsed.video_id);
         have = !meta.id.empty();
-        if (have && !g_settings.allow_duplicates)
-        {
-            if (g_snapshot)
-            {
-                if (g_snapshot->now_id == meta.id)
-                    return error_result(409, "duplicate", "That song is already playing.");
-                for (const Track &tr : g_snapshot->queue)
-                    if (tr.id == meta.id)
-                        return error_result(409, "duplicate", "That song is already in the queue.");
-            }
-        }
     }
     if (!have)
     {
@@ -1196,13 +1172,8 @@ AddResult add(const std::string &guest_id, const std::string &input)
         std::lock_guard<std::mutex> lock(g_mu);
         meta_cache_put(meta);
     }
-    if (meta.duration_sec > 0 && max_video_minutes > 0 &&
-        meta.duration_sec > max_video_minutes * 60)
-    {
-        return error_result(422, "too_long",
-                            "That video is longer than the " +
-                                std::to_string(max_video_minutes) + "-minute limit.");
-    }
+    // Duration and duplicate policy is enforced authoritatively in
+    // process_add() so there is a single source of truth.
     cache_art_async(meta.id, meta.thumbnail_url);
 
     auto waiter = std::make_shared<AddWaiter>();

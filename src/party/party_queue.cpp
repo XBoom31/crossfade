@@ -7,15 +7,7 @@ namespace party_queue
 
 int round_for_guest(const std::vector<Track> &queue, const std::string &guest_id)
 {
-    if (guest_id.empty())
-        return 0;
-    int n = 0;
-    for (const Track &t : queue)
-    {
-        if (t.from_party && t.guest_id == guest_id)
-            ++n;
-    }
-    return n;
+    return count_guest_items(queue, guest_id);
 }
 
 int insert_fair(std::vector<Track> &queue, Track item)
