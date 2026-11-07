@@ -16,6 +16,7 @@
 using persist::extract_int_field;
 using persist::extract_str_field;
 using persist::json_escape;
+using jsonutil::write_track;
 
 static std::mutex g_album_cache_mutex;
 static std::mutex g_artist_cache_mutex;
@@ -126,19 +127,9 @@ static void write_album_tracks(std::ostream &out, const std::vector<Track> &trac
     out << "[";
     for (size_t i = 0; i < tracks.size(); ++i)
     {
-        const auto &t = tracks[i];
         if (i != 0)
             out << ",";
-        out << "{\"id\":\"" << json_escape(t.id)
-            << "\",\"title\":\"" << json_escape(t.title)
-            << "\",\"artist\":\"" << json_escape(t.artist)
-            << "\",\"artist_id\":\"" << json_escape(t.artist_id)
-            << "\",\"album\":\"" << json_escape(t.album)
-            << "\",\"album_id\":\"" << json_escape(t.album_id)
-            << "\",\"track_number\":" << t.track_number
-            << ",\"thumbnail_url\":\"" << json_escape(t.thumbnail_url)
-            << "\",\"duration_sec\":" << t.duration_sec
-            << ",\"url\":\"" << json_escape(t.url) << "\"}";
+        write_track(out, tracks[i]);
     }
     out << "]";
 }

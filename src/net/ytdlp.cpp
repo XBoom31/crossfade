@@ -1,4 +1,5 @@
 #include "ytdlp.h"
+#include "json_util.h"
 #include "paths.h"
 #include <cstdio>
 #include <cstdlib>
@@ -56,10 +57,11 @@ static std::vector<std::string> list_dir_names(const std::string &dir)
 #include <sys/types.h>
 
 // ------------------ Backend process management ------------------
-// Two backend child processes run the same script: the main channel serves
-// searches / library / lyrics, the play channel serves stream resolves, so a
-// user click never queues behind a search or a speculative prefetch (and
-// vice versa). Each keeps its own stream-URL cache and warm-client state.
+// Three backend child processes run the same script: the main channel serves
+// searches / library / lyrics, the play channel serves foreground stream
+// resolves, and the prefetch channel serves speculative stream warming. That
+// keeps a slow background resolve from delaying a search, and keeps both away
+// from a user click. Each keeps its own stream-URL cache and warm-client state.
 #ifdef P100_WINDOWS
 #define P100_PID_T HANDLE
 #else
@@ -89,6 +91,7 @@ struct BackendChannel
 };
 static BackendChannel g_backend;
 static BackendChannel g_play_backend;
+static BackendChannel g_prefetch_backend;
 
 static std::string g_warm_extractor = "1"; // P100_WARM_EXTRACTOR for children
 
@@ -708,18 +711,22 @@ static bool spawn_backend(BackendChannel &ch)
 
 bool start_backend()
 {
-    // The play channel is an optimization: failing to start it only means
-    // stream resolves share the main channel again, so it is not fatal.
+    // The play and prefetch channels are optimizations: failing to start
+    // either only means their work shares the main channel again, so they are
+    // not fatal.
     bool main_ok = spawn_backend(g_backend);
     if (!spawn_backend(g_play_backend))
         fprintf(stderr, "Play backend worker unavailable; stream resolves "
                         "share the main backend channel.\n");
+    if (!spawn_backend(g_prefetch_backend))
+        fprintf(stderr, "Prefetch backend worker unavailable; speculative "
+                        "warmups share the main backend channel.\n");
     return main_ok;
 }
 
 void stop_backend()
 {
-    for (BackendChannel *ch : {&g_backend, &g_play_backend})
+    for (BackendChannel *ch : {&g_backend, &g_play_backend, &g_prefetch_backend})
     {
         backend_write_line(*ch, "quit");
 #ifdef P100_WINDOWS
@@ -752,128 +759,15 @@ void stop_backend()
 
 // ------------------ JSON parsing with Unicode support ------------------
 
-static std::string unicode_to_utf8(unsigned int cp)
-{
-    std::string result;
-    if (cp < 0x80)
-    {
-        result.push_back((char)cp);
-    }
-    else if (cp < 0x800)
-    {
-        result.push_back((char)(0xC0 | (cp >> 6)));
-        result.push_back((char)(0x80 | (cp & 0x3F)));
-    }
-    else if (cp < 0x10000)
-    {
-        result.push_back((char)(0xE0 | (cp >> 12)));
-        result.push_back((char)(0x80 | ((cp >> 6) & 0x3F)));
-        result.push_back((char)(0x80 | (cp & 0x3F)));
-    }
-    else if (cp < 0x110000)
-    {
-        result.push_back((char)(0xF0 | (cp >> 18)));
-        result.push_back((char)(0x80 | ((cp >> 12) & 0x3F)));
-        result.push_back((char)(0x80 | ((cp >> 6) & 0x3F)));
-        result.push_back((char)(0x80 | (cp & 0x3F)));
-    }
-    return result;
-}
-
 static std::string json_get_string(const std::string &json, const std::string &key)
 {
-    std::string search = "\"" + key + "\":\"";
-    size_t pos = json.find(search);
-    if (pos == std::string::npos)
-    {
-        search = "\"" + key + "\": \"";
-        pos = json.find(search);
-    }
-    if (pos == std::string::npos)
-        return "";
-    pos += search.size();
-    std::string result;
-    bool escaped = false;
-    while (pos < json.size())
-    {
-        char c = json[pos];
-        if (escaped)
-        {
-            if (c == 'u')
-            {
-                if (pos + 4 < json.size())
-                {
-                    std::string hex = json.substr(pos + 1, 4);
-                    unsigned int cp;
-                    sscanf(hex.c_str(), "%04x", &cp);
-                    result += unicode_to_utf8(cp);
-                    pos += 4;
-                }
-            }
-            else
-            {
-                switch (c)
-                {
-                case '"':
-                    result += '"';
-                    break;
-                case '\\':
-                    result += '\\';
-                    break;
-                case '/':
-                    result += '/';
-                    break;
-                case 'b':
-                    result += '\b';
-                    break;
-                case 'f':
-                    result += '\f';
-                    break;
-                case 'n':
-                    result += '\n';
-                    break;
-                case 'r':
-                    result += '\r';
-                    break;
-                case 't':
-                    result += '\t';
-                    break;
-                default:
-                    result += c;
-                    break;
-                }
-            }
-            escaped = false;
-        }
-        else if (c == '\\')
-        {
-            escaped = true;
-        }
-        else if (c == '"')
-            break;
-        else
-            result += c;
-        pos++;
-    }
-    return result;
+    return jsonutil::get_string(json, key);
 }
+
 
 static int json_get_int(const std::string &json, const std::string &key)
 {
-    std::string search = "\"" + key + "\":";
-    size_t pos = json.find(search);
-    if (pos == std::string::npos)
-        return 0;
-    pos += search.size();
-    while (pos < json.size() && isspace(json[pos]))
-        pos++;
-    int val = 0;
-    while (pos < json.size() && isdigit(json[pos]))
-    {
-        val = val * 10 + (json[pos] - '0');
-        pos++;
-    }
-    return val;
+    return jsonutil::get_int(json, key);
 }
 
 static constexpr int kJsonMaxDepth = 256;
@@ -1021,20 +915,10 @@ std::vector<Track> parse_track_array(const std::string &json)
     return tracks;
 }
 
+
 static bool json_get_bool(const std::string &json, const std::string &key, bool def = false)
 {
-    std::string search = "\"" + key + "\":";
-    size_t pos = json.find(search);
-    if (pos == std::string::npos)
-        return def;
-    pos += search.size();
-    while (pos < json.size() && isspace((unsigned char)json[pos]))
-        pos++;
-    if (pos < json.size() && json[pos] == 't')
-        return true;
-    if (pos < json.size() && json[pos] == 'f')
-        return false;
-    return def;
+    return jsonutil::get_bool(json, key, def);
 }
 
 // End offset (inclusive) of the JSON object starting at obj_start ('{').
@@ -1192,9 +1076,10 @@ static std::string send_command(const std::string &cmd)
     return send_command_on(g_backend, cmd);
 }
 
-// Stream resolves (play/play_fresh, including speculative prefetches) go to
-// the dedicated play worker so they never queue behind searches/lyrics on
-// the main channel. Falls back to the main channel if that worker is down.
+// Foreground stream resolves (play/play_fresh) go to the dedicated play
+// worker so they never queue behind searches/lyrics on the main channel.
+// Speculative prefetches use send_prefetch_command() below. Both fall back to
+// the main channel if their worker is down.
 static std::string send_play_command(const std::string &cmd)
 {
 #ifdef P100_WINDOWS
@@ -1203,6 +1088,20 @@ static std::string send_play_command(const std::string &cmd)
     if (g_play_backend.in)
 #endif
         return send_command_on(g_play_backend, cmd);
+    return send_command_on(g_backend, cmd);
+}
+
+// Speculative prefetches get their own channel. They can take tens of seconds
+// (a full yt-dlp resolve), so sharing the main channel starved searches and
+// metadata lookups; sharing the play channel would make a click wait instead.
+static std::string send_prefetch_command(const std::string &cmd)
+{
+#ifdef P100_WINDOWS
+    if (g_prefetch_backend.h_in_write != NULL)
+#else
+    if (g_prefetch_backend.in)
+#endif
+        return send_command_on(g_prefetch_backend, cmd);
     return send_command_on(g_backend, cmd);
 }
 
@@ -1276,34 +1175,10 @@ static Track fetch_track_metadata(const std::string &video_id)
     return t;
 }
 
-// Minimal JSON string escaping for the metadata sidecar: titles/artists
-// routinely contain quotes and backslashes, and an unescaped one truncates
-// the value for the reader (which stops at the first bare quote).
+// Minimal JSON string escaping for the metadata sidecar.
 static std::string json_escape(const std::string &s)
 {
-    std::string out;
-    out.reserve(s.size() + 8);
-    for (unsigned char c : s)
-    {
-        switch (c)
-        {
-        case '"': out += "\\\""; break;
-        case '\\': out += "\\\\"; break;
-        case '\n': out += "\\n"; break;
-        case '\r': out += "\\r"; break;
-        case '\t': out += "\\t"; break;
-        default:
-            if (c < 0x20)
-            {
-                char buf[8];
-                snprintf(buf, sizeof(buf), "\\u%04x", c);
-                out += buf;
-            }
-            else
-                out += (char)c;
-        }
-    }
-    return out;
+    return jsonutil::escape(s);
 }
 
 static void save_metadata(const Track &t, const std::string &audio_path)
@@ -1403,11 +1278,17 @@ std::vector<Track> fetch_recommendations(bool force_fresh, int limit)
     return parse_track_array(response);
 }
 
-std::vector<Track> fetch_search(const std::string &query)
+std::vector<Track> fetch_search(const std::string &query, bool *failed)
 {
+    if (failed)
+        *failed = false;
     std::string response = send_command("search " + query);
-    if (response.find("\"error\"") != std::string::npos)
+    if (response.empty() || response.find("\"error\"") != std::string::npos)
+    {
+        if (failed)
+            *failed = true;
         return {};
+    }
     return parse_track_array(response);
 }
 
@@ -2409,13 +2290,13 @@ std::string fetch_stream_url(const std::string &video_id)
     return json_get_string(response, "url");
 }
 
-// Speculative prefetch variant: goes to the main backend channel, leaving
-// the dedicated play channel free so a user's click never queues behind
-// background warming. The main channel processes commands serially, which
-// also self-throttles the prefetch rate.
+// Speculative prefetch variant: goes to the dedicated prefetch backend
+// channel, leaving searches/metadata and the foreground play channel free.
+// The channel processes commands serially, which also self-throttles the
+// prefetch rate.
 std::string fetch_stream_url_prefetch(const std::string &video_id)
 {
-    std::string response = send_command("play " + video_id);
+    std::string response = send_prefetch_command("play " + video_id);
     if (response.find("\"error\"") != std::string::npos)
         return "";
     return json_get_string(response, "url");

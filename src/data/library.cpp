@@ -1,6 +1,7 @@
 #include "library.h"
 
 #include "paths.h"
+#include "json_util.h"
 #include "sqlite3.h"
 #include "ytdlp.h"
 
@@ -238,65 +239,17 @@ bool verify_count(const char *sql, size_t expected, const char *what, std::strin
 
 std::string read_whole_file(const std::filesystem::path &path)
 {
-    std::ifstream in(path, std::ios::binary);
-    if (!in.good())
-        return {};
-    return std::string((std::istreambuf_iterator<char>(in)),
-                       std::istreambuf_iterator<char>());
+    return jsonutil::read_file(path);
 }
 
 std::string extract_str_field(const std::string &json, const std::string &key)
 {
-    size_t pos = json.find("\"" + key + "\":\"");
-    if (pos == std::string::npos)
-        return "";
-    pos += key.size() + 4;
-    std::string out;
-    bool escaped = false;
-    while (pos < json.size())
-    {
-        char c = json[pos++];
-        if (escaped)
-        {
-            switch (c)
-            {
-            case 'n': out += '\n'; break;
-            case 'r': out += '\r'; break;
-            case 't': out += '\t'; break;
-            case '"': out += '"'; break;
-            case '\\': out += '\\'; break;
-            default: out += c;
-            }
-            escaped = false;
-        }
-        else if (c == '\\')
-            escaped = true;
-        else if (c == '"')
-            break;
-        else
-            out += c;
-    }
-    return out;
+    return jsonutil::get_string(json, key);
 }
 
 int extract_int_field(const std::string &json, const std::string &key)
 {
-    size_t pos = json.find("\"" + key + "\":");
-    if (pos == std::string::npos)
-        return 0;
-    pos += key.size() + 3;
-    while (pos < json.size() && std::isspace((unsigned char)json[pos]))
-        ++pos;
-    size_t end = json.find_first_of(",}", pos);
-    try
-    {
-        return std::stoi(json.substr(pos, end == std::string::npos ? std::string::npos
-                                                                   : end - pos));
-    }
-    catch (...)
-    {
-        return 0;
-    }
+    return jsonutil::get_int(json, key);
 }
 
 std::vector<Track> legacy_tracks_file(const std::filesystem::path &path)

@@ -54,6 +54,7 @@ target_link_libraries(imgui PUBLIC SDL2::SDL2 OpenGL::GL)
 set(SOURCES
     src/main.cpp
     src/app/app.cpp
+    src/core/power.cpp
     src/core/tasks.cpp
     src/data/config.cpp
     src/data/accent.cpp
@@ -85,7 +86,6 @@ set(SOURCES
     src/ui/ui_stats.cpp
     src/ui/ui_party.cpp
     src/ui/ui_podcasts.cpp
-    src/ui/ui_visualizer.cpp
     src/net/texture.cpp
     src/data/writeback.cpp
     src/party/party.cpp
@@ -202,6 +202,7 @@ if(CROSSFADE_BUILD_TESTS)
             src/party/${party_test}.cpp)
         target_include_directories(test_${party_test} PRIVATE
             ${CMAKE_CURRENT_SOURCE_DIR}
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/core
             ${CMAKE_CURRENT_SOURCE_DIR}/src/party
             ${CMAKE_CURRENT_SOURCE_DIR}/src/net)
         target_link_libraries(test_${party_test} Threads::Threads)
@@ -222,6 +223,12 @@ if(CROSSFADE_BUILD_TESTS)
         ${CMAKE_CURRENT_SOURCE_DIR}/external/imgui)
     target_link_libraries(test_crossfade Threads::Threads)
     add_test(NAME crossfade COMMAND test_crossfade)
+
+    add_executable(test_tasks tests/test_tasks.cpp src/core/tasks.cpp)
+    target_include_directories(test_tasks PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/core)
+    target_link_libraries(test_tasks Threads::Threads)
+    add_test(NAME tasks COMMAND test_tasks)
 
     add_executable(test_library tests/test_library.cpp
         src/data/library.cpp src/net/ytdlp.cpp src/data/paths.cpp
@@ -341,6 +348,7 @@ if(CROSSFADE_BUILD_TESTS)
     )
     target_include_directories(party_smoke_server PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/core
         ${CMAKE_CURRENT_SOURCE_DIR}/src/party
         ${CMAKE_CURRENT_SOURCE_DIR}/src/net
         external)

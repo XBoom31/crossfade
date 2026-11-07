@@ -1,6 +1,7 @@
 #include "session.h"
 #include "mpvplayer.h"
 #include "paths.h"
+#include "json_util.h"
 
 #include <chrono>
 #include <cstdio>
@@ -20,17 +21,7 @@ static std::string session_file_path()
 
 std::string session_json(const AppState &state, double position, int volume)
 {
-    auto esc = [](const std::string &s) -> std::string
-    {
-        std::string r;
-        r.reserve(s.size() + 8);
-        for (char c : s)
-        {
-            if (c == '"' || c == '\\') r += '\\';
-            r += c;
-        }
-        return r;
-    };
+    auto esc = [](const std::string &s) { return jsonutil::escape(s); };
 
     std::ostringstream out;
     out << "{"
@@ -104,83 +95,17 @@ void load_session(AppState &state)
     if (json.empty())
         return;
 
-    auto get_str = [&](const std::string &key) -> std::string
-    {
-        std::string search = "\"" + key + "\":\"";
-        size_t start = json.find(search);
-        if (start == std::string::npos)
-            return "";
-        start += search.size(); // past the opening quote of the value
+    auto get_str = [&](const std::string &key)
+    { return jsonutil::get_string(json, key); };
 
-        std::string out;
-        out.reserve(256);
-        for (size_t i = start; i < json.size(); ++i)
-        {
-            char c = json[i];
-            if (c == '\\' && i + 1 < json.size())
-            {
-                out += json[i + 1];
-                i++;
-            }
-            else if (c == '"')
-                break;
-            else
-                out += c;
-        }
-        return out;
-    };
+    auto get_int = [&](const std::string &key)
+    { return jsonutil::get_int(json, key, -1); };
 
-    auto get_int = [&](const std::string &key) -> int
-    {
-        std::string search = "\"" + key + "\":";
-        size_t pos = json.find(search);
-        if (pos == std::string::npos)
-            return -1;
-        pos += search.size();
-        size_t end = json.find_first_of(",}", pos);
-        if (end == std::string::npos)
-            return -1;
-        std::string val = json.substr(pos, end - pos);
-        val.erase(0, val.find_first_not_of(" \t\n\r"));
-        val.erase(val.find_last_not_of(" \t\n\r") + 1);
-        if (val.empty())
-            return -1;
-        try { return std::stoi(val); }
-        catch (...) { return -1; }
-    };
+    auto get_double = [&](const std::string &key)
+    { return jsonutil::get_double(json, key, 0.0); };
 
-    auto get_double = [&](const std::string &key) -> double
-    {
-        std::string search = "\"" + key + "\":";
-        size_t pos = json.find(search);
-        if (pos == std::string::npos)
-            return 0.0;
-        pos += search.size();
-        size_t end = json.find_first_of(",}", pos);
-        if (end == std::string::npos)
-            return 0.0;
-        std::string val = json.substr(pos, end - pos);
-        val.erase(0, val.find_first_not_of(" \t\n\r"));
-        val.erase(val.find_last_not_of(" \t\n\r") + 1);
-        if (val.empty())
-            return 0.0;
-        try { return std::stod(val); }
-        catch (...) { return 0.0; }
-    };
-
-    auto get_bool = [&](const std::string &key) -> bool
-    {
-        std::string search = "\"" + key + "\":";
-        size_t pos = json.find(search);
-        if (pos == std::string::npos)
-            return false;
-        pos += search.size();
-        if (json.compare(pos, 4, "true") == 0)
-            return true;
-        if (json.compare(pos, 5, "false") == 0)
-            return false;
-        return false;
-    };
+    auto get_bool = [&](const std::string &key)
+    { return jsonutil::get_bool(json, key, false); };
 
     SessionState &restore = state.session_restore;
     restore.track_id = get_str("track_id");

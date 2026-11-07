@@ -1,5 +1,7 @@
 #include "party_util.h"
 
+#include "json_util.h"
+
 #include <algorithm>
 #include <cerrno>
 #include <cmath>
@@ -200,34 +202,7 @@ std::string clean_utf8(const std::string &s, size_t max_codepoints)
 
 std::string json_escape(const std::string &s, size_t max_codepoints)
 {
-    std::string clean = clean_utf8(s, max_codepoints);
-    std::string out;
-    out.reserve(clean.size() + 8);
-    for (unsigned char c : clean)
-    {
-        switch (c)
-        {
-        case '"': out += "\\\""; break;
-        case '\\': out += "\\\\"; break;
-        case '\b': out += "\\b"; break;
-        case '\f': out += "\\f"; break;
-        case '\n': out += "\\n"; break;
-        case '\r': out += "\\r"; break;
-        case '\t': out += "\\t"; break;
-        default:
-            if (c < 0x20)
-            {
-                char buf[8];
-                std::snprintf(buf, sizeof(buf), "\\u%04x", c);
-                out += buf;
-            }
-            else
-            {
-                out += (char)c;
-            }
-        }
-    }
-    return out;
+    return jsonutil::escape(clean_utf8(s, max_codepoints));
 }
 
 std::string html_escape(const std::string &s)

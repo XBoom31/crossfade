@@ -1,5 +1,7 @@
 #include "writeback.h"
 
+#include "json_util.h"
+
 #include "ui.h"
 #include "ui_notify.h"
 #include "ytdlp.h"
@@ -52,17 +54,7 @@ std::string playlist_meta_path(const std::string &name)
 
 std::string extract_json_string(const std::string &data, const char *key)
 {
-    std::string needle = std::string("\"") + key + "\":";
-    size_t k = data.find(needle);
-    if (k == std::string::npos)
-        return "";
-    size_t q1 = data.find('"', k + needle.size());
-    if (q1 == std::string::npos)
-        return "";
-    size_t q2 = data.find('"', q1 + 1);
-    if (q2 == std::string::npos)
-        return "";
-    return data.substr(q1 + 1, q2 - q1 - 1);
+    return jsonutil::get_string(data, key);
 }
 
 std::string read_server_id(const std::string &meta_path)

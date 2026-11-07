@@ -35,17 +35,7 @@ void save_liked_tracks(const std::vector<Track> &tracks)
     out << "[";
     for (size_t i = 0; i < tracks.size(); ++i)
     {
-        const auto &t = tracks[i];
-        out << "{\"id\":\"" << t.id << "\","
-            << "\"title\":\"" << t.title << "\","
-            << "\"artist\":\"" << t.artist << "\","
-            << "\"artist_id\":\"" << t.artist_id << "\","
-            << "\"album\":\"" << t.album << "\","
-            << "\"album_id\":\"" << t.album_id << "\","
-            << "\"track_number\":" << t.track_number << ","
-            << "\"thumbnail_url\":\"" << t.thumbnail_url << "\","
-            << "\"duration_sec\":" << t.duration_sec << ","
-            << "\"url\":\"" << t.url << "\"}";
+        track_to_json(out, tracks[i]);
         if (i != tracks.size() - 1)
             out << ",";
     }
@@ -87,17 +77,7 @@ void save_playback_history(const std::vector<Track> &tracks)
     out << "[";
     for (size_t i = 0; i < tracks.size(); ++i)
     {
-        const auto &t = tracks[i];
-        out << "{\"id\":\"" << t.id << "\","
-            << "\"title\":\"" << t.title << "\","
-            << "\"artist\":\"" << t.artist << "\","
-            << "\"artist_id\":\"" << t.artist_id << "\","
-            << "\"album\":\"" << t.album << "\","
-            << "\"album_id\":\"" << t.album_id << "\","
-            << "\"track_number\":" << t.track_number << ","
-            << "\"thumbnail_url\":\"" << t.thumbnail_url << "\","
-            << "\"duration_sec\":" << t.duration_sec << ","
-            << "\"url\":\"" << t.url << "\"}";
+        track_to_json(out, tracks[i]);
         if (i != tracks.size() - 1)
             out << ",";
     }

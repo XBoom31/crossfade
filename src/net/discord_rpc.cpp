@@ -1,5 +1,7 @@
 #include "discord_rpc.h"
 
+#include "json_util.h"
+
 #include <fcntl.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
@@ -35,29 +37,7 @@ std::string g_client_id;
 
 std::string json_escape(const std::string &s)
 {
-    std::string out;
-    out.reserve(s.size() + 8);
-    for (char c : s)
-    {
-        switch (c)
-        {
-        case '"': out += "\\\""; break;
-        case '\\': out += "\\\\"; break;
-        case '\n': out += "\\n"; break;
-        case '\r': out += "\\r"; break;
-        case '\t': out += "\\t"; break;
-        default:
-            if ((unsigned char)c < 0x20)
-            {
-                char buf[8];
-                snprintf(buf, sizeof(buf), "\\u%04x", c);
-                out += buf;
-            }
-            else
-                out += c;
-        }
-    }
-    return out;
+    return jsonutil::escape(s);
 }
 
 bool read_full(int fd, void *buf, size_t n)

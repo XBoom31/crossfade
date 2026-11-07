@@ -1,4 +1,5 @@
 #include "ui.h"
+#include "json_util.h"
 #include "tasks.h"
 #include <cstdlib>
 #include "party_util.h"
@@ -13,6 +14,7 @@
 #include "writeback.h"
 #include "library.h"
 #include "diagnostics.h"
+#include "power.h"
 #include "misc/cpp/imgui_stdlib.h"
 #include <fstream>
 #include <filesystem>
@@ -111,123 +113,9 @@ static std::string settings_file_path()
 // can contain quotes, backslashes or newlines).
 static std::string json_escape(const std::string &s)
 {
-    std::string out;
-    out.reserve(s.size() + 8);
-    for (unsigned char c : s)
-    {
-        switch (c)
-        {
-        case '"': out += "\\\""; break;
-        case '\\': out += "\\\\"; break;
-        case '\n': out += "\\n"; break;
-        case '\r': out += "\\r"; break;
-        case '\t': out += "\\t"; break;
-        default:
-            if (c < 0x20)
-            {
-                char buf[8];
-                snprintf(buf, sizeof(buf), "\\u%04x", c);
-                out += buf;
-            }
-            else
-                out += (char)c;
-        }
-    }
-    return out;
+    return jsonutil::escape(s);
 }
 
-static void json_append_utf8(std::string &out, unsigned int cp)
-{
-    if (cp < 0x80)
-        out += (char)cp;
-    else if (cp < 0x800)
-    {
-        out += (char)(0xC0 | (cp >> 6));
-        out += (char)(0x80 | (cp & 0x3F));
-    }
-    else if (cp < 0x10000)
-    {
-        out += (char)(0xE0 | (cp >> 12));
-        out += (char)(0x80 | ((cp >> 6) & 0x3F));
-        out += (char)(0x80 | (cp & 0x3F));
-    }
-    else
-    {
-        out += (char)(0xF0 | (cp >> 18));
-        out += (char)(0x80 | ((cp >> 12) & 0x3F));
-        out += (char)(0x80 | ((cp >> 6) & 0x3F));
-        out += (char)(0x80 | (cp & 0x3F));
-    }
-}
-
-static int hex_val(char c)
-{
-    if (c >= '0' && c <= '9') return c - '0';
-    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
-    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
-    return -1;
-}
-
-static std::string json_unescape(const std::string &s)
-{
-    std::string out;
-    out.reserve(s.size());
-    for (size_t i = 0; i < s.size(); ++i)
-    {
-        if (s[i] != '\\' || i + 1 >= s.size())
-        {
-            out += s[i];
-            continue;
-        }
-        const char c = s[++i];
-        switch (c)
-        {
-        case 'n': out += '\n'; break;
-        case 'r': out += '\r'; break;
-        case 't': out += '\t'; break;
-        case 'b': out += '\b'; break;
-        case 'f': out += '\f'; break;
-        case 'u':
-        {
-            if (i + 4 >= s.size())
-                break;
-            unsigned int cp = 0;
-            bool ok = true;
-            for (int k = 1; k <= 4; ++k)
-            {
-                const int v = hex_val(s[i + k]);
-                if (v < 0) { ok = false; break; }
-                cp = (cp << 4) | (unsigned int)v;
-            }
-            if (!ok)
-                break;
-            i += 4;
-            // Surrogate pair -> combine into a single code point.
-            if (cp >= 0xD800 && cp <= 0xDBFF && i + 6 < s.size() &&
-                s[i + 1] == '\\' && s[i + 2] == 'u')
-            {
-                unsigned int lo = 0;
-                bool lok = true;
-                for (int k = 3; k <= 6; ++k)
-                {
-                    const int v = hex_val(s[i + k]);
-                    if (v < 0) { lok = false; break; }
-                    lo = (lo << 4) | (unsigned int)v;
-                }
-                if (lok && lo >= 0xDC00 && lo <= 0xDFFF)
-                {
-                    cp = 0x10000 + ((cp - 0xD800) << 10) + (lo - 0xDC00);
-                    i += 6;
-                }
-            }
-            json_append_utf8(out, cp);
-            break;
-        }
-        default: out += c; break;
-        }
-    }
-    return out;
-}
 
 
 // Canonical list of individually-scalable UI elements. Keys are stable and
@@ -291,8 +179,8 @@ void save_settings(const Settings &settings)
         << "\"album_backdrop_strength\":" << settings.album_backdrop_strength << ","
         << "\"backdrop_shader\":" << (settings.backdrop_shader ? "true" : "false") << ","
         << "\"safe_mode\":" << (settings.safe_mode ? "true" : "false") << ","
-        << "\"visualizer_mode\":" << std::max(0, std::min(2, settings.visualizer_mode)) << ","
-        << "\"show_visualizer\":" << (settings.show_visualizer ? "true" : "false") << ","
+        << "\"low_power\":" << (settings.low_power ? "true" : "false") << ","
+        << "\"low_power_on_battery\":" << (settings.low_power_on_battery ? "true" : "false") << ","
         << "\"glow_separators\":" << (settings.glow_separators ? "true" : "false") << ","
         << "\"glow_separator_strength\":" << settings.glow_separator_strength << ","
         << "\"backdrop_drift\":" << (settings.backdrop_drift ? "true" : "false") << ","
@@ -341,48 +229,12 @@ Settings load_settings()
 
     try
     {
-        auto get_str = [&](const std::string &key) -> std::string
-        {
-            size_t pos = json.find("\"" + key + "\":\"");
-            if (pos == std::string::npos)
-                return "";
-            pos += key.size() + 4;
-            size_t end = json.find("\"", pos);
-            if (end == std::string::npos)
-                return "";
-            return json.substr(pos, end - pos);
-        };
-        auto get_float = [&](const std::string &key) -> float
-        {
-            size_t pos = json.find("\"" + key + "\":");
-            if (pos == std::string::npos)
-                return 0.0f;
-            // Skip the opening quote, the key, the closing quote and the
-            // colon (= key.size() + 3) so we land on the first value char.
-            pos += key.size() + 3;
-            while (pos < json.size() && std::isspace((unsigned char)json[pos]))
-                ++pos;
-            std::string num;
-            if (pos < json.size() && (json[pos] == '-' || json[pos] == '+'))
-                num += json[pos++];
-            while (pos < json.size() && (isdigit(json[pos]) || json[pos] == '.'))
-            {
-                num += json[pos++];
-            }
-            if (num.empty() || num == "-" || num == "+")
-                return 0.0f;
-            return std::stof(num);
-        };
-        auto get_bool = [&](const std::string &key) -> bool
-        {
-            size_t pos = json.find("\"" + key + "\":");
-            if (pos == std::string::npos)
-                return false;
-            pos += key.size() + 2;
-            while (pos < json.size() && std::isspace((unsigned char)json[pos]))
-                ++pos;
-            return json.find("true", pos) < json.find("false", pos);
-        };
+        auto get_str = [&](const std::string &key)
+        { return jsonutil::get_string(json, key); };
+        auto get_float = [&](const std::string &key)
+        { return static_cast<float>(jsonutil::get_double(json, key)); };
+        auto get_bool = [&](const std::string &key)
+        { return jsonutil::get_bool(json, key); };
 
         s.crossfade_duration = get_float("crossfade_duration");
         if (s.crossfade_duration < 0)
@@ -531,10 +383,10 @@ Settings load_settings()
             s.backdrop_shader = get_bool("backdrop_shader");
         if (json.find("\"safe_mode\"") != std::string::npos)
             s.safe_mode = get_bool("safe_mode");
-        if (json.find("\"visualizer_mode\"") != std::string::npos)
-            s.visualizer_mode = std::max(0, std::min(2, (int)std::lround(get_float("visualizer_mode"))));
-        if (json.find("\"show_visualizer\"") != std::string::npos)
-            s.show_visualizer = get_bool("show_visualizer");
+        if (json.find("\"low_power\"") != std::string::npos)
+            s.low_power = get_bool("low_power");
+        if (json.find("\"low_power_on_battery\"") != std::string::npos)
+            s.low_power_on_battery = get_bool("low_power_on_battery");
         if (json.find("\"glow_separators\"") != std::string::npos)
             s.glow_separators = get_bool("glow_separators");
         if (json.find("\"glow_separator_strength\"") != std::string::npos)
@@ -562,32 +414,9 @@ Settings load_settings()
                 v = 3.0f;
             s.ui_elements[def.key] = v;
         }
-        // Free-form notes (multiline, JSON-escaped). Kept separate from
-        // get_str, which stops at the first quote and would truncate on
-        // embedded \". Keep the struct default (empty) when the key is
-        // absent from an older settings file.
+        // Free-form notes (multiline, JSON-escaped).
         if (json.find("\"notes\"") != std::string::npos)
-        {
-            size_t pos = json.find("\"notes\":\"");
-            if (pos != std::string::npos)
-            {
-                pos += 9; // strlen("\"notes\":\"")
-                size_t end = pos;
-                while (end < json.size())
-                {
-                    if (json[end] == '\\')
-                    {
-                        end += 2;
-                        continue;
-                    }
-                    if (json[end] == '"')
-                        break;
-                    ++end;
-                }
-                if (end <= json.size())
-                    s.notes = json_unescape(json.substr(pos, end - pos));
-            }
-        }
+            s.notes = jsonutil::get_string(json, "notes");
 
         // Party settings are stored as a nested object. Only settings live
         // here: the party token, guest ids and guest names are never written
@@ -601,50 +430,12 @@ Settings load_settings()
             if (obj != std::string::npos && end != std::string::npos && end > obj)
             {
                 const std::string pj = json.substr(obj, end - obj + 1);
-                auto pget_str = [&](const std::string &key) -> std::string
-                {
-                    size_t pos = pj.find("\"" + key + "\":\"");
-                    if (pos == std::string::npos)
-                        return "";
-                    pos += key.size() + 4;
-                    size_t close = pos;
-                    while (close < pj.size())
-                    {
-                        if (pj[close] == '\\')
-                        {
-                            close += 2;
-                            continue;
-                        }
-                        if (pj[close] == '"')
-                            break;
-                        ++close;
-                    }
-                    if (close > pj.size())
-                        return "";
-                    return json_unescape(pj.substr(pos, close - pos));
-                };
-                auto pget_num = [&](const std::string &key) -> int
-                {
-                    size_t pos = pj.find("\"" + key + "\":");
-                    if (pos == std::string::npos)
-                        return 0;
-                    pos += key.size() + 3;
-                    char *endp = nullptr;
-                    const long v = std::strtol(pj.c_str() + pos, &endp, 10);
-                    if (endp == pj.c_str() + pos)
-                        return 0;
-                    return (int)v;
-                };
-                auto pget_bool = [&](const std::string &key) -> bool
-                {
-                    size_t pos = pj.find("\"" + key + "\":");
-                    if (pos == std::string::npos)
-                        return false;
-                    pos += key.size() + 2;
-                    const size_t t = pj.find("true", pos);
-                    const size_t f = pj.find("false", pos);
-                    return t != std::string::npos && (f == std::string::npos || t < f);
-                };
+                auto pget_str = [&](const std::string &key)
+                { return jsonutil::get_string(pj, key); };
+                auto pget_num = [&](const std::string &key)
+                { return jsonutil::get_int(pj, key); };
+                auto pget_bool = [&](const std::string &key)
+                { return jsonutil::get_bool(pj, key); };
 
                 std::string name = pget_str("name");
                 if (!name.empty())
@@ -776,6 +567,7 @@ enum SettingsCategory
     SC_YOUTUBE,
     SC_SHORTCUTS,
     SC_LIBRARY,
+    SC_POWER,
     SC_DIAGNOSTICS,
     SC_NOTES,
     SC_DANGER,
@@ -816,6 +608,7 @@ static const SettingsNavEntry kSettingsNav[] = {
     {SC_YOUTUBE, UiIcon::Playlist, "YouTube Music", nullptr},
     {SC_LIBRARY, UiIcon::Download, "Library", "SYSTEM"},
     {SC_SHORTCUTS, UiIcon::More, "Shortcuts", nullptr},
+    {SC_POWER, UiIcon::Moon, "Power", nullptr},
     {SC_DIAGNOSTICS, UiIcon::Stats, "Diagnostics", nullptr},
     {SC_NOTES, UiIcon::Settings, "Notes", nullptr},
     {SC_DANGER, UiIcon::Close, "Danger Zone", nullptr},
@@ -1267,18 +1060,18 @@ static void settings_preview_card(const UiMetrics &m, float width)
                           ImVec2(text_x + line_w + m.space_2 + tw, yy + 4.0f * m.layout_scale),
                           ui_with_alpha(ui_text_muted_u32(), 0.30f), 2.0f);
     }
+    // Static bars: this card used to animate its equalizer forever, which
+    // pinned the whole app at 60 FPS whenever Settings was open.
     const float eq_x = text_right - 52.0f * m.layout_scale;
     const float eq_base = p1.y - pad;
-    const double now = ImGui::GetTime();
     for (int i = 0; i < 5; ++i)
     {
-        const float bh = (7.0f + 13.0f * (0.5f + 0.5f * std::sin((float)now * 4.2f + i * 0.9f))) *
+        const float bh = (7.0f + 13.0f * (0.5f + 0.5f * std::sin((float)i * 0.9f))) *
                          m.layout_scale;
         dl->AddRectFilled(ImVec2(eq_x + i * 9.0f * m.layout_scale, eq_base - bh),
                           ImVec2(eq_x + i * 9.0f * m.layout_scale + 4.0f * m.layout_scale, eq_base),
                           ui_accent_u32(0.65f), 2.0f);
     }
-    ui_anim_request();
 }
 
 static void settings_intro(const char *text)
@@ -1390,7 +1183,7 @@ void draw_settings_panel(AppState &state)
             settings_row_label("Accent colour",
                                state.settings.accent_color.empty() ? "Automatic"
                                                                   : state.settings.accent_color.c_str(),
-                               "Used for highlights, progress bars and the visualizer. Automatic follows your desktop accent or a fresh daily colour.");
+                               "Used for highlights, progress bars and accents. Automatic follows your desktop accent or a fresh daily colour.");
             {
                 const ImVec4 current = g_accent;
                 const ImVec2 row = ImGui::GetCursorScreenPos();
@@ -1539,22 +1332,6 @@ void draw_settings_panel(AppState &state)
                                         "%.2f", nullptr))
                     save = true;
             }
-        }
-
-        {
-            SettingsCard card("Navigation", "Choose what shows up in the sidebar.",
-                              UiIcon::Visualizer);
-            if (settings_toggle_row("##show_visualizer", "Visualizer in the sidebar",
-                                    &state.settings.show_visualizer,
-                                    "The visualizer is still experimental. It stays hidden unless you turn this on."))
-                save = true;
-            static const char *vis_modes[] = {"Bars", "Waves", "Orbits"};
-            settings_row_label("Visualizer style", vis_modes[std::max(0, std::min(2, state.settings.visualizer_mode))],
-                               "Bars is the punchy spectrum, Waves is the oscilloscope, Orbits wraps the spectrum around the cover.");
-            ImGui::SetNextItemWidth(field_w);
-            if (ImGui::Combo("##visualizer_mode", &state.settings.visualizer_mode,
-                             vis_modes, 3))
-                save = true;
         }
     }
     if (s_settings_category == SC_PLAYBACK)
@@ -2031,6 +1808,27 @@ void draw_settings_panel(AppState &state)
     else
         settings_help(("Currently " + std::to_string((int)state.settings.download_cap_gb) + " GB. Songs re-download if you raise the cap.").c_str());
 
+    }
+    if (s_settings_category == SC_POWER)
+    {
+        SettingsCard card("Power", "Spend less CPU, GPU and network while music plays.", UiIcon::Moon);
+
+        if (settings_toggle_row("##low_power", "Low power mode",
+                                &state.settings.low_power,
+                                "Caps the UI at a few frames per second, turns off motion and the ambient backdrop, and stops speculative stream warming and background downloads. Playback is unaffected."))
+            save = true;
+        if (settings_toggle_row("##low_power_battery", "Enable on battery",
+                                &state.settings.low_power_on_battery,
+                                "Turn low power mode on automatically when the system reports it is running on battery."))
+            save = true;
+
+        const char *state_label = power::low_power()
+                                      ? (power::on_battery() ? "On (battery)" : "On")
+                                      : "Off";
+        settings_row_label("Currently", state_label,
+                           power::env_forced()
+                               ? "P100_LOW_POWER is set, so low power mode is forced on."
+                               : nullptr);
     }
     if (s_settings_category == SC_DIAGNOSTICS)
     {
