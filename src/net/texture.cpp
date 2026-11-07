@@ -322,6 +322,59 @@ static TextureColor compute_dominant_color(const unsigned char *pixels, int widt
     return out;
 }
 
+// Thumbnails arrive as full 1280x720 covers but are drawn at 48-64 px in a
+// list row. Uploading the full image costs GPU memory and bandwidth for no
+// visible benefit, so shrink the longest side before it reaches the texture
+// cache. A simple box filter keeps the result crisp.
+static void downscale_rgba(const unsigned char *src, int sw, int sh,
+                           std::vector<unsigned char> &out, int &ow, int &oh)
+{
+    constexpr int kMaxDim = 512;
+    if (sw <= kMaxDim && sh <= kMaxDim)
+    {
+        out.assign(src, src + (size_t)sw * (size_t)sh * 4);
+        ow = sw;
+        oh = sh;
+        return;
+    }
+
+    const float scale = (float)kMaxDim / (float)std::max(sw, sh);
+    ow = std::max(1, (int)std::lround((float)sw * scale));
+    oh = std::max(1, (int)std::lround((float)sh * scale));
+    out.resize((size_t)ow * (size_t)oh * 4);
+
+    for (int y = 0; y < oh; ++y)
+    {
+        const int sy0 = (int)((long long)y * sh / oh);
+        const int sy1 = std::max(sy0 + 1, (int)((long long)(y + 1) * sh / oh));
+        for (int x = 0; x < ow; ++x)
+        {
+            const int sx0 = (int)((long long)x * sw / ow);
+            const int sx1 = std::max(sx0 + 1, (int)((long long)(x + 1) * sw / ow));
+            int r = 0, g = 0, b = 0, a = 0, n = 0;
+            for (int sy = sy0; sy < sy1 && sy < sh; ++sy)
+            {
+                for (int sx = sx0; sx < sx1 && sx < sw; ++sx)
+                {
+                    const unsigned char *p = src + ((size_t)sy * sw + sx) * 4;
+                    r += p[0];
+                    g += p[1];
+                    b += p[2];
+                    a += p[3];
+                    ++n;
+                }
+            }
+            if (n <= 0)
+                n = 1;
+            unsigned char *q = out.data() + ((size_t)y * ow + x) * 4;
+            q[0] = (unsigned char)(r / n);
+            q[1] = (unsigned char)(g / n);
+            q[2] = (unsigned char)(b / n);
+            q[3] = (unsigned char)(a / n);
+        }
+    }
+}
+
 // -----------------------------------------------------------------------
 // Background loader thread function
 // -----------------------------------------------------------------------
@@ -364,12 +417,10 @@ static void load_texture_async(const std::string &url)
     // Analyse the cover while it is already decoded (off the UI thread).
     store_texture_color(url, compute_dominant_color(pixels, width, height));
 
-    // Move pixels into a PendingTexture and push to queue
+    // Shrink before upload, then push the result to the GL queue.
     PendingTexture pending;
     pending.url = url;
-    pending.width = width;
-    pending.height = height;
-    pending.pixels.assign(pixels, pixels + width * height * 4);
+    downscale_rgba(pixels, width, height, pending.pixels, pending.width, pending.height);
     stbi_image_free(pixels);
 
     clear_failed(url); // in case an earlier attempt had failed
@@ -496,10 +547,12 @@ TextureInfo texture_info(const std::string &url)
                 data.data(), (int)data.size(), &w, &h, &ch, 4);
             if (pixels)
             {
-                std::vector<unsigned char> rgba(pixels, pixels + (size_t)w * h * 4);
+                std::vector<unsigned char> rgba;
+                int dw = 0, dh = 0;
                 store_texture_color(url, compute_dominant_color(pixels, w, h));
+                downscale_rgba(pixels, w, h, rgba, dw, dh);
                 stbi_image_free(pixels);
-                TextureInfo info = store_texture(url, rgba, w, h);
+                TextureInfo info = store_texture(url, rgba, dw, dh);
                 {
                     std::lock_guard<std::mutex> lock(failed_mutex);
                     failed_urls.erase(url);
@@ -523,11 +576,6 @@ TextureInfo texture_info(const std::string &url)
     }
 
     return info;
-}
-
-GLuint get_texture(const std::string &url)
-{
-    return texture_info(url).id;
 }
 
 TextureColor texture_dominant_color(const std::string &url)

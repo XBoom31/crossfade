@@ -50,13 +50,10 @@ struct AppState
 
     // YouTube account library (fetched from the backend). Main-thread only.
     std::vector<YouTubePlaylist> youtube_playlists;
-    std::shared_ptr<const std::vector<Track>> youtube_liked;
     std::shared_ptr<const std::vector<Track>> youtube_playlist_tracks;
     std::string youtube_playlist_loaded_id;
-    std::atomic<bool> youtube_liked_loading{false};
     std::atomic<bool> youtube_playlists_loading{false};
     std::atomic<bool> youtube_playlist_loading{false};
-    bool youtube_liked_loaded = false;
     bool youtube_playlists_loaded = false;
     bool youtube_playlists_refreshed = false;
     bool youtube_playlist_loaded_from_cache = false;
@@ -133,7 +130,6 @@ struct AppState
     // Set when the album fetch failed with no cached copy to show.
     bool album_failed = false;
     std::string album_error_msg;
-    std::atomic<bool> album_ready{false};
     // Album audio download progress (one album at a time). The worker only
     // touches the atomics; the browse id is main-thread bookkeeping.
     std::atomic<bool> album_downloading{false};
@@ -161,7 +157,6 @@ struct AppState
     // Set when the artist fetch failed with no cached copy to show.
     bool artist_failed = false;
     std::string artist_error_msg;
-    std::atomic<bool> artist_ready{false};
     Tab artist_return_tab = Tab::Home;
     PlaylistSource artist_return_source = PlaylistSource::HOME;
     int artist_return_playlist_index = -1;
@@ -219,7 +214,6 @@ struct AppState
     BackendError backend_status;
     // Human-readable message shown inline by the tab that failed; kept in
     // sync with backend_status by the fetch workers.
-    std::string backend_error;
     std::string current_title = "Nothing playing";
     std::string current_artist = "";
     std::string current_thumbnail_url;
@@ -287,7 +281,6 @@ struct AppState
     int queue_replace_index = 0;
     std::string queue_replace_id;
     int current_track_index = -1;
-    bool is_search_active = false;
     Tab pre_queue_tab = Tab::Home;
 
     // Listen-time accounting: a play is only counted after 10s of actual
@@ -313,11 +306,6 @@ struct AppState
     std::chrono::steady_clock::time_point sleep_deadline{};
 
     // Context menu
-    std::string context_track_id;
-    std::string context_track_title;
-    std::string context_track_artist;
-    std::string context_track_thumbnail;
-    std::string context_track_url;
 
     // Lyrics (side panel). Fetched independently of audio resolution (disk
     // cache first, then a metadata-only backend call) so it also works for

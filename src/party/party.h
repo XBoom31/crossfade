@@ -83,10 +83,7 @@ void party_tick(AppState &state, double position_sec, double duration_sec, bool 
 
 PartyStatus party_status();
 const PartySettings &party_active_settings();
-std::string party_url();
-std::string party_error();
 bool party_running();
-void party_set_last_error(const std::string &err);
 
 std::vector<PartyInterfaceInfo> party_interfaces();
 std::vector<PartyPendingRequest> party_pending_requests();
@@ -94,8 +91,6 @@ void party_approve(const std::string &request_id);
 void party_reject(const std::string &request_id);
 void party_approve_all();
 
-int party_guest_count();
-int party_requests_added();
 
 // ---- HTTP worker-thread surface ----
 namespace party_api
@@ -130,5 +125,4 @@ bool search(const std::string &guest_id, const std::string &query,
 std::string art_path(const std::string &video_id);
 
 std::string page_html();
-std::string accent_hex();
 } // namespace party_api

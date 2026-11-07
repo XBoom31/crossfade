@@ -132,7 +132,7 @@ void draw_youtube_panel(AppState &state)
 
     ImGui::BeginChild("YTPlaylistList", ImVec2(left_w, 0), ImGuiChildFlags_None,
                       ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoScrollWithMouse);
-    smooth_scroll_child("YTPlaylistList");
+    smooth_scroll_child();
 
     ui_section_header("Your YouTube Playlists", nullptr);
     for (int i = 0; i < (int)state.youtube_playlists.size(); ++i)
@@ -193,13 +193,12 @@ void draw_youtube_panel(AppState &state)
         }
     }
 
-    draw_scroll_edge_fades();
     ImGui::EndChild();
 
     ImGui::SameLine(0.0f, gap);
     ImGui::BeginChild("YTPlaylistTracks", ImVec2(0, 0), ImGuiChildFlags_None,
                       ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoScrollWithMouse);
-    smooth_scroll_child("YTPlaylistTracks");
+    smooth_scroll_child();
 
     if (selected < 0 || selected >= (int)state.youtube_playlists.size())
     {
@@ -358,6 +357,5 @@ void draw_youtube_panel(AppState &state)
     }
 
     ImGui::Dummy(ImVec2(0.0f, m.space_4));
-    draw_scroll_edge_fades();
     ImGui::EndChild();
 }

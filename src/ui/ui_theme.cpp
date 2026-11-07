@@ -153,11 +153,6 @@ static ImVec4 hairline_color()
     return c;
 }
 
-bool ui_glow_enabled()
-{
-    return g_glow_separators;
-}
-
 float ui_glow_level()
 {
     return g_glow_level;
@@ -190,6 +185,15 @@ bool ui_theme_is_light()
 float ui_theme_progress()
 {
     return g_theme_t;
+}
+
+bool ui_theme_animating()
+{
+    // True while the day/night palette or the separator glow is still easing.
+    // apply_ui_scale() uses this to avoid re-scaling the whole ImGui style on
+    // every frame while still letting theme transitions finish smoothly.
+    return g_theme_t != g_theme_target ||
+           std::fabs(g_glow_level - g_glow_strength) > 0.002f;
 }
 
 void ui_theme_tick()
@@ -234,11 +238,6 @@ const UiMetrics &ui_m()
 const UiColors &ui_c()
 {
     return g_colors;
-}
-
-float ui_scaled(float v)
-{
-    return v * g_metrics.layout_scale;
 }
 
 float ui_font_size(float base)
@@ -369,7 +368,6 @@ void ui_theme_apply(const Settings &settings, const ImGuiIO &io)
     const float widget = master * clampf(settings.ui_widget_scale, 0.5f, 2.0f);
     const float layout = master * clampf(settings.ui_layout_scale, 0.5f, 2.0f);
 
-    g_ui_scale = master;
     g_ui_layout_scale = layout;
     g_metrics.scale = master;
     g_metrics.text_scale = text;
@@ -532,21 +530,6 @@ void ui_push_small()
 void ui_push_body()
 {
     ui_push_regular(26.0f);
-}
-
-void ui_push_heading()
-{
-    ui_push_semibold(30.0f);
-}
-
-void ui_push_title()
-{
-    ui_push_semibold(34.0f);
-}
-
-void ui_push_display()
-{
-    ui_push_semibold(40.0f);
 }
 
 float ui_measure_width(ImFont *font, float base_size, const std::string &text)

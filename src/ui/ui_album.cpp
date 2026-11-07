@@ -81,7 +81,6 @@ static void play_album_track(AppState &state, int index)
     state.queue_replace_index = index;
     state.queue_replace_id = t.id;
     state.current_playlist_source = PlaylistSource::ALBUM;
-    state.is_search_active = false;
 
     state.pending_play_url = t.url;
     state.pending_play_title = t.title;
@@ -151,7 +150,6 @@ static void fetch_album_into(AppState &state, const std::string &browse_id)
         state.album_description = album.description;
         state.album_thumbnail_url = album.thumbnail_url;
         state.album_tracks = std::move(album.tracks);
-        state.album_ready = true;
         state.album_failed = false;
         state.album_error_msg.clear();
         state.repaint_requested = true;
@@ -160,7 +158,6 @@ static void fetch_album_into(AppState &state, const std::string &browse_id)
     {
         BackendError err = take_backend_error();
         std::lock_guard<std::recursive_mutex> lock(state.album_mutex);
-        state.album_ready = true;
         // Only flag the failure when there's nothing to show; a stale cached
         // album on screen just gets the toast.
         if (state.album_tracks.empty() && err)
@@ -218,7 +215,6 @@ void open_album_view(AppState &state, const std::string &browse_id)
         prefetch_urls_for(state.album_tracks, state.album_tracks.size());
     }
     state.album_loading = !had_cache;
-    state.album_ready = had_cache;
     state.album_failed = false;
     state.album_error_msg.clear();
     state.current_tab = Tab::Album;
@@ -259,7 +255,6 @@ void open_album_from_track(AppState &state, const Track &track)
     state.album_thumbnail_url = track.thumbnail_url;
     state.album_tracks.clear();
     state.album_loading = true;
-    state.album_ready = false;
     state.current_tab = Tab::Album;
     state.current_playlist_source = PlaylistSource::ALBUM;
 
@@ -309,7 +304,6 @@ void open_album_from_track(AppState &state, const Track &track)
         }
         {
             std::lock_guard<std::recursive_mutex> lock(state.album_mutex);
-            state.album_ready = true;
             state.album_loading = false;
             state.repaint_requested = true;
         }
@@ -420,7 +414,7 @@ void draw_albums_panel(AppState &state)
 
     ImGui::BeginChild("SavedAlbumsScroll", ImVec2(0, 0), ImGuiChildFlags_None,
                       ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoScrollWithMouse);
-    smooth_scroll_child("SavedAlbumsScroll");
+    smooth_scroll_child();
 
     const float gap = m.card_gap;
     const float available = ImGui::GetContentRegionAvail().x;
@@ -472,7 +466,6 @@ void draw_albums_panel(AppState &state)
     }
 
     ImGui::Dummy(ImVec2(0.0f, m.space_4));
-    draw_scroll_edge_fades();
     ImGui::EndChild();
 
     if (remove_index >= 0 && remove_index < (int)state.saved_albums.size())
@@ -642,7 +635,7 @@ void draw_album_panel(AppState &state)
 
     ImGui::BeginChild("AlbumTracks", ImVec2(0, 0), ImGuiChildFlags_None,
                       ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoScrollWithMouse);
-    smooth_scroll_child("AlbumTracks");
+    smooth_scroll_child();
 
     if (state.album_tracks.empty())
     {
@@ -693,6 +686,5 @@ void draw_album_panel(AppState &state)
         ui_track_row(state, row, i, opt);
     }
     ImGui::Dummy(ImVec2(0.0f, m.space_4));
-    draw_scroll_edge_fades();
     ImGui::EndChild();
 }

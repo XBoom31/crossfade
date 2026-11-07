@@ -98,9 +98,8 @@ ImU32 ui_border_u32();
 ImU32 ui_border_soft_u32();
 
 // Glowing separators (Settings -> Appearance).
-// `ui_glow_enabled` mirrors the toggle; `ui_glow_level` is its eased strength
+// `ui_glow_level` is the eased glow strength.
 // (0 when off), so switching the option fades instead of snapping.
-bool ui_glow_enabled();
 float ui_glow_level();
 
 // Structural hairline colour: the soft border, tinted toward the ambient album
@@ -110,6 +109,7 @@ ImU32 ui_overlay_u32(float alpha = 1.0f);
 ImVec4 ui_overlay_vec4(float alpha = 1.0f);
 bool ui_theme_is_light();
 float ui_theme_progress();
+bool ui_theme_animating();
 void ui_theme_tick();
 
 // Multiply an existing packed colour's alpha by `alpha` (0..1). Useful for
@@ -124,7 +124,6 @@ inline ImU32 ui_with_alpha(ImU32 col, float alpha)
     return (col & ~IM_COL32_A_MASK) | (a << IM_COL32_A_SHIFT);
 }
 
-float ui_scaled(float v);
 float ui_font_size(float base);
 void ui_push_regular(float base_size = 0.0f);
 void ui_push_medium(float base_size = 0.0f);
@@ -132,9 +131,6 @@ void ui_push_semibold(float base_size = 0.0f);
 void ui_push_micro();
 void ui_push_small();
 void ui_push_body();
-void ui_push_heading();
-void ui_push_title();
-void ui_push_display();
 
 float ui_measure_width(ImFont *font, float base_size, const std::string &text);
 std::string ui_ellipsize(ImFont *font, float base_size, const std::string &text, float max_width);

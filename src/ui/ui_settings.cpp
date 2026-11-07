@@ -123,9 +123,6 @@ static std::string json_escape(const std::string &s)
 const std::vector<UiElementDef> &ui_element_defs()
 {
     static const std::vector<UiElementDef> defs = {
-        {"topnav", "Top navigation bar"},
-        {"searchbar", "Search bar"},
-        {"bottombar", "Bottom bar"},
         {"list_thumb", "Track thumbnails"},
         {"list_row", "Track row spacing"},
         {"bottom_art", "Bottom album cover"},
@@ -1112,7 +1109,7 @@ void draw_settings_panel(AppState &state)
     ImGui::BeginChild("##settings_content", ImVec2(content_w, 0), ImGuiChildFlags_None,
                       ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoScrollWithMouse);
     ImGui::PopStyleVar();
-    smooth_scroll_child("##settings_content");
+    smooth_scroll_child();
     ImGui::PopStyleColor();
 
     if (s_settings_category == SC_APPEARANCE)

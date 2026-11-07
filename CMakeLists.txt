@@ -56,7 +56,6 @@ set(SOURCES
     src/app/app.cpp
     src/core/power.cpp
     src/core/tasks.cpp
-    src/data/config.cpp
     src/data/accent.cpp
     src/data/paths.cpp
     src/net/ytdlp.cpp

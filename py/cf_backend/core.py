@@ -527,87 +527,6 @@ def search_all(yt, query, limit=20):
     }
 
 
-def get_charts_tracks(yt, limit=50):
-    """
-    YouTube Music's global charts (most-played songs). get_charts() returns
-    sections keyed 'songs'/'videos' with {'rank', 'videoId', ...} items;
-    normalize the songs section through track_to_dict like everywhere else.
-    """
-    try:
-        charts = yt.get_charts()
-    except Exception as e:
-        return {'error': f"Failed to fetch charts: {str(e)}"}
-
-    tracks = []
-    seen_ids = set()
-    for s in (charts or {}).get('songs', []):
-        if not isinstance(s, dict):
-            continue
-        video_id = s.get('videoId')
-        if not video_id or video_id in seen_ids or not s.get('title'):
-            continue
-        seen_ids.add(video_id)
-        try:
-            d = track_to_dict(s)
-            d['rank'] = s.get('rank') or (len(tracks) + 1)
-            tracks.append(d)
-        except Exception:
-            continue
-        if len(tracks) >= limit:
-            break
-
-    if not tracks:
-        # The mobile get_charts() endpoint only exposes 'songs' in some
-        # regions/accounts. Elsewhere it returns chart *playlists* ("Daily
-        # Top Music Videos - ..."); fall back to the first one's tracks.
-        videos = (charts or {}).get('videos') or []
-        for vp in videos:
-            pid = (vp or {}).get('playlistId') if isinstance(vp, dict) else None
-            if not pid:
-                continue
-            try:
-                pl = yt.get_playlist(pid, limit=limit)
-            except Exception:
-                continue
-            for item in (pl or {}).get('tracks') or []:
-                if not isinstance(item, dict):
-                    continue
-                video_id = item.get('videoId')
-                if not video_id or video_id in seen_ids or not item.get('title'):
-                    continue
-                seen_ids.add(video_id)
-                try:
-                    tracks.append(track_to_dict(item))
-                except Exception:
-                    continue
-                if len(tracks) >= limit:
-                    break
-            if tracks:
-                break
-
-    if not tracks:
-        return {'error': 'Charts returned no songs (may be unavailable in this region).'}
-    return tracks
-
-
-def get_mood_categories(yt):
-    """Moods & genres: [{'title', 'params'}] — params feed get_mood_playlists."""
-    try:
-        return yt.get_mood_categories()
-    except Exception as e:
-        return {'error': f"Failed to fetch mood categories: {str(e)}"}
-
-
-def get_mood_playlists(yt, params):
-    """Playlists for one mood/genre category (params from get_mood_categories)."""
-    if not params:
-        return {'error': 'Missing mood params'}
-    try:
-        return yt.get_mood_playlists(params) or []
-    except Exception as e:
-        return {'error': f"Failed to fetch mood playlists: {str(e)}"}
-
-
 def _duration_seconds(value):
     """Normalise YT Music's human duration ("1 hr 25 min", "45 min") or seconds."""
     if isinstance(value, (int, float)):
@@ -1864,18 +1783,10 @@ def run_command_loop(yt, stdin=None, stdout=None):
                 result = get_lyrics(yt, arg) if arg else {'error': 'Missing video_id'}
             elif cmd == 'meta':
                 result = get_track_meta(yt, arg) if arg else {'error': 'Missing video_id'}
-            elif cmd == 'liked':
-                result = yt.get_liked_songs(limit=200)
             elif cmd == 'library_playlists':
                 result = yt.get_library_playlists(limit=100)
             elif cmd == 'playlist':
                 result = yt.get_playlist(arg, limit=1000) if arg else {'error': 'Missing playlist_id'}
-            elif cmd == 'charts':
-                result = get_charts_tracks(yt)
-            elif cmd == 'mood_categories':
-                result = get_mood_categories(yt)
-            elif cmd == 'mood_playlists':
-                result = get_mood_playlists(yt, arg)
             elif cmd == 'spotify_import':
                 result = import_spotify(yt, arg) if arg else {'error': 'Missing Spotify playlist'}
             elif cmd == 'spotify_library':

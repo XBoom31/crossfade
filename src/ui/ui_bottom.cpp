@@ -6,6 +6,7 @@
 #include "ui_theme.h"
 #include "mpvplayer.h"
 #include "texture.h"
+#include "power.h"
 
 #include <algorithm>
 #include <chrono>
@@ -145,9 +146,9 @@ void draw_bottom_bar(AppState &state, MpvPlayer &player)
         const bool fading = state.crossfade_active;
         const bool show_incoming = fading && state.crossfade_progress >= 0.5f;
         float edge_pos = show_incoming ? (float)state.crossfade_position
-                                       : (float)player.get_property_double("time-pos");
+                                       : (float)player.cached_time_pos();
         float edge_dur = show_incoming ? (float)state.crossfade_duration
-                                       : (float)player.get_property_double("duration");
+                                       : (float)player.cached_duration();
         if (edge_pos < 0.0f)
             edge_pos = 0.0f;
         const bool have_dur = edge_dur > 0.0f;
@@ -197,8 +198,15 @@ void draw_bottom_bar(AppState &state, MpvPlayer &player)
         const float spring_target = s_edge_seeking ? mouse_frac
                                     : now < s_hold_until ? s_hold_frac
                                     : edge_frac;
+        const bool interacting = edge_hover || s_edge_seeking;
+        // Keep the spring alive only while the user is interacting or for a
+        // short settle window after a seek. During steady playback the target
+        // moves by a fraction of a pixel per frame; integrating the spring
+        // there used to request a frame every time and pin the loop at 60 FPS.
+        const bool settling = now < s_hold_until + 0.75;
+        const bool animate_spring = interacting || settling;
 
-        s_hover_amt += ((edge_hover || s_edge_seeking ? 1.0f : 0.0f) - s_hover_amt) *
+        s_hover_amt += ((interacting ? 1.0f : 0.0f) - s_hover_amt) *
                        std::min(1.0f, dt * 10.0f);
 
         // ---- Position spring ----
@@ -211,10 +219,17 @@ void draw_bottom_bar(AppState &state, MpvPlayer &player)
             s_knob_frac = edge_frac;
             s_knob_vel = 0.0f;
         }
-        else if (!s_edge_seeking && now >= s_hold_until &&
-                 std::fabs(edge_frac - s_knob_frac) > 0.15f)
+        else if (!animate_spring)
         {
-            s_knob_frac = edge_frac; // track change / scrub elsewhere: snap, don't sweep back
+            // Steady playback: snap to the reported position. The progress
+            // line is a slow indicator; an eased sub-pixel chase is invisible.
+            s_knob_frac = spring_target;
+            s_knob_vel = 0.0f;
+        }
+        else if (!s_edge_seeking && now >= s_hold_until &&
+                 std::fabs(spring_target - s_knob_frac) > 0.15f)
+        {
+            s_knob_frac = spring_target; // track change / scrub elsewhere: snap, don't sweep back
             s_knob_vel = 0.0f;
         }
         else
@@ -234,13 +249,21 @@ void draw_bottom_bar(AppState &state, MpvPlayer &player)
         const float r_target = have_dur ? ((s_edge_seeking ? 9.5f : edge_hover ? 7.0f : 4.0f) *
                                             m.layout_scale)
                                         : 0.0f;
-        s_knob_rvel += (r_target - s_knob_r) * 300.0f * dt;
-        s_knob_rvel *= std::exp(-16.0f * dt);
-        s_knob_r += s_knob_rvel * dt;
-        if (std::fabs(r_target - s_knob_r) < 0.02f && std::fabs(s_knob_rvel) < 0.05f)
+        if (!animate_spring)
         {
             s_knob_r = r_target;
             s_knob_rvel = 0.0f;
+        }
+        else
+        {
+            s_knob_rvel += (r_target - s_knob_r) * 300.0f * dt;
+            s_knob_rvel *= std::exp(-16.0f * dt);
+            s_knob_r += s_knob_rvel * dt;
+            if (std::fabs(r_target - s_knob_r) < 0.02f && std::fabs(s_knob_rvel) < 0.05f)
+            {
+                s_knob_r = r_target;
+                s_knob_rvel = 0.0f;
+            }
         }
 
         const float display_frac = std::clamp(s_knob_frac, 0.0f, 1.0f);
@@ -348,9 +371,14 @@ void draw_bottom_bar(AppState &state, MpvPlayer &player)
 
         // Keep the loop at full rate while anything here moves: the wave
         // undulates, the springs are mid-flight, or the hover weight eases.
-        if (wave_amp > 0.15f || std::fabs(s_knob_vel) > 0.002f ||
-            std::fabs(s_knob_rvel) > 0.05f ||
-            std::fabs((edge_hover || s_edge_seeking ? 1.0f : 0.0f) - s_hover_amt) > 0.01f)
+        // Low power keeps the seek bar at the slow cadence unless a real
+        // input event is driving it (the loop already grants a short fast
+        // window for drags/clicks).
+        if (!power::low_power() &&
+            (animate_spring || wave_amp > 0.15f ||
+             std::fabs(s_knob_vel) > 0.002f ||
+             std::fabs(s_knob_rvel) > 0.05f ||
+             std::fabs((interacting ? 1.0f : 0.0f) - s_hover_amt) > 0.01f))
             ui_anim_request();
     }
 

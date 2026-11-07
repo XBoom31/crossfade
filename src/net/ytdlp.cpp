@@ -1348,37 +1348,6 @@ std::vector<Track> fetch_radio(const std::string &video_id)
     return tracks;
 }
 
-std::vector<Track> fetch_youtube_liked()
-{
-    std::string response = send_command("liked");
-    if (response.empty() || response.find("\"error\"") != std::string::npos)
-        return {};
-    std::vector<Track> tracks;
-    size_t pos = 0;
-    int guard = 0;
-    while ((pos = response.find("\"videoId\"", pos)) != std::string::npos && guard < 500)
-    {
-        std::string obj = json_find_object(response, pos);
-        if (obj.empty())
-        {
-            pos += 9;
-            continue;
-        }
-        Track t;
-        parse_track_object(obj, t);
-        if (!t.id.empty() && !t.title.empty())
-            tracks.push_back(std::move(t));
-        pos = response.find('}', pos);
-        if (pos == std::string::npos)
-            break;
-        pos += 1;
-        guard++;
-    }
-    if (tracks.empty())
-        return parse_track_array(response);
-    return tracks;
-}
-
 std::vector<YouTubePlaylist> parse_youtube_playlists_response(const std::string &response)
 {
     std::vector<YouTubePlaylist> out;
@@ -1645,61 +1614,6 @@ std::vector<std::pair<std::string, std::string>> backend_playlist_items(
         guard++;
     }
     return out;
-}
-
-
-// ------------------ Browse: charts & moods ------------------
-std::vector<Track> fetch_charts()
-{
-    std::string response = send_command("charts");
-    if (response.empty() || response.find("\u0022error\u0022") != std::string::npos)
-        return {};
-    return parse_track_array(response);
-}
-
-std::vector<MoodCategory> parse_mood_categories_response(const std::string &response)
-{
-    std::vector<MoodCategory> out;
-    size_t pos = 0;
-    int guard = 0;
-    while ((pos = response.find("\"params\"", pos)) != std::string::npos && guard < 200)
-    {
-        std::string obj = json_find_object(response, pos);
-        if (obj.empty())
-        {
-            pos += 8;
-            continue;
-        }
-        MoodCategory mc;
-        mc.title = json_get_string(obj, "title");
-        mc.params = json_get_string(obj, "params");
-        if (!mc.params.empty())
-            out.push_back(std::move(mc));
-        pos = response.find('}', pos);
-        if (pos == std::string::npos)
-            break;
-        pos += 1;
-        guard++;
-    }
-    return out;
-}
-
-std::vector<MoodCategory> fetch_mood_categories()
-{
-    std::string response = send_command("mood_categories");
-    if (response.empty() || response.find("\"error\"") != std::string::npos)
-        return {};
-    return parse_mood_categories_response(response);
-}
-
-std::vector<YouTubePlaylist> fetch_mood_playlists(const std::string &params)
-{
-    if (params.empty())
-        return {};
-    std::string response = send_command("mood_playlists " + params);
-    if (response.empty() || response.find("\"error\"") != std::string::npos)
-        return {};
-    return parse_youtube_playlists_response(response);
 }
 
 static PodcastShow parse_podcast_show(const std::string &obj)

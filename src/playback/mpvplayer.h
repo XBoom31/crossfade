@@ -16,7 +16,6 @@ public:
     ~MpvPlayer();
 
     void play(const std::string &url);      // replaces playlist with this track
-    void load_next(const std::string &url); // appends to playlist for crossfade
     void stop();
     void toggle_pause();
     void set_paused(bool paused);

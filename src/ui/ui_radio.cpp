@@ -162,9 +162,6 @@ static std::vector<RadioSeed> collect_radio_seeds(const AppState &state)
     if (auto recs = std::atomic_load(&state.recommendations))
         for (const auto &t : *recs)
             merge_meta(meta, t);
-    if (auto yt = std::atomic_load(&state.youtube_liked))
-        for (const auto &t : *yt)
-            merge_meta(meta, t);
 
     std::vector<RadioSeed> out;
     out.reserve(plays.size());
@@ -245,8 +242,6 @@ static std::vector<RadioSeed> radio_seeds_cached(const AppState &state)
     mix(state.stats.tracks.size());
     if (auto rec = std::atomic_load(&state.recommendations))
         mix(rec->size());
-    if (auto yt = std::atomic_load(&state.youtube_liked))
-        mix(yt->size());
     mix(state.stats_dirty ? 1 : 0);
 
     if (s_valid && sig == s_sig)
@@ -1138,6 +1133,9 @@ void draw_radio_panel(AppState &state)
             }
         }
         ImGui::SetCursorScreenPos(ImVec2(origin.x, origin.y + h + m.space_3));
+        // ImGui requires an item after SetCursor*Pos() when the cursor grows
+        // the parent: without this the station-error panel asserts at EndChild.
+        ImGui::Dummy(ImVec2(0.0f, 0.0f));
     }
     else if (tracks && !tracks->empty())
     {
@@ -1172,5 +1170,4 @@ void draw_radio_panel(AppState &state)
         ImGui::Dummy(ImVec2(0.0f, m.space_4));
     }
 
-    draw_scroll_edge_fades();
 }

@@ -762,12 +762,6 @@ void party_stop()
     party_server_stop();
 }
 
-void party_set_last_error(const std::string &err)
-{
-    std::lock_guard<std::mutex> lock(g_mu);
-    g_error = err;
-}
-
 bool party_running()
 {
     std::lock_guard<std::mutex> lock(g_mu);
@@ -791,18 +785,6 @@ PartyStatus party_status()
 const PartySettings &party_active_settings()
 {
     return g_settings;
-}
-
-std::string party_url()
-{
-    std::lock_guard<std::mutex> lock(g_mu);
-    return g_url;
-}
-
-std::string party_error()
-{
-    std::lock_guard<std::mutex> lock(g_mu);
-    return g_error;
 }
 
 std::vector<PartyInterfaceInfo> party_interfaces()
@@ -897,18 +879,6 @@ void party_approve_all()
     g_app->queue_dirty = true;
     g_app->repaint_requested = true;
     publish_locked(*g_app, g_last_pos, g_last_dur, g_last_paused, true);
-}
-
-int party_guest_count()
-{
-    std::lock_guard<std::mutex> lock(g_mu);
-    return (int)g_guests.size();
-}
-
-int party_requests_added()
-{
-    std::lock_guard<std::mutex> lock(g_mu);
-    return g_requests_added;
 }
 
 void party_tick(AppState &state, double position_sec, double duration_sec, bool paused)
@@ -1350,7 +1320,13 @@ bool search(const std::string &guest_id, const std::string &query, std::string &
         }
     }
 
-    std::vector<Track> tracks = fetch_search(q);
+    bool failed = false;
+    std::vector<Track> tracks = fetch_search(q, &failed);
+    if (failed)
+    {
+        http = 503;
+        return false;
+    }
     std::string out = "[";
     bool first = true;
     int n = 0;
@@ -1414,12 +1390,6 @@ std::string page_html()
     replace_all(html, "__PARTY_NAME__", name);
     replace_all(html, "__ACCENT__", party_util::safe_accent(accent));
     return html;
-}
-
-std::string accent_hex()
-{
-    std::lock_guard<std::mutex> lock(g_mu);
-    return g_accent_hex;
 }
 
 } // namespace party_api

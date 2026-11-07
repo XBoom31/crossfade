@@ -71,12 +71,6 @@ void MpvPlayer::set_af(const std::string &af)
     set_property("af", af); // empty string clears the filter chain
 }
 
-void MpvPlayer::load_next(const std::string &url)
-{
-    const char *cmd[] = {"loadfile", url.c_str(), "append-play", nullptr};
-    mpv_command_async(mpv.get(), 0, cmd);
-}
-
 void MpvPlayer::stop()
 {
     replacing = false; // a genuine stop: any pending swap marker is void

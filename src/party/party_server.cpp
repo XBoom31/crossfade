@@ -569,8 +569,3 @@ int party_server_port()
     return g_cfg.port;
 }
 
-std::string party_server_bound_ip()
-{
-    std::lock_guard<std::mutex> lock(g_server_mutex);
-    return g_cfg.bind_ip;
-}

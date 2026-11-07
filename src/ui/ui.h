@@ -4,7 +4,6 @@
 #include "app_state.h"
 
 // layout factor. See apply_ui_scale() in main.cpp.
-extern float g_ui_scale;        // master scale (informational)
 extern float g_ui_layout_scale; // effective layout factor (master * layout)
 inline float ui_px(float v) { return v * g_ui_layout_scale; }
 
@@ -21,10 +20,6 @@ inline float ui_elem(const char *name, float base)
     return base * g_ui_layout_scale * m;
 }
 
-extern float kTopNavH;
-extern float kSearchBarH;
-extern float kBottomBarH;
-static constexpr float kLyricsPanelW = 380.0f;
 
 struct ScopedNoMinSize
 {
@@ -98,7 +93,6 @@ void draw_party_panel(AppState &state);
 void draw_podcasts_panel(AppState &state);
 void close_podcast_show(AppState &state);
 void load_podcast_library(AppState &state);
-void draw_visualizer_panel(AppState &state);
 // Fullscreen QR takeover (Esc or the close button returns to the app).
 void draw_party_fullscreen(AppState &state);
 // Small bottom-bar chip shown only while a party is running.
@@ -147,7 +141,6 @@ bool load_lyrics_cache(const std::string &video_id, Lyrics &out);
 void save_lyrics_cache(const std::string &video_id, const Lyrics &lyrics);
 
 // Shared UI helpers
-std::string truncate_text(const std::string &text, float max_width_px);
 // Return to the previous logical view (album/artist/queue, or Home from
 // Settings). Used by the header back button and the Escape shortcut.
 void ui_go_back(AppState &state);
@@ -218,12 +211,11 @@ void add_scroll_pixels(float delta_pixels);
 void scroll_clamp_feedback(float unapplied);
 float take_scroll_clamp_feedback();
 void smooth_scroll_begin_frame();
-void smooth_scroll_child(const char *window_name);
-bool is_scroll_animating();
+void smooth_scroll_child();
 
 // Lyrics panel animation signal. The panel sets this while its auto-centre
 // scroll / fade-in is running; the main loop consumes it (like
-// is_scroll_animating) to keep rendering at 60 FPS until the motion settles.
+// UI motion) to keep rendering at 60 FPS until the motion settles.
 void set_lyrics_animating(bool active);
 bool is_lyrics_animating();
 
@@ -275,9 +267,6 @@ double ui_anim_scroll_reveal(int scope, int index, const std::string &id,
 // Fades a thumbnail in the first time it becomes available (per URL).
 float ui_anim_texture_alpha(const std::string &url);
 
-// Soft top/bottom gradients on a scrollable list child. Call just before
-// EndChild() so the gradients sit above the rows but inside the child clip.
-void draw_scroll_edge_fades();
 // Alpha multiplier for a piece of scroll content at the top/bottom edge of
 // the current window. Fades the content itself (rows, cards, lyric lines)
 // instead of painting a background-coloured overlay over it.
@@ -288,8 +277,9 @@ float ui_content_edge_alpha(float top_y, float bottom_y);
 // ----------------------------------------------------------------------
 void draw_sidebar(AppState &state);
 // Warm stream URLs for the first `count` uncached tracks of a list (main.cpp).
-// Serialized on the main backend channel (never the play channel); pass
-// `cancel_search_id` to abort remaining entries when search_id moves on.
+// Serialized on the dedicated prefetch backend channel (never the main or play
+// channel); pass `cancel_search_id` to abort remaining entries when search_id
+// moves on.
 void prefetch_urls_for(const std::vector<Track> &tracks, size_t count,
                        int cancel_search_id = 0);
 // Serial variant: one backend request at a time, cancelled when `cancel_token`

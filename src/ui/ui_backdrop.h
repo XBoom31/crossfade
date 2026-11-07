@@ -30,12 +30,6 @@ float ui_backdrop_visibility();
 // backdrop is off, transparent as it fades in.
 ImVec4 ui_backdrop_window_bg();
 
-// Approximate final on-screen colour of the backdrop at a screen position
-// (fully composited over the theme background, alpha = 1). Used by the list /
-// lyrics edge fades so they dissolve into the ambient glow instead of
-// smearing an opaque black band over it.
-ImVec4 ui_backdrop_sample(const ImVec2 &screen_pos);
-
 // Current ambient tint (lifted dominant cover colour, or the app accent when
 // nothing is loaded). Independent of whether the full backdrop is enabled, so
 // the glowing separators can follow the album colour on their own. Alpha = 1.

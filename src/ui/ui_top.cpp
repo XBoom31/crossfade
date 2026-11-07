@@ -410,13 +410,6 @@ void draw_sidebar(AppState &state)
     nav_item(state, Tab::Downloads, UiIcon::Download, "Downloads", rail);
     nav_item(state, Tab::Radio, UiIcon::Radio, "Radio", rail);
     nav_item(state, Tab::Podcasts, UiIcon::Podcast, "Podcasts", rail);
-    if (state.settings.show_visualizer)
-        nav_item(state, Tab::Visualizer, UiIcon::Visualizer, "Visualizer", rail);
-    else if (state.current_tab == Tab::Visualizer)
-    {
-        state.current_tab = Tab::Home;
-        state.current_playlist_source = PlaylistSource::HOME;
-    }
     nav_item(state, Tab::Liked, UiIcon::Heart, "Liked", rail);
     nav_item(state, Tab::History, UiIcon::History, "History", rail);
     nav_item(state, Tab::Stats, UiIcon::Stats, "Stats", rail);
@@ -624,7 +617,6 @@ static const char *view_title(const AppState &s)
     case Tab::Album: return "Album";
     case Tab::Artist: return "Artist";
     case Tab::Podcasts: return "Podcasts";
-    case Tab::Visualizer: return "Visualizer";
     case Tab::Settings: return "Settings";
     case Tab::Smart: return "Smart";
     }
@@ -659,7 +651,6 @@ static std::string view_subtitle(const AppState &s)
     case Tab::Queue: return "Playback queue";
     case Tab::Party: return "Let guests add songs from their phones";
     case Tab::Podcasts: return "Shows and episodes";
-    case Tab::Visualizer: return "A little light for your music";
     case Tab::Settings: return "Make crossfade yours";
     default: return s.status_text;
     }
@@ -711,7 +702,7 @@ static bool header_refresh_button(AppState &state, const ImVec2 &pos, float widt
     const float cy = p0.y + height * 0.5f;
 
     const float spin = busy ? (float)ImGui::GetTime() * 4.5f : 0.0f;
-    if (busy)
+    if (busy && ui_animations_enabled())
         ui_anim_request();
     const ImU32 icon_col = busy ? ui_accent_text_u32()
                                 : (hovered ? ui_accent_text_u32() : ui_text_dim_u32());

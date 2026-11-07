@@ -290,7 +290,7 @@ void draw_playlists_panel(AppState &state)
 
     ImGui::BeginChild("PlaylistList", ImVec2(left_w, 0), ImGuiChildFlags_None,
                       ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoScrollWithMouse);
-    smooth_scroll_child("PlaylistList");
+    smooth_scroll_child();
 
     ui_section_header("Your Library", nullptr);
     ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(m.space_2, m.space_2));
@@ -406,7 +406,7 @@ void draw_playlists_panel(AppState &state)
                                       ImGuiChildFlags_None,
                                       ImGuiWindowFlags_NoBackground |
                                           ImGuiWindowFlags_NoScrollWithMouse);
-                    smooth_scroll_child("##spotify_library");
+                    smooth_scroll_child();
                     for (const auto &entry : *library)
                         spotify_library_row(state, entry, list_w - m.space_2);
                     ImGui::EndChild();
@@ -557,7 +557,6 @@ void draw_playlists_panel(AppState &state)
         ImGui::PopFont();
     }
 
-    draw_scroll_edge_fades();
     ImGui::EndChild();
 
     const ImVec2 line_start = ImGui::GetCursorScreenPos();
@@ -568,7 +567,7 @@ void draw_playlists_panel(AppState &state)
 
     ImGui::BeginChild("PlaylistTracks", ImVec2(0, 0), ImGuiChildFlags_None,
                       ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoScrollWithMouse);
-    smooth_scroll_child("PlaylistTracks");
+    smooth_scroll_child();
 
     if (state.selected_playlist_index < 0 || state.selected_playlist_index >= (int)state.playlists.size())
     {
@@ -710,7 +709,6 @@ void draw_playlists_panel(AppState &state)
         }
     }
 
-    draw_scroll_edge_fades();
     ImGui::EndChild();
 
     if (delete_index >= 0)

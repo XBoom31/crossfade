@@ -23,7 +23,6 @@ namespace
 {
 sqlite3 *g_db = nullptr;
 bool g_ready = false;
-bool g_imported = false;
 std::string g_error;
 std::string g_backup_dir;
 std::recursive_mutex g_mu;
@@ -549,7 +548,6 @@ bool init(std::string &error)
             g_ready = false;
             return false;
         }
-        g_imported = true;
     }
     g_ready = true;
     // Keep the library index complete even if the Downloads tab is never
@@ -1222,7 +1220,6 @@ void shutdown()
         g_db = nullptr;
     }
     g_ready = false;
-    g_imported = false;
     g_error.clear();
     g_backup_dir.clear();
 }

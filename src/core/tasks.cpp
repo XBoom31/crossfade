@@ -56,11 +56,15 @@ void spawn(std::function<void()> fn)
     entry.finished = finished;
     entry.thread = std::thread([fn = std::move(fn), finished]() mutable {
         fn();
-        finished->store(true);
+        // Decrement while holding g_mu *before* publishing `finished`. spawn()
+        // prunes under g_mu and joins any entry whose `finished` flag is set;
+        // setting it first let the main thread join this worker while the
+        // worker was still waiting for g_mu, deadlocking the UI forever.
         {
             std::lock_guard<std::mutex> done_lock(g_mu);
             --g_active;
         }
+        finished->store(true);
         g_cv.notify_all();
     });
     g_workers.push_back(std::move(entry));

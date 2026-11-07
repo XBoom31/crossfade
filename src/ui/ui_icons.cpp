@@ -237,15 +237,6 @@ void ui_draw_icon(ImDrawList *dl, UiIcon icon, ImVec2 c, float s, ImU32 col, flo
         dl->AddLine(p(c, s, 0.0f, 0.56f), p(c, s, 0.0f, 0.40f), col, t);
         dl->AddLine(p(c, s, -0.24f, 0.56f), p(c, s, 0.24f, 0.56f), col, t);
         break;
-    case UiIcon::Visualizer:
-        // A little spectrum: five bars with rounded caps.
-        for (int i = 0; i < 5; ++i)
-        {
-            const float x = -0.36f + i * 0.18f;
-            const float hh = 0.14f + 0.12f * (float)((i * 7 + 3) % 5);
-            dl->AddLine(p(c, s, x, 0.40f), p(c, s, x, 0.40f - hh), col, t);
-        }
-        break;
     case UiIcon::Qr:
     {
         // Three finder patterns and a few data modules.

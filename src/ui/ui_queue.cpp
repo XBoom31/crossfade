@@ -10,7 +10,7 @@
 void draw_queue_panel(AppState &state)
 {
     const UiMetrics &m = ui_m();
-    smooth_scroll_child("PageContent");
+    smooth_scroll_child();
 
     const int count = (int)state.play_queue.size();
     const std::string meta = std::to_string(count) + (count == 1 ? " track" : " tracks");
@@ -72,5 +72,4 @@ void draw_queue_panel(AppState &state)
     }
 
     ImGui::Dummy(ImVec2(0.0f, m.space_4));
-    draw_scroll_edge_fades();
 }

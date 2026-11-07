@@ -36,7 +36,6 @@ enum class UiIcon
     Moon,
     Party,
     Podcast,
-    Visualizer,
     Qr
 };
 

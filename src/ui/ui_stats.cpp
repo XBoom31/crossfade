@@ -758,5 +758,4 @@ void draw_stats_panel(AppState &state)
         }
     }
     ImGui::Dummy(ImVec2(0.0f, m.space_4));
-    draw_scroll_edge_fades();
 }

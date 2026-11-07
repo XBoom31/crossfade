@@ -26,7 +26,6 @@
 #include <random>
 #include <cmath>
 #include <unordered_set>
-#include "config.h"
 #include "version.h"
 #include "accent.h"
 #include "paths.h"
@@ -43,6 +42,7 @@
 #include "diagnostics.h"
 #include "writeback.h"
 #include "discord_rpc.h"
+#include "power.h"
 
 // ---- libnotify (Linux desktop notifications; no-op on Windows) ----
 #ifndef P100_WINDOWS
@@ -63,7 +63,6 @@ static MpvPlayer *g_player_raw = nullptr;
 // Second mpv instance used to fade in the next track while the main one
 // fades out; after the swap the roles reverse for the next crossfade.
 static std::unique_ptr<MpvPlayer> g_fade_player;
-static MpvPlayer *g_fade_player_raw = nullptr;
 static class MprisPlayer *g_mpris = nullptr;
 // The main and fade player event handlers, stored so they can be re-bound
 // when the two players swap roles at the end of a crossfade (each MpvPlayer
@@ -97,12 +96,8 @@ static void party_wake_event()
 // and ui_px() (ui.h) scales every other explicit pixel value by the layout
 // factor. FontScaleMain handles text and ScaleAllSizes the widget metrics.
 // ----------------------------------------------------------------------
-float g_ui_scale = 1.0f;        // master scale
 float g_ui_layout_scale = 1.0f; // effective layout factor (master * layout)
 std::unordered_map<std::string, float> g_ui_elem; // resolved per-element multipliers
-float kTopNavH = 72.0f;
-float kSearchBarH = 60.0f;
-float kBottomBarH = 105.0f * 1.8f;
 static std::string g_imgui_ini_path;
 
 static float clampf(float v, float lo, float hi)
@@ -113,23 +108,19 @@ static float clampf(float v, float lo, float hi)
 static void apply_ui_scale(const Settings &s)
 {
     ui_theme_apply(s, ImGui::GetIO());
-    g_ui_scale = ui_m().scale;
     g_ui_layout_scale = ui_m().layout_scale;
-    g_ui_animation_level = std::max(0, std::min(3, s.animations));
+    // Low power mode uses the "motion off" profile for this session without
+    // touching the user's saved animation preference.
+    g_ui_animation_level = power::low_power()
+                               ? 0
+                               : std::max(0, std::min(3, s.animations));
+    power::configure(s.low_power, s.low_power_on_battery);
+    power::refresh();
 
     g_ui_elem.clear();
     for (const auto &kv : s.ui_elements)
         g_ui_elem[kv.first] = clampf(kv.second, 0.25f, 3.0f);
 
-    auto em = [&](const char *key) -> float
-    {
-        auto it = g_ui_elem.find(key);
-        return it != g_ui_elem.end() ? it->second : 1.0f;
-    };
-
-    kTopNavH = ui_m().header_h * em("topnav");
-    kSearchBarH = ui_m().header_h * em("searchbar");
-    kBottomBarH = ui_m().bottom_h * em("bottombar");
 }
 
 struct PlayRequest
@@ -633,8 +624,6 @@ static TrackListPtr get_playlist()
         return std::atomic_load(&g_state.radio_results);
     case PlaylistSource::LIKED:
         return alias_of(g_state.liked_tracks);
-    case PlaylistSource::YOUTUBE_LIKED:
-        return std::atomic_load(&g_state.youtube_liked);
     case PlaylistSource::YOUTUBE_PLAYLIST:
         return std::atomic_load(&g_state.youtube_playlist_tracks);
     case PlaylistSource::PLAYLIST:
@@ -806,6 +795,8 @@ static void resolve_audio(const std::string &video_id, const std::string &video_
 void prefetch_urls_for(const std::vector<Track> &tracks, size_t count,
                        int cancel_search_id)
 {
+    if (power::low_power())
+        return; // no speculative network work in low power mode
     std::vector<std::string> ids;
     ids.reserve(std::min(count, tracks.size()));
     for (const Track &t : tracks)
@@ -857,6 +848,8 @@ void prefetch_urls_for_serial(const std::vector<Track> &tracks, size_t count,
                               const std::atomic<uint64_t> *cancel_token,
                               uint64_t token)
 {
+    if (power::low_power())
+        return; // no speculative network work in low power mode
     std::vector<std::string> ids;
     ids.reserve(std::min(count, tracks.size()));
     for (const Track &t : tracks)
@@ -936,6 +929,8 @@ static void cover_sweep_worker(std::vector<Track> tracks)
 
 static void maybe_sweep_missing_covers()
 {
+    if (power::low_power())
+        return;
     if (!g_state.downloaded_loaded || g_state.downloaded_tracks.empty())
         return;
     if (g_cover_sweep_running.exchange(true))
@@ -960,6 +955,8 @@ static constexpr int kMaxBgDownloads = 2;
 
 static void background_download(const std::string &video_id)
 {
+    if (power::low_power())
+        return; // low power: never download ahead of playback
     if (video_id.empty())
         return;
     if (!find_cached_audio_path(video_id).empty())
@@ -992,6 +989,8 @@ static void background_download(const std::string &video_id)
 // background (a few MB, seconds at typical bandwidth).
 static void predownload_next_track()
 {
+    if (power::low_power())
+        return;
     for (const Track &t : upcoming_tracks())
         background_download(t.id);
 }
@@ -1173,7 +1172,6 @@ static void load_recommendations(bool force = false)
     g_state.status_text = "Ready.";
     g_state.home_refreshing = false;
     g_state.backend_status = err;
-    g_state.backend_error = err ? backend_error_user_message(err) : "";
     g_state.repaint_requested = true;
 }
 
@@ -1199,7 +1197,6 @@ static void artist_search_and_update(const std::string &query, int expect_id)
     {
         std::lock_guard<std::mutex> lock(g_data_mutex);
         g_state.backend_status = err;
-        g_state.backend_error = err ? backend_error_user_message(err) : "";
     }
     g_state.repaint_requested = true;
 }
@@ -1332,7 +1329,6 @@ static void search_all_and_update(const std::string &query, int expect_id)
     }
     std::lock_guard<std::mutex> lock(g_data_mutex);
     g_state.backend_status = err;
-    g_state.backend_error = err ? backend_error_user_message(err) : "";
     g_state.repaint_requested = true;
 }
 
@@ -1549,7 +1545,6 @@ static void refill_queue_from_cycle()
 struct NextPick
 {
     Track track;
-    int index = -1; // always -1: entries in the global queue have no source index
 };
 static bool select_next_track(bool allow_refill, bool consume, NextPick &out)
 {
@@ -1561,7 +1556,6 @@ static bool select_next_track(bool allow_refill, bool consume, NextPick &out)
         return false;
 
     out.track = g_state.play_queue.front();
-    out.index = -1;
     if (consume)
     {
         g_state.play_queue.erase(g_state.play_queue.begin());
@@ -1673,7 +1667,6 @@ static void promote_fade_player_to_main()
 
     g_player.swap(g_fade_player);
     g_player_raw = g_player.get();
-    g_fade_player_raw = g_fade_player.get();
     // Callbacks live on the objects, not the roles: move them with the swap.
     g_player->set_event_callback(g_main_event_cb);
     g_fade_player->set_event_callback(g_fade_event_cb);
@@ -1968,9 +1961,9 @@ static bool advance_playback(bool manual)
     NextPick pick;
     if (select_next_track(true, true, pick))
     {
-        if (manual && try_start_manual_crossfade(pick.track, pick.index))
+        if (manual && try_start_manual_crossfade(pick.track, -1))
             return true;
-        begin_play_track(pick.track, pick.index);
+        begin_play_track(pick.track, -1);
         return true;
     }
     return false;
@@ -1982,6 +1975,7 @@ static bool advance_playback(bool manual)
 int app_run(int argc, char **argv)
 {
     bool autoplay_last = false;
+    bool cli_low_power = false;
     for (int i = 1; i < argc; ++i)
     {
         const std::string arg = argv[i] ? argv[i] : "";
@@ -1992,13 +1986,18 @@ int app_run(int argc, char **argv)
         }
         if (arg == "--autoplay-last")
             autoplay_last = true;
+        if (arg == "--low-power")
+            cli_low_power = true;
     }
     DLOG("boot: app_run at %lld", DNOW());
-    load_config();
     ensure_cache_dir();
 
     // ---- Load settings ----
     g_state.settings = load_settings();
+    if (cli_low_power)
+        power::set_cli_override(true);
+    power::configure(g_state.settings.low_power, g_state.settings.low_power_on_battery);
+    power::refresh();
     diagnostics::init();
     const bool safe_mode = diagnostics::safe_mode_requested() || g_state.settings.safe_mode;
     if (safe_mode)
@@ -2154,7 +2153,6 @@ int app_run(int argc, char **argv)
     g_player = std::make_unique<MpvPlayer>(g_state.settings.ytdl_browser);
     g_player_raw = g_player.get();
     g_fade_player = std::make_unique<MpvPlayer>(g_state.settings.ytdl_browser);
-    g_fade_player_raw = g_fade_player.get();
     // The helper player fades in the next track during a crossfade. Its
     // only routed event is "start": from that moment the outgoing track's
     // "end" promotes the helper instead of advancing normally.
@@ -2189,7 +2187,6 @@ int app_run(int argc, char **argv)
         {
             std::lock_guard<std::mutex> lock(g_data_mutex);
             g_state.backend_status = err;
-            g_state.backend_error = backend_error_user_message(err);
         }
         g_state.repaint_requested = true;
     }
@@ -2239,11 +2236,6 @@ int app_run(int argc, char **argv)
                 g_state.selected_playlist_index = i;
                 break;
             }
-    }
-    if (g_state.current_playlist_source == PlaylistSource::ALBUM && !g_state.album_browse_id.empty())
-    {
-        // Defer album fetch until after UI init is fine; just mark state
-        // We'll fetch if tracks empty and user navigates to album tab implicitly
     }
         if (!r.search_query.empty())
             strncpy(g_state.search_buffer, r.search_query.c_str(), sizeof(g_state.search_buffer) - 1);
@@ -2438,7 +2430,6 @@ int app_run(int argc, char **argv)
                 g_cf.manual = false;
                 g_player.swap(g_fade_player);
                 g_player_raw = g_player.get();
-                g_fade_player_raw = g_fade_player.get();
                 // The callbacks live on the MpvPlayer objects, not the
                 // roles: move them with the swap or the new main player
                 // would keep swallowing its own end-of-file events.
@@ -2614,14 +2605,31 @@ int app_run(int argc, char **argv)
     auto next_frame = last_save_time;
     auto last_activity_time = last_save_time;
 
+    diagnostics::start_watchdog();
     DLOG("boot: loop at %lld", DNOW());
     while (running && !g_quit_requested)
     {
+        // Tell the hang watchdog this thread is alive. If the loop stops
+        // advancing (deadlock or a synchronous backend call on the UI thread),
+        // the watchdog dumps the stuck stack after a minute.
+        diagnostics::heartbeat();
 #ifndef P100_WINDOWS
         while (g_main_context_iteration(g_main_context_default(), FALSE))
         {
         }
 #endif
+
+        // Battery state is cheap to poll (cached for 30 s). A transition
+        // requests one repaint so the Settings "Power" row and the frame
+        // budget update immediately.
+        power::refresh();
+        const bool low_power = power::low_power();
+        static bool s_last_low_power = low_power;
+        if (low_power != s_last_low_power)
+        {
+            s_last_low_power = low_power;
+            g_state.repaint_requested = true;
+        }
 
         // Target frame interval for the current activity. Full 60 FPS is
         // reserved for visible animation (scroll easing, loading spinner)
@@ -2646,13 +2654,12 @@ int app_run(int argc, char **argv)
             ui_theme_refresh_accent();
         }
 
-        bool scroll_animating = is_scroll_animating();
         bool lyrics_animating = is_lyrics_animating();
         bool ui_animating = is_ui_animating();
         // Toast motion at full rate; expiry wake-ups are handled separately
         // via ui_notify_needs_frame() in the repaint check below.
         bool notify_animating = ui_notify_animating();
-        bool animating = scroll_animating || lyrics_animating || ui_animating ||
+        bool animating = lyrics_animating || ui_animating ||
                          notify_animating;
         if (animating)
             last_activity_time = now; // keep the fast cadence until motion settles
@@ -2662,9 +2669,11 @@ int app_run(int argc, char **argv)
         long long interval_ms = 1000;
         if (animating || g_state.loading || recently_active ||
             g_cf.pending.load() || g_cf.active.load())
-            interval_ms = 16;
+            interval_ms = low_power ? 33 : 16;
         else if (g_state.playing)
-            interval_ms = 100;
+            interval_ms = low_power ? 250 : 100;
+        else if (low_power)
+            interval_ms = 2000;
 
         // Wake at the earlier of the scheduled frame and one current
         // interval from now, so a state change (play started while idle,
@@ -3540,7 +3549,7 @@ int app_run(int argc, char **argv)
             if (party_running())
             {
                 const double party_pos = g_player->cached_time_pos();
-                const double party_dur = g_player->get_property_double("duration");
+                const double party_dur = g_player->cached_duration();
                 party_tick(g_state, party_pos, party_dur, !g_state.playing.load());
             }
 
@@ -3560,7 +3569,22 @@ int app_run(int argc, char **argv)
                 !g_window_hidden;
             if (want_render)
             {
-            apply_ui_scale(g_state.settings);
+            // Re-scale the ImGui style only when something that feeds it
+            // changed. Re-running ScaleAllSizes() and the full palette
+            // assignment on every frame was pure per-frame CPU work.
+            static Settings s_last_applied_settings;
+            static bool s_settings_applied = false;
+            static bool s_applied_low_power = low_power;
+            if (!s_settings_applied ||
+                !(g_state.settings == s_last_applied_settings) ||
+                low_power != s_applied_low_power ||
+                ui_theme_animating())
+            {
+                apply_ui_scale(g_state.settings);
+                s_last_applied_settings = g_state.settings;
+                s_settings_applied = true;
+                s_applied_low_power = low_power;
+            }
             ImGui_ImplOpenGL3_NewFrame();
             ImGui_ImplSDL2_NewFrame();
             smooth_scroll_begin_frame(); // capture & zero io.MouseWheel BEFORE NewFrame consumes it
@@ -3670,6 +3694,7 @@ int app_run(int argc, char **argv)
         }
     }
 
+    diagnostics::stop_watchdog();
     DLOG("shutdown: save session");
     // ---- Save session on shutdown ----
     save_session(g_state, *g_player,
@@ -3700,7 +3725,6 @@ int app_run(int argc, char **argv)
     g_player.reset();
     g_fade_player.reset();
     g_player_raw = nullptr;
-    g_fade_player_raw = nullptr;
     mpris.reset();
     DLOG("shutdown: imgui gl");
     ImGui_ImplOpenGL3_Shutdown();

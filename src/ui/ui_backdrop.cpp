@@ -2,6 +2,7 @@
 #include "ui.h"
 #include "ui_theme.h"
 #include "texture.h"
+#include "power.h"
 
 #include <GL/gl.h>
 #include <SDL2/SDL.h>
@@ -101,11 +102,6 @@ ImVec4 mix_white(const ImVec4 &c, float t)
                   c.z + (1.0f - c.z) * t, 1.0f);
 }
 
-ImVec4 with_alpha(const ImVec4 &c, float alpha)
-{
-    return ImVec4(c.x, c.y, c.z, clampf(alpha, 0.0f, 1.0f));
-}
-
 ImVec4 lerp4(const ImVec4 &a, const ImVec4 &b, float t)
 {
     return ImVec4(a.x + (b.x - a.x) * t,
@@ -115,14 +111,6 @@ ImVec4 lerp4(const ImVec4 &a, const ImVec4 &b, float t)
 }
 
 // Straight-alpha "source over destination" for an opaque destination.
-ImVec4 blend_over(const ImVec4 &dst, const ImVec4 &src)
-{
-    const float a = clampf(src.w, 0.0f, 1.0f);
-    return ImVec4(src.x * a + dst.x * (1.0f - a),
-                  src.y * a + dst.y * (1.0f - a),
-                  src.z * a + dst.z * (1.0f - a), 1.0f);
-}
-
 // One ambient bloom. Positions are derived from the slow orientation spin so
 // the drawing and the sampling path always agree.
 struct GlowSpot
@@ -215,39 +203,8 @@ BackdropParams backdrop_params()
     return p;
 }
 
-ImVec4 wash_color_at(const BackdropParams &p, float u, float v)
-{
-    const ImVec4 tl = with_alpha(p.tint, p.wash * p.wash_c[0]);
-    const ImVec4 tr = with_alpha(p.tint_soft, p.wash * p.wash_c[1]);
-    const ImVec4 br = with_alpha(p.tint, p.wash * p.wash_c[2]);
-    const ImVec4 bl = with_alpha(p.tint, p.wash * p.wash_c[3]);
-    const ImVec4 top = lerp4(tl, tr, u);
-    const ImVec4 bottom = lerp4(bl, br, u);
-    return lerp4(top, bottom, v);
-}
-
 // Cumulative alpha contributed by soft_ellipse() at a point. Mirrors the ring
 // construction exactly (same step count, same minimum 1/255 alpha).
-float ellipse_coverage(const ImVec2 &p, const ImVec2 &center, const ImVec2 &radius, float peak_alpha)
-{
-    if (peak_alpha <= 0.001f || radius.x <= 0.0f || radius.y <= 0.0f)
-        return 0.0f;
-
-    const float nx = (p.x - center.x) / radius.x;
-    const float ny = (p.y - center.y) / radius.y;
-    const float dist = std::sqrt(nx * nx + ny * ny);
-    if (dist >= 1.0f)
-        return 0.0f;
-
-    constexpr int kSteps = 22;
-    const float alpha = std::max(peak_alpha / (float)kSteps, 1.0f / 255.0f);
-    const float t_max = std::pow(std::min(1.0f, (1.0f - dist) / 0.94f), 1.0f / 0.72f);
-    const int layers = std::max(0, std::min(kSteps, (int)std::floor(t_max * (kSteps - 1) + 1.0f)));
-    if (layers <= 0)
-        return 0.0f;
-    return 1.0f - std::pow(1.0f - alpha, (float)layers);
-}
-
 ImU32 argb(const ImVec4 &c, float alpha)
 {
     return ImGui::GetColorU32(ImVec4(c.x, c.y, c.z, clampf(alpha, 0.0f, 1.0f)));
@@ -310,6 +267,17 @@ void ui_backdrop_update(const AppState &state)
     float dt = ImGui::GetIO().DeltaTime;
     if (!(dt > 0.0f) || dt > 0.1f)
         dt = 1.0f / 60.0f;
+
+    // Low power turns the ambient wash off entirely: the full-screen shader
+    // is the most expensive thing we draw, and a static solid background is
+    // the cheapest possible fallback.
+    if (power::low_power())
+    {
+        g_backdrop.visibility = 0.0f;
+        g_backdrop.pulse = 0.0f;
+        g_backdrop.track_pending = false;
+        return;
+    }
 
     const float want_visible = state.settings.album_backdrop ? 1.0f : 0.0f;
     g_backdrop.visibility = ui_anim_approach(g_backdrop.visibility, want_visible, 3.2f);
@@ -395,7 +363,8 @@ void ui_backdrop_update(const AppState &state)
         const float p = clampf((state.crossfade_progress - 0.34f) / 0.32f, 0.0f, 1.0f);
         g_backdrop.color = lerp4(g_backdrop.from_color, g_backdrop.target,
                                  smootherstep01(p));
-        ui_anim_request();
+        if (!power::low_power())
+            ui_anim_request();
     }
     else
     {
@@ -409,7 +378,8 @@ void ui_backdrop_update(const AppState &state)
                                      smootherstep01(g_backdrop.transition_time));
             if (g_backdrop.transition_time >= 1.0f)
                 g_backdrop.timed_transition = false;
-            ui_anim_request();
+            if (!power::low_power())
+                ui_anim_request();
         }
         else
         {
@@ -420,7 +390,8 @@ void ui_backdrop_update(const AppState &state)
     if (g_backdrop.pulse > 0.0f)
     {
         g_backdrop.pulse = std::max(0.0f, g_backdrop.pulse - dt / 0.85f);
-        ui_anim_request();
+        if (!power::low_power())
+            ui_anim_request();
     }
 
     // Orientation drift. Every so often the whole light arrangement (wash
@@ -450,15 +421,17 @@ void ui_backdrop_update(const AppState &state)
             g_backdrop.spin = g_backdrop.spin_from +
                               (g_backdrop.spin_to - g_backdrop.spin_from) *
                                   smootherstep01(g_backdrop.spin_t);
-            ui_anim_request();
+            if (!power::low_power())
+                ui_anim_request();
         }
     }
 
     // Keep the frame loop awake only while something is actually moving.
-    if (g_backdrop.timed_transition ||
-        color_distance(previous, g_backdrop.color) > 0.0006f ||
-        std::fabs(g_backdrop.visibility - want_visible) > 0.002f ||
-        std::fabs(g_backdrop.strength - state.settings.album_backdrop_strength) > 0.004f)
+    if (!power::low_power() &&
+        (g_backdrop.timed_transition ||
+         color_distance(previous, g_backdrop.color) > 0.0006f ||
+         std::fabs(g_backdrop.visibility - want_visible) > 0.002f ||
+         std::fabs(g_backdrop.strength - state.settings.album_backdrop_strength) > 0.004f))
     {
         ui_anim_request();
     }
@@ -849,59 +822,3 @@ ImVec4 ui_backdrop_tint()
     return glow_tint(g_backdrop.color);
 }
 
-ImVec4 ui_backdrop_sample(const ImVec2 &screen_pos)
-{
-    ImVec4 base = ui_c().bg;
-    base.w = 1.0f;
-    ImVec4 color = base;
-
-    const float visibility = ui_backdrop_visibility();
-    if (visibility <= 0.001f)
-        return color;
-
-    const ImVec2 display = ImGui::GetIO().DisplaySize;
-    if (display.x <= 1.0f || display.y <= 1.0f)
-        return color;
-
-    const BackdropParams p = backdrop_params();
-    const float w = display.x;
-    const float h = display.y;
-
-    // Wash (bilinear corner interpolation, same as AddRectFilledMultiColor).
-    const float u = clampf(screen_pos.x / w, 0.0f, 1.0f);
-    const float v = clampf(screen_pos.y / h, 0.0f, 1.0f);
-    color = blend_over(color, wash_color_at(p, u, v));
-
-    // Blooms, in the same order they are drawn. The shader uses a continuous
-    // exponential falloff; the primitive path uses stacked ellipses. Match the
-    // active path so list/lyrics edge fades dissolve into the real backdrop.
-    for (int i = 0; i < p.spot_count; ++i)
-    {
-        float a = 0.0f;
-        if (g_backdrop.use_shader)
-        {
-            const float nx = (screen_pos.x - p.spots[i].center.x) /
-                             std::max(1.0f, p.spots[i].radius.x);
-            const float ny = (screen_pos.y - p.spots[i].center.y) /
-                             std::max(1.0f, p.spots[i].radius.y);
-            const float dist = std::sqrt(nx * nx + ny * ny);
-            if (dist < 1.0f)
-            {
-                const float t = std::pow(clampf((1.0f - dist) / 0.94f, 0.0f, 1.0f),
-                                         1.0f / 0.72f);
-                a = 1.0f - std::exp(-p.spots[i].peak * t);
-            }
-        }
-        else
-        {
-            a = ellipse_coverage(screen_pos, p.spots[i].center,
-                                 p.spots[i].radius, p.spots[i].peak);
-        }
-        if (a > 0.0f)
-            color = blend_over(color, with_alpha(p.spots[i].tint, a));
-    }
-
-    // The panels fade their opacity in, so the perceived colour is the
-    // backdrop composited at `visibility` over the base surface.
-    return lerp4(base, color, visibility);
-}

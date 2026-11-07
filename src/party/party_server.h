@@ -13,4 +13,3 @@ bool party_server_start(const PartyServerConfig &config, std::string &error);
 void party_server_stop();
 bool party_server_running();
 int party_server_port();
-std::string party_server_bound_ip();

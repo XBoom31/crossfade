@@ -20,7 +20,6 @@ struct DiscordPresence
 // Start/stop the worker. An empty client_id disables the integration
 // (Discord RPC requires an application client id from the developer portal).
 void discord_rpc_start(const std::string &client_id);
-void discord_rpc_stop();
 
 // Update the presence shown while playing. Safe from any thread.
 void discord_rpc_update(const DiscordPresence &presence);

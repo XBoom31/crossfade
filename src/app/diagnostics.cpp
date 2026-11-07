@@ -6,6 +6,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -14,6 +15,7 @@
 #include <mutex>
 #include <sstream>
 #include <string>
+#include <thread>
 #include <filesystem>
 
 #ifdef _WIN32
@@ -24,6 +26,7 @@
 #else
 #include <execinfo.h>
 #include <fcntl.h>
+#include <pthread.h>
 #include <signal.h>
 #include <unistd.h>
 #include <sys/stat.h>
@@ -39,6 +42,38 @@ constexpr size_t kMaxLines = 400;
 std::string g_crash_dir;
 char g_crash_dir_buf[1024] = {0};
 
+// Hang watchdog. The main loop stamps a heartbeat; if it stops advancing for
+// a minute, the watchdog records the stall and signals the stuck main thread
+// so the normal crash handler can dump its stack. sig_atomic_t is safe to read
+// from the signal handler.
+std::atomic<int64_t> g_last_heartbeat_ms{0};
+std::atomic<bool> g_watchdog_stop{false};
+volatile sig_atomic_t g_hang_pending = 0;
+#ifndef _WIN32
+pthread_t g_main_thread;
+#endif
+
+int64_t now_ms()
+{
+    return std::chrono::duration_cast<std::chrono::milliseconds>(
+               std::chrono::steady_clock::now().time_since_epoch())
+        .count();
+}
+
+void write_hang_note(int64_t stalled_ms)
+{
+    char path[1200];
+    const long long stamp = (long long)std::time(nullptr);
+    std::snprintf(path, sizeof(path), "%s/hang-%lld.log", g_crash_dir_buf, stamp);
+    std::FILE *f = std::fopen(path, "wb");
+    if (!f)
+        return;
+    std::fprintf(f,
+                 "crossfade hang: main loop stalled for %lld ms\n"
+                 "A crash log with the stalled thread's stack follows.\n",
+                 (long long)stalled_ms);
+    std::fclose(f);
+}
 
 std::string version()
 {
@@ -99,14 +134,25 @@ void posix_crash_handler(int sig)
     if (fd >= 0)
     {
         char header[256];
-        const int n = std::snprintf(header, sizeof(header),
-                                    "crossfade crash signal %d\nversion %s\n", sig,
+        int n;
+        if (g_hang_pending)
+            n = std::snprintf(header, sizeof(header),
+                              "crossfade hang: main loop unresponsive\nversion %s\n",
 #ifdef CROSSFADE_VERSION
-                                    CROSSFADE_VERSION
+                              CROSSFADE_VERSION
 #else
-                                    "unknown"
+                              "unknown"
 #endif
-        );
+            );
+        else
+            n = std::snprintf(header, sizeof(header),
+                              "crossfade crash signal %d\nversion %s\n", sig,
+#ifdef CROSSFADE_VERSION
+                              CROSSFADE_VERSION
+#else
+                              "unknown"
+#endif
+            );
         (void)!::write(fd, header, (size_t)n);
         void *frames[48];
         const int count = backtrace(frames, 48);
@@ -128,6 +174,47 @@ void init()
     log("app", std::string("crossfade ") + version() + " starting");
     log("app", std::string("config: ") + p100_config_dir());
     install_crash_handler();
+
+    g_last_heartbeat_ms.store(now_ms());
+#ifndef _WIN32
+    g_main_thread = pthread_self();
+#endif
+}
+
+void start_watchdog()
+{
+#ifndef _WIN32
+    g_last_heartbeat_ms.store(now_ms());
+    g_watchdog_stop.store(false);
+    std::thread([]() {
+        constexpr int64_t kHangMs = 60000;
+        while (!g_watchdog_stop.load(std::memory_order_relaxed))
+        {
+            std::this_thread::sleep_for(std::chrono::seconds(2));
+            if (g_watchdog_stop.load(std::memory_order_relaxed))
+                return;
+            const int64_t stalled = now_ms() - g_last_heartbeat_ms.load();
+            if (stalled < kHangMs || g_hang_pending)
+                continue;
+            g_hang_pending = 1;
+            write_hang_note(stalled);
+            // Deliver SIGABRT to the blocked main thread, not this watchdog,
+            // so the crash handler records the stack that is actually stuck.
+            pthread_kill(g_main_thread, SIGABRT);
+            return;
+        }
+    }).detach();
+#endif
+}
+
+void heartbeat()
+{
+    g_last_heartbeat_ms.store(now_ms());
+}
+
+void stop_watchdog()
+{
+    g_watchdog_stop.store(true);
 }
 
 void install_crash_handler()

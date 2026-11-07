@@ -805,10 +805,9 @@ void draw_party_panel(AppState &state)
 
     if (ui_animations_enabled() && now - s_start < 6.0)
         ui_anim_request();
-    if (st.state == PartyRunState::Running)
+    if (st.state == PartyRunState::Running && ui_animations_enabled())
         ui_anim_request(); // keeps the live dot and scan highlight moving
     ImGui::Dummy(ImVec2(0.0f, m.space_5));
-    draw_scroll_edge_fades();
 }
 
 void draw_party_fullscreen(AppState &state)

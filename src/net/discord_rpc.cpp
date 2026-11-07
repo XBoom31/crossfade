@@ -272,12 +272,6 @@ void discord_rpc_start(const std::string &client_id)
     std::thread(discord_worker).detach();
 }
 
-void discord_rpc_stop()
-{
-    DiscordPresence p;
-    discord_rpc_update(p); // clears the presence; process exit closes the socket
-}
-
 void discord_rpc_update(const DiscordPresence &presence)
 {
     {

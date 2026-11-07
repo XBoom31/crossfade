@@ -844,7 +844,7 @@ static void draw_list_page(AppState &state, const AppLayout &layout, float width
     ImGui::BeginChild("ListPage", ImVec2(width, layout.body_size.y),
                       ImGuiChildFlags_AlwaysUseWindowPadding,
                       ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoScrollWithMouse);
-    smooth_scroll_child("ListPage");
+    smooth_scroll_child();
 
     TrackListPtr tracks = source_for_tab(state);
     if (is_local_search_list(state))
@@ -1031,7 +1031,6 @@ static void draw_list_page(AppState &state, const AppLayout &layout, float width
             else
                 draw_search_playlist_grid(state);
             ImGui::Dummy(ImVec2(0.0f, m.space_4));
-            draw_scroll_edge_fades();
             ImGui::EndChild();
             ImGui::PopStyleVar();
             ImGui::PopID();
@@ -1509,11 +1508,11 @@ static void draw_list_page(AppState &state, const AppLayout &layout, float width
             }
         }
         ImGui::Dummy(ImVec2(0.0f, (float)rows * (row_h + gap) + ui_px(6.0f)));
-        ui_anim_request();
+        if (ui_animations_enabled())
+            ui_anim_request();
     }
 
     ImGui::Dummy(ImVec2(0.0f, m.space_4));
-    draw_scroll_edge_fades();
 
     ImGui::EndChild();
     ImGui::PopStyleVar();
@@ -1574,7 +1573,6 @@ void draw_main_ui(AppState &state, MpvPlayer &player, bool show_recommendations)
                               state.current_tab == Tab::Queue ||
                               state.current_tab == Tab::Party ||
                               state.current_tab == Tab::Podcasts ||
-                              state.current_tab == Tab::Visualizer ||
                               state.current_tab == Tab::Playlists ||
                               state.current_tab == Tab::Albums ||
                               state.current_tab == Tab::Artists ||
@@ -1639,7 +1637,7 @@ void draw_main_ui(AppState &state, MpvPlayer &player, bool show_recommendations)
                           ImGuiChildFlags_AlwaysUseWindowPadding,
                           ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoScrollWithMouse);
         if (!scroll_self)
-            smooth_scroll_child("PageContent");
+            smooth_scroll_child();
 
         if (state.current_tab == Tab::Settings)
             draw_settings_panel(state);
@@ -1651,8 +1649,6 @@ void draw_main_ui(AppState &state, MpvPlayer &player, bool show_recommendations)
             draw_party_panel(state);
         else if (state.current_tab == Tab::Podcasts)
             draw_podcasts_panel(state);
-        else if (state.current_tab == Tab::Visualizer)
-            draw_visualizer_panel(state);
         else if (state.current_tab == Tab::Playlists)
             draw_playlists_panel(state);
         else if (state.current_tab == Tab::Albums)

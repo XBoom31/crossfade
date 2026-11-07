@@ -27,7 +27,6 @@ struct TextureColor
     bool valid = false;
 };
 
-GLuint get_texture(const std::string &url);
 // Returns id + pixel dimensions for a URL, kicking off a background load
 // if it isn't cached yet. id == 0 while loading / after a failed fetch.
 TextureInfo texture_info(const std::string &url);

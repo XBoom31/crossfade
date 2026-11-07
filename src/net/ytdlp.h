@@ -98,7 +98,9 @@ BackendError take_backend_error();
 std::vector<Track> parse_track_array(const std::string &json);
 
 std::vector<Track> fetch_recommendations(bool force_fresh = false, int limit = 40);
-std::vector<Track> fetch_search(const std::string &query);
+// Set *failed (when provided) if the backend did not answer or reported an
+// error, so callers can distinguish "no matches" from "search unavailable".
+std::vector<Track> fetch_search(const std::string &query, bool *failed = nullptr);
 std::vector<Track> fetch_radio(const std::string &video_id);
 
 // Party mode: resolve one video id to metadata on the main backend channel.
@@ -114,7 +116,6 @@ struct YouTubePlaylist
     int count = 0;
 };
 
-std::vector<Track> fetch_youtube_liked();
 std::vector<YouTubePlaylist> fetch_youtube_playlists();
 std::vector<Track> fetch_youtube_playlist(const std::string &playlist_id);
 
@@ -144,15 +145,6 @@ std::vector<std::pair<std::string, std::string>> backend_playlist_items(
     const std::string &playlist_id);
 
 // ------------------ Browse (charts & moods) ------------------
-struct MoodCategory
-{
-    std::string title;
-    std::string params; // opaque token the backend passes to get_mood_playlists
-};
-
-std::vector<Track> fetch_charts();
-std::vector<MoodCategory> fetch_mood_categories();
-std::vector<YouTubePlaylist> fetch_mood_playlists(const std::string &params);
 
 // ------------------ Download cache size cap ------------------
 // bytes <= 0 means unlimited (the default). Enforced after each finished
@@ -328,8 +320,9 @@ std::string find_cached_audio_path(const std::string &video_id);// Download (if 
 std::string get_cached_audio_path(const std::string &video_id);
 // Resolve a direct streaming URL via the backend ("yt-dlp -g").
 std::string fetch_stream_url(const std::string &video_id);
-// Speculative variant for background warming: uses the main backend channel
-// so it never competes with a user click's resolve on the play channel.
+// Speculative variant for background warming: uses a dedicated prefetch
+// backend channel, so it competes with neither a user click's resolve nor a
+// search/metadata request on the main channel.
 std::string fetch_stream_url_prefetch(const std::string &video_id);
 // Same, but bypass and replace the backend's cached URL (used after a
 // player-side load failure, which often means the googlevideo URL expired).

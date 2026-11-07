@@ -106,7 +106,6 @@ static void play_artist_track(AppState &state, int index)
     state.queue_replace_index = index;
     state.queue_replace_id = t.id;
     state.current_playlist_source = PlaylistSource::ARTIST;
-    state.is_search_active = false;
 
     state.pending_play_url = t.url;
     state.pending_play_title = t.title;
@@ -160,14 +159,12 @@ static void fetch_artist_into(AppState &state, const std::string &browse_id)
         cached.songs = state.artist_songs;
         save_artist_cache(cached);
 
-        state.artist_ready = true;
         state.artist_failed = false;
         state.artist_error_msg.clear();
     }
     else
     {
         BackendError err = take_backend_error();
-        state.artist_ready = true;
         // Only flag the failure when there's nothing to show; a stale cached
         // artist on screen just gets the toast.
         if (state.artist_songs.empty() && state.artist_albums.empty() && err)
@@ -269,7 +266,6 @@ void open_artist_view(AppState &state, const std::string &browse_id,
             state.artist_name = display_name;
     }
     state.artist_loading = !had_cache;
-    state.artist_ready = had_cache;
     state.artist_failed = false;
     state.artist_error_msg.clear();
     state.current_tab = Tab::Artist;
@@ -312,7 +308,6 @@ void open_artist_from_track(AppState &state, const Track &track)
     state.artist_songs_has_more = false;
     state.artist_songs_loading = false;
     state.artist_loading = true;
-    state.artist_ready = false;
     state.artist_failed = false;
     state.artist_error_msg.clear();
     state.current_tab = Tab::Artist;
@@ -361,7 +356,6 @@ void open_artist_from_track(AppState &state, const Track &track)
                 ui_notify_backend_error(err);
             }
         }
-        state.artist_ready = true;
         state.artist_loading = false;
         state.repaint_requested = true;
     });
@@ -518,7 +512,7 @@ void draw_artists_panel(AppState &state)
 
     ImGui::BeginChild("ArtistsScroll", ImVec2(0, 0), ImGuiChildFlags_None,
                       ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoScrollWithMouse);
-    smooth_scroll_child("ArtistsScroll");
+    smooth_scroll_child();
 
     const float gap = m.card_gap;
     const float available = ImGui::GetContentRegionAvail().x;
@@ -572,7 +566,6 @@ void draw_artists_panel(AppState &state)
     }
 
     ImGui::Dummy(ImVec2(0.0f, m.space_4));
-    draw_scroll_edge_fades();
     ImGui::EndChild();
 }
 
@@ -647,7 +640,7 @@ void draw_artist_panel(AppState &state)
 
     ImGui::BeginChild("ArtistBody", ImVec2(0, 0), ImGuiChildFlags_None,
                       ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoScrollWithMouse);
-    smooth_scroll_child("ArtistBody");
+    smooth_scroll_child();
 
     if (!state.artist_description.empty())
     {
@@ -795,6 +788,5 @@ void draw_artist_panel(AppState &state)
     }
 
     ImGui::Dummy(ImVec2(0.0f, m.space_4));
-    draw_scroll_edge_fades();
     ImGui::EndChild();
 }

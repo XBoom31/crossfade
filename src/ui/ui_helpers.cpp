@@ -372,9 +372,8 @@ void smooth_scroll_begin_frame()
     g_frame_scroll_consumed = false;
 }
 
-void smooth_scroll_child(const char *window_name)
+void smooth_scroll_child()
 {
-    (void)window_name;
     if (g_frame_scroll_consumed || g_frame_scroll_pixels == 0.0f)
         return;
     if (!ImGui::IsWindowHovered())
@@ -403,11 +402,6 @@ void smooth_scroll_child(const char *window_name)
     ImGui::SetScrollY(applied);
     if (applied != requested)
         scroll_clamp_feedback(applied - requested);
-}
-
-bool is_scroll_animating()
-{
-    return false;
 }
 
 // Lyrics panel animation flag (see ui.h). Set by draw_lyrics_panel while its
@@ -705,12 +699,5 @@ float ui_content_edge_alpha(float top_y, float bottom_y)
     if (scroll < max_scroll - 1.0f && bottom_y > pos.y + size.y - fade)
         alpha = std::min(alpha, std::clamp(((pos.y + size.y) - bottom_y) / fade, 0.0f, 1.0f));
     return alpha;
-}
-
-void draw_scroll_edge_fades()
-{
-    // Rows, media cards and lyric lines now fade their own content with
-    // ui_content_edge_alpha(). Painting a background-coloured overlay here
-    // could never match the local panel surface beneath it.
 }
 

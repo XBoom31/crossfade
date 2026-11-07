@@ -23,6 +23,8 @@ int main()
     check(s.ui_scale == 1.0f && s.ui_text_scale == 1.0f, "default ui scale");
     check(s.animations == 2, "default animations");
     check(!s.safe_mode, "default safe mode");
+    check(!s.low_power, "default low power off");
+    check(s.low_power_on_battery, "default low power on battery");
     check(s.backdrop_shader, "default shader");
     check(s.warm_stream_resolver, "default warm resolver");
     check(s.playback_speed == 1.0f, "default speed");
@@ -37,6 +39,12 @@ int main()
     b = a;
     b.safe_mode = true;
     check(!(a == b), "safe mode change compares unequal");
+    b = a;
+    b.low_power = true;
+    check(!(a == b), "low power change compares unequal");
+    b = a;
+    b.low_power_on_battery = false;
+    check(!(a == b), "low power battery change compares unequal");
     b = a;
     b.eq_enabled = true;
     check(!(a == b), "eq change compares unequal");

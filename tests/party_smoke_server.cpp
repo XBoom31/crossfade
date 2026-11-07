@@ -120,10 +120,6 @@ std::string page_html()
            "<body><h1>Smoke party</h1></body></html>";
 }
 
-std::string accent_hex()
-{
-    return "#6db2d0";
-}
 } // namespace party_api
 
 int main(int argc, char **argv)

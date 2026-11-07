@@ -122,7 +122,6 @@ void ui_play_track(AppState &state, const Track &track, int index)
     else
         state.current_playlist_source = PlaylistSource::HOME;
 
-    state.is_search_active = (state.current_playlist_source == PlaylistSource::SEARCH);
 
     // The History tab displays a snapshot taken on tab entry, so its row
     // index can drift from the live history. Re-resolve the position so
