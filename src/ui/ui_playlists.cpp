@@ -184,23 +184,19 @@ static void spotify_library_row(AppState &state, const SpotifyPlaylistSummary &e
                   1.0f, entry.kind == "liked" ? UiIcon::Heart : UiIcon::Playlist,
                   "spotify_library", false, true);
     const float tx = a0.x + art + m.space_3;
-    ui_push_medium(17.0f);
     dl->AddText(g_ui_fonts.medium, 17.0f * m.text_scale,
                 ImVec2(tx, pos.y + 8.0f * m.layout_scale), ui_text_u32(),
                 ui_ellipsize(g_ui_fonts.medium, 17.0f, entry.name,
                              std::max(80.0f, width - art - 110.0f * m.layout_scale))
                     .c_str());
-    ImGui::PopFont();
     std::string meta = entry.kind == "liked"
                            ? std::to_string(entry.count) + " liked songs"
                            : (entry.owner.empty() ? "Spotify playlist" : entry.owner);
-    ui_push_small();
     dl->AddText(g_ui_fonts.body, 14.0f * m.text_scale,
                 ImVec2(tx, pos.y + 30.0f * m.layout_scale), ui_text_muted_u32(),
                 ui_ellipsize(g_ui_fonts.body, 14.0f, meta,
                              std::max(80.0f, width - art - 110.0f * m.layout_scale))
                     .c_str());
-    ImGui::PopFont();
     dl->AddText(g_ui_fonts.medium, 14.0f * m.text_scale,
                 ImVec2(pos.x + width - 52.0f * m.layout_scale,
                        pos.y + (row_h - 14.0f * m.text_scale) * 0.5f),

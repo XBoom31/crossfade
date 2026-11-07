@@ -333,7 +333,7 @@ void prefetch_urls_for_serial(const std::vector<Track> &tracks, size_t count,
                               const std::atomic<uint64_t> *cancel_token,
                               uint64_t token);
 void draw_content_header(AppState &state);
-void draw_main_ui(AppState &state, MpvPlayer &player, bool show_recommendations);
+void draw_main_ui(AppState &state, MpvPlayer &player);
 void draw_playlists_panel(AppState &state);
 void draw_albums_panel(AppState &state);
 void draw_album_panel(AppState &state);

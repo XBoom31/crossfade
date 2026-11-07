@@ -638,26 +638,8 @@ void process_texture_queue()
             pending_queue.pop();
         }
 
-        // Upload to GPU
-        GLuint tex_id = 0;
-        glGenTextures(1, &tex_id);
-        glBindTexture(GL_TEXTURE_2D, tex_id);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, pending.width, pending.height, 0,
-                     GL_RGBA, GL_UNSIGNED_BYTE, pending.pixels.data());
-
-        // Store in cache
-        {
-            std::lock_guard<std::mutex> lock(cache_mutex);
-            TextureInfo info;
-            info.id = tex_id;
-            info.width = pending.width;
-            info.height = pending.height;
-            texture_cache[pending.url] = info;
-        }
+        // Upload to GPU and publish in the cache (shared with the sync path).
+        store_texture(pending.url, pending.pixels, pending.width, pending.height);
 
         // Clear loading flag
         {

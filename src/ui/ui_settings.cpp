@@ -1066,18 +1066,6 @@ static void settings_preview_card(const UiMetrics &m, float width)
     }
 }
 
-static void settings_intro(const char *text)
-{
-    const UiMetrics &m = ui_m();
-    ui_push_small();
-    ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x);
-    ImGui::TextColored(ui_c().text_muted, "%s", text);
-    ImGui::PopTextWrapPos();
-    ImGui::PopFont();
-    ui_glow_separator();
-    ImGui::Dummy(ImVec2(0.0f, m.space_2));
-}
-
 void draw_settings_panel(AppState &state)
 {
     const UiMetrics &m = ui_m();

@@ -1627,7 +1627,7 @@ int app_run(int argc, char **argv)
 
             draw_sidebar(g_state);
             draw_content_header(g_state);
-            draw_main_ui(g_state, *g_player, true);
+            draw_main_ui(g_state, *g_player);
             draw_bottom_bar(g_state, *g_player);
             draw_party_chip(g_state);
             updater::poll();

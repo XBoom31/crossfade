@@ -24,9 +24,6 @@ struct BackdropState
     float visibility = 0.0f;    // raw 0..1 fade
     float strength = 0.65f;     // eased copy of the setting
     float pulse = 0.0f;         // short brightness lift on track change
-    float transition_time = 1.0f;
-    float transition_duration = 0.0f;
-    bool timed_transition = false;
     bool crossfade_synced = false;
     // Slow orientation drift: the wash and blooms turn a quarter/half turn
     // every so often so the glow never looks pinned in one place.
@@ -339,13 +336,9 @@ void ui_backdrop_update(const AppState &state)
             {
                 g_backdrop.from_color = g_backdrop.color;
                 g_backdrop.crossfade_synced = true;
-                g_backdrop.timed_transition = false;
             }
             else
-            {
                 g_backdrop.crossfade_synced = false;
-                g_backdrop.timed_transition = false;
-            }
         }
 
         // Fire the change flourish as soon as we have a usable target for the
@@ -369,22 +362,7 @@ void ui_backdrop_update(const AppState &state)
     else
     {
         g_backdrop.crossfade_synced = false;
-        if (g_backdrop.timed_transition)
-        {
-            const float duration = std::max(0.05f, g_backdrop.transition_duration);
-            g_backdrop.transition_time =
-                std::min(1.0f, g_backdrop.transition_time + dt / duration);
-            g_backdrop.color = lerp4(g_backdrop.from_color, g_backdrop.target,
-                                     smootherstep01(g_backdrop.transition_time));
-            if (g_backdrop.transition_time >= 1.0f)
-                g_backdrop.timed_transition = false;
-            if (!power::low_power())
-                ui_anim_request();
-        }
-        else
-        {
-            g_backdrop.color = ease_color(g_backdrop.color, g_backdrop.target, 2.35f);
-        }
+        g_backdrop.color = ease_color(g_backdrop.color, g_backdrop.target, 2.35f);
     }
 
     if (g_backdrop.pulse > 0.0f)
@@ -428,8 +406,7 @@ void ui_backdrop_update(const AppState &state)
 
     // Keep the frame loop awake only while something is actually moving.
     if (!power::low_power() &&
-        (g_backdrop.timed_transition ||
-         color_distance(previous, g_backdrop.color) > 0.0006f ||
+        (color_distance(previous, g_backdrop.color) > 0.0006f ||
          std::fabs(g_backdrop.visibility - want_visible) > 0.002f ||
          std::fabs(g_backdrop.strength - state.settings.album_backdrop_strength) > 0.004f))
     {

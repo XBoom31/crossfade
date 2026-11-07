@@ -1269,9 +1269,8 @@ static void draw_list_page(AppState &state, const AppLayout &layout, float width
     ImGui::PopID();
 }
 
-void draw_main_ui(AppState &state, MpvPlayer &player, bool show_recommendations)
+void draw_main_ui(AppState &state, MpvPlayer &player)
 {
-    (void)show_recommendations;
     resolve_current_track_links(state);
     const AppLayout layout = ui_compute_layout(state, ImGui::GetIO());
     const UiMetrics &m = ui_m();
