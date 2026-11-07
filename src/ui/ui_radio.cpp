@@ -1,5 +1,6 @@
 #include "tasks.h"
 #include "ui.h"
+#include "ui_hero.h"
 #include "texture.h"
 #include "ui_components.h"
 #include "ui_icons.h"
@@ -34,58 +35,11 @@ struct RadioSeed
     int plays = 0;
 };
 
-static float clamp01f(float v)
-{
-    return v < 0.0f ? 0.0f : (v > 1.0f ? 1.0f : v);
-}
-
-static float ease_out_back(float t)
-{
-    t = clamp01f(t);
-    const float c1 = 1.70158f;
-    const float c3 = c1 + 1.0f;
-    const float u = t - 1.0f;
-    return 1.0f + c3 * u * u * u + c1 * u * u;
-}
-
 // Radio's motion clocks mirror the Stats page: one start stamp drives the
 // hero pop, the seed-tile stagger and the section fades, and in_view() keeps
 // lower sections from animating until they scroll into the viewport.
-struct RadioAnim
-{
-    double now = 0.0;
-    double start = 0.0;
+using RadioAnim = UiPageAnim;
 
-    float stagger(float delay, float dur) const
-    {
-        if (!ui_animations_enabled())
-            return 1.0f;
-        const float d = ui_anim_delay(delay);
-        const float du = ui_anim_duration(dur);
-        if (du <= 0.0001f)
-            return 1.0f;
-        return ui_anim_ease_out(clamp01f((float)((now - start - d) / du)));
-    }
-
-    float pop(float delay, float dur) const
-    {
-        if (!ui_animations_enabled())
-            return 1.0f;
-        const float d = ui_anim_delay(delay);
-        const float du = ui_anim_duration(dur);
-        if (du <= 0.0001f)
-            return 1.0f;
-        return ease_out_back(clamp01f((float)((now - start - d) / du)));
-    }
-
-    float in_view(float screen_y, float span = 120.0f) const
-    {
-        if (!ui_animations_enabled())
-            return 1.0f;
-        const float bottom = ImGui::GetWindowPos().y + ImGui::GetWindowSize().y;
-        return ui_anim_ease_out(clamp01f((bottom - screen_y) / ui_px(span)));
-    }
-};
 
 
 // ----------------------------------------------------------------------
@@ -647,95 +601,6 @@ void draw_radio_panel(AppState &state)
     // ------------------------------------------------------------------
     // Hero: seed artwork, station identity, live status and actions.
     // ------------------------------------------------------------------
-    const bool compact_hero = avail < 620.0f * m.layout_scale;
-    // With the lyrics panel docked the content column gets very narrow. There
-    // the artwork moves above the text and everything is centred, which gives
-    // the station title the full card width instead of a tiny side column.
-    const bool narrow_hero = avail < 460.0f * m.layout_scale;
-    const float hero_h = (narrow_hero ? 272.0f : 210.0f) * m.layout_scale;
-    const float pad = m.space_4;
-    float art;
-    if (narrow_hero)
-    {
-        art = std::min(avail - pad * 2.0f, avail * 0.30f);
-    }
-    else
-    {
-        art = std::min(hero_h - pad * 2.0f, avail * (compact_hero ? 0.18f : 0.30f));
-        art = std::max(art, 64.0f * m.layout_scale);
-    }
-    art = std::max(art, 44.0f * m.layout_scale);
-    const float title_base = narrow_hero ? 21.0f : (compact_hero ? 24.5f : 32.0f);
-    const float sub_base = narrow_hero ? 13.5f : (compact_hero ? 14.5f : 17.0f);
-    const float text_gap = compact_hero ? m.space_4 : m.space_5;
-
-    const ImVec2 hero_origin = ImGui::GetCursorScreenPos();
-    const float art_x = narrow_hero ? hero_origin.x + (avail - art) * 0.5f
-                                    : hero_origin.x + pad;
-    const float art_y = hero_origin.y + pad;
-    ImGui::Dummy(ImVec2(avail, hero_h));
-
-    const float hero_t = hero_anim.pop(0.0f, 0.62f);
-    const float lift = (1.0f - hero_t) * ui_anim_offset(10.0f);
-    const float card_scale = 0.965f + 0.035f * hero_t;
-    const ImVec2 card_centre(hero_origin.x + avail * 0.5f, hero_origin.y + hero_h * 0.5f);
-    auto C = [&](ImVec2 p) {
-        return ImVec2(card_centre.x + (p.x - card_centre.x) * card_scale,
-                      card_centre.y + (p.y - card_centre.y) * card_scale);
-    };
-
-    ImDrawList *dl = ImGui::GetWindowDrawList();
-
-    // Soft accent glow behind the artwork.
-    const ImVec2 art_min(art_x, art_y + lift);
-    const ImVec2 art_max(art_x + art, art_y + art + lift);
-    const ImVec2 art_centre((art_min.x + art_max.x) * 0.5f, (art_min.y + art_max.y) * 0.5f);
-    dl->AddCircleFilled(art_centre, art * 0.78f, ui_accent_u32(0.045f * hero_t), 48);
-    dl->AddCircleFilled(art_centre, art * 0.62f, ui_accent_u32(0.035f * hero_t), 40);
-
-    // Card shell.
-    const ImVec2 card_min = C(hero_origin);
-    const ImVec2 card_max = C(ImVec2(hero_origin.x + avail, hero_origin.y + hero_h));
-    dl->AddRectFilled(card_min, card_max,
-                      ui_with_alpha(ui_col(ui_c().surface_hover), hero_t),
-                      m.radius_lg);
-    dl->AddRectFilled(card_min, card_max, ui_accent_u32(0.040f * hero_t), m.radius_lg);
-    dl->AddRect(card_min, card_max,
-                ui_with_alpha(ui_border_u32(), (0.45f + 0.55f * hero_t) * hero_t),
-                m.radius_lg, 0, 1.0f);
-
-    // Pulsing rings around the art for the first few seconds (and again
-    // whenever the user returns to the tab or picks a new seed).
-    const float elapsed = (float)(now - hero_anim.start);
-    if (ui_animations_enabled() && elapsed >= 0.0f && elapsed < 4.8f)
-    {
-        for (int k = 0; k < 2; ++k)
-        {
-            const float phase = fmodf(elapsed * 0.55f + (float)k * 0.5f, 1.0f);
-            const float grow = (6.0f + 30.0f * phase) * m.layout_scale;
-            const float a = 0.16f * (1.0f - phase) * hero_t;
-            if (a > 0.005f)
-                dl->AddRect(ImVec2(art_min.x - grow, art_min.y - grow),
-                            ImVec2(art_max.x + grow, art_max.y + grow),
-                            ui_accent_u32(a), m.radius_lg + grow, 0, 1.5f);
-        }
-        ui_anim_request();
-    }
-
-    // Artwork (shadow, cover, hover sheen).
-    dl->AddRectFilled(ImVec2(art_min.x + 3.0f * m.layout_scale, art_min.y + 4.0f * m.layout_scale),
-                      ImVec2(art_max.x + 3.0f * m.layout_scale, art_max.y + 4.0f * m.layout_scale),
-                      IM_COL32(0, 0, 0, (int)(120.0f * hero_t)), m.radius_lg);
-    ui_draw_cover(dl, state.radio_seed_thumbnail_url, art_min, art_max, m.radius_lg, 1.0f, UiIcon::Radio, "radio", true);
-
-    const float text_right = hero_origin.x + avail - pad;
-    const float text_x = narrow_hero ? hero_origin.x + pad
-                                     : std::min(art_max.x + text_gap, text_right - 1.0f);
-    const float text_w = std::max(1.0f, text_right - text_x);
-    const float centre_x = hero_origin.x + avail * 0.5f;
-    const float text_top = narrow_hero ? (art_y + art + m.space_2 + lift)
-                                       : (hero_origin.y + pad + lift);
-
     std::string station_title;
     if (!state.radio_seed_artist.empty())
         station_title = state.radio_seed_artist + " Radio";
@@ -755,160 +620,49 @@ void draw_radio_panel(AppState &state)
     else
         seed_line = "Built from your listening";
 
-    const float eyebrow_y = text_top;
-    const float title_y = text_top + 22.0f * m.layout_scale;
-    const float title_line = title_base * m.text_scale * 1.20f;
-    const float sub_y = title_y + title_line + 2.0f * m.layout_scale;
-    const float sub_line = sub_base * m.text_scale * 1.24f;
-    const float chips_y = sub_y + sub_line + m.space_3;
-    const float chip_h = 24.0f * m.layout_scale;
-    const float btn_h = m.button_h;
-    const float buttons_y = hero_origin.y + hero_h - pad - btn_h + lift;
-
-    dl->PushClipRect(ImVec2(text_x - 2.0f, hero_origin.y),
-                     ImVec2(text_right + 2.0f, hero_origin.y + hero_h), true);
-
-    // "ENDLESS STATION" eyebrow with a live dot.
-    {
-        const char *eyebrow_text = "ENDLESS STATION";
-        const float eyebrow_fs = 12.0f;
-        const float dot_r = 3.2f * m.layout_scale;
-        const float dot_a = ui_animations_enabled()
-                                ? 0.55f + 0.45f * (0.5f + 0.5f * sinf(elapsed * 3.0f))
-                                : 1.0f;
-        float eyebrow_x = text_x;
-        if (narrow_hero)
-        {
-            const float group = dot_r * 3.0f +
-                                ui_measure_width(g_ui_fonts.medium, eyebrow_fs, eyebrow_text);
-            eyebrow_x = centre_x - group * 0.5f;
-        }
-        dl->AddCircleFilled(ImVec2(eyebrow_x + dot_r, eyebrow_y + 8.0f * m.layout_scale),
-                            dot_r, ui_accent_u32(dot_a * hero_t), 16);
-        dl->AddText(g_ui_fonts.medium, eyebrow_fs * m.text_scale,
-                    ImVec2(eyebrow_x + dot_r * 3.0f, eyebrow_y),
-                    ui_with_alpha(ui_accent_text_u32(), 0.82f * hero_t), eyebrow_text);
-    }
-
-    std::string title_draw = ui_ellipsize(g_ui_fonts.semibold, title_base, station_title, text_w);
-    const float title_x =
-        narrow_hero ? std::max(text_x,
-                               centre_x -
-                                   ui_measure_width(g_ui_fonts.semibold, title_base, title_draw) * 0.5f)
-                    : text_x;
-    dl->AddText(g_ui_fonts.semibold, title_base * m.text_scale, ImVec2(title_x, title_y),
-                ui_with_alpha(ui_text_u32(), hero_t), title_draw.c_str());
-
-    std::string sub_draw = ui_ellipsize(g_ui_fonts.body, sub_base, seed_line, text_w);
-    const float sub_x =
-        narrow_hero ? std::max(text_x,
-                               centre_x -
-                                   ui_measure_width(g_ui_fonts.body, sub_base, sub_draw) * 0.5f)
-                    : text_x;
-    dl->AddText(g_ui_fonts.body, sub_base * m.text_scale, ImVec2(sub_x, sub_y),
-                ui_with_alpha(ui_text_dim_u32(), 0.9f * hero_t), sub_draw.c_str());
-
-    if (chips_y + chip_h <= buttons_y - 2.0f * m.layout_scale)
-    {
-        struct HeroChip
-        {
-            std::string label;
-            bool accent;
-        };
-        std::vector<HeroChip> chip_list;
-        chip_list.push_back({"ENDLESS", true});
-
-        const int n = tracks ? (int)tracks->size() : 0;
-        std::string track_chip;
-        if (loading && n == 0)
-            track_chip = "TUNING IN";
-        else if (failed && n == 0)
-            track_chip = "NO SIGNAL";
-        else
-            track_chip = std::to_string(n) + (n == 1 ? " TRACK" : " TRACKS");
-        chip_list.push_back({track_chip, false});
-        if (!loading && !failed && tracks && !tracks->empty())
-        {
-            const std::string dur = ui_format_duration(ui_tracks_duration(*tracks));
-            if (!dur.empty())
-                chip_list.push_back({dur, false});
-        }
-
-        // Only keep the chips that fit; then centre the group when the cover
-        // sits above the text, otherwise pack from the left like before.
-        const float chip_budget = text_right - text_x;
-        float chip_total = 0.0f;
-        size_t chip_fit = 0;
-        for (const HeroChip &chip : chip_list)
-        {
-            const float cw = ui_measure_width(g_ui_fonts.body, 13.0f, chip.label) +
-                             20.0f * m.layout_scale;
-            const float add = cw + (chip_fit > 0 ? m.space_2 : 0.0f);
-            if (chip_total + add > chip_budget)
-                break;
-            chip_total += add;
-            ++chip_fit;
-        }
-
-        float cx = narrow_hero ? (centre_x - chip_total * 0.5f) : text_x;
-        for (size_t i = 0; i < chip_fit; ++i)
-        {
-            const float cw = ui_meta_chip(dl, m, chip_list[i].label.c_str(),
-                                             ImVec2(cx, chips_y), chip_list[i].accent, hero_t);
-            cx += cw + m.space_2;
-        }
-    }
-    dl->PopClipRect();
-
-    // Actions. Buttons are submitted after the Dummy so they sit above the
-    // card and receive hover/click normally.
-    const float play_w = 152.0f * m.layout_scale;
-    const float seed_w = 126.0f * m.layout_scale;
-    const bool show_new = text_w >= 288.0f * m.layout_scale;
-    const bool can_play = tracks && !tracks->empty() && !loading;
-
-    if (show_new)
-    {
-        if (ui_pill_button("play_station", play_w > 132.0f * m.layout_scale ? "Play station" : "Play",
-                       UiIcon::Play, ImVec2(text_x, buttons_y),
-                       ImVec2(play_w, btn_h), true, hero_t, can_play))
-        {
-            state.current_playlist_source = PlaylistSource::RADIO;
-            ui_play_track(state, (*tracks)[0], 0);
-        }
-        if (ui_pill_button("new_seed", "New seed", UiIcon::Shuffle,
-                       ImVec2(text_x + play_w + m.space_2, buttons_y),
-                       ImVec2(seed_w, btn_h), false, hero_t, !loading))
-        {
-            if (!seeds.empty())
-            {
-                size_t next = 0;
-                for (size_t i = 0; i < seeds.size(); ++i)
-                    if (seeds[i].track.id == state.radio_seed_id)
-                    {
-                        next = (i + 1) % seeds.size();
-                        break;
-                    }
-                begin_station(state, seeds[next].track, seeds[next].plays, false);
-                ui_anim_request();
-                return;
-            }
-        }
-    }
+    const int n_tracks = tracks ? (int)tracks->size() : 0;
+    std::vector<UiHeroChip> chips;
+    chips.push_back({"ENDLESS", true});
+    if (loading && n_tracks == 0)
+        chips.push_back({"TUNING IN", false});
+    else if (failed && n_tracks == 0)
+        chips.push_back({"NO SIGNAL", false});
     else
+        chips.push_back({std::to_string(n_tracks) + (n_tracks == 1 ? " TRACK" : " TRACKS"), false});
+    if (!loading && !failed && tracks && !tracks->empty())
     {
-        const float w = std::min(text_w, 172.0f * m.layout_scale);
-        const float bx = narrow_hero ? centre_x - w * 0.5f : text_x;
-        if (ui_pill_button("play_station", w > 128.0f * m.layout_scale ? "Play station" : "Play",
-                       UiIcon::Play, ImVec2(bx, buttons_y), ImVec2(w, btn_h), true,
-                       hero_t, can_play))
-        {
-            state.current_playlist_source = PlaylistSource::RADIO;
-            ui_play_track(state, (*tracks)[0], 0);
-        }
+        const std::string dur = ui_format_duration(ui_tracks_duration(*tracks));
+        if (!dur.empty())
+            chips.push_back({dur, false});
     }
 
-    ImGui::SetCursorScreenPos(ImVec2(hero_origin.x, hero_origin.y + hero_h + m.space_5));
+    const bool can_play = tracks && !tracks->empty() && !loading;
+    std::vector<UiHeroAction> actions;
+    actions.push_back({"Play station", UiIcon::Play, true, can_play, "Play"});
+    actions.push_back({"New seed", UiIcon::Shuffle, false, !seeds.empty(), "New"});
+
+    const int clicked = ui_hero("ENDLESS STATION", station_title, seed_line,
+                                state.radio_seed_thumbnail_url, UiIcon::Radio, "radio",
+                                chips, actions, hero_anim, true);
+    ImDrawList *dl = ImGui::GetWindowDrawList();
+    if (clicked == 0 && can_play)
+    {
+        state.current_playlist_source = PlaylistSource::RADIO;
+        ui_play_track(state, (*tracks)[0], 0);
+    }
+    else if (clicked == 1 && !seeds.empty())
+    {
+        size_t next = 0;
+        for (size_t i = 0; i < seeds.size(); ++i)
+            if (seeds[i].track.id == state.radio_seed_id)
+            {
+                next = (i + 1) % seeds.size();
+                break;
+            }
+        begin_station(state, seeds[next].track, seeds[next].plays, false);
+        ui_anim_request();
+        return;
+    }
 
     // ------------------------------------------------------------------
     // Start from: the most-played seeds, as tactile artwork tiles.

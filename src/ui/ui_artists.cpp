@@ -18,50 +18,8 @@ static float clamp01f(float v)
     return v < 0.0f ? 0.0f : (v > 1.0f ? 1.0f : v);
 }
 
-static float ease_out_back(float t)
-{
-    t = clamp01f(t);
-    const float c1 = 1.70158f;
-    const float c3 = c1 + 1.0f;
-    const float u = t - 1.0f;
-    return 1.0f + c3 * u * u * u + c1 * u * u;
-}
+using ArtistsAnim = UiPageAnim;
 
-struct ArtistsAnim
-{
-    double now = 0.0;
-    double start = 0.0;
-
-    float stagger(float delay, float dur) const
-    {
-        if (!ui_animations_enabled())
-            return 1.0f;
-        const float d = ui_anim_delay(delay);
-        const float du = ui_anim_duration(dur);
-        if (du <= 0.0001f)
-            return 1.0f;
-        return ui_anim_ease_out(clamp01f((float)((now - start - d) / du)));
-    }
-
-    float pop(float delay, float dur) const
-    {
-        if (!ui_animations_enabled())
-            return 1.0f;
-        const float d = ui_anim_delay(delay);
-        const float du = ui_anim_duration(dur);
-        if (du <= 0.0001f)
-            return 1.0f;
-        return ease_out_back(clamp01f((float)((now - start - d) / du)));
-    }
-
-    float in_view(float screen_y, float span = 120.0f) const
-    {
-        if (!ui_animations_enabled())
-            return 1.0f;
-        const float bottom = ImGui::GetWindowPos().y + ImGui::GetWindowSize().y;
-        return ui_anim_ease_out(clamp01f((bottom - screen_y) / ui_px(span)));
-    }
-};
 
 static void apply_artist(AppState &state, const ArtistInfo &artist)
 {

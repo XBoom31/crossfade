@@ -1,4 +1,5 @@
 #include "ui.h"
+#include "ui_hero.h"
 #include "tasks.h"
 #include "ui_components.h"
 #include "ui_icons.h"
@@ -256,233 +257,27 @@ void play_list(AppState &state, const std::vector<Track> &tracks, int index)
     ui_play_track(state, tracks[index], index);
 }
 
-struct PodcastAnim
-{
-    double now = 0.0;
-    double start = 0.0;
+using PodcastAnim = UiPageAnim;
 
-    float stagger(float delay, float dur) const
-    {
-        if (!ui_animations_enabled())
-            return 1.0f;
-        const float d = ui_anim_delay(delay);
-        const float du = ui_anim_duration(dur);
-        if (du <= 0.0001f)
-            return 1.0f;
-        return ui_anim_ease_out(std::max(0.0f, std::min(1.0f,
-                                                         (float)((now - start - d) / du))));
-    }
 
-    float pop(float delay, float dur) const
-    {
-        if (!ui_animations_enabled())
-            return 1.0f;
-        const float t = stagger(delay, dur);
-        const float c1 = 1.70158f;
-        const float c3 = c1 + 1.0f;
-        const float u = t - 1.0f;
-        return 1.0f + c3 * u * u * u + c1 * u * u;
-    }
-
-    float in_view(float screen_y, float span = 120.0f) const
-    {
-        if (!ui_animations_enabled())
-            return 1.0f;
-        const float bottom = ImGui::GetWindowPos().y + ImGui::GetWindowSize().y;
-        return ui_anim_ease_out(std::max(0.0f, std::min(1.0f,
-                                                         (bottom - screen_y) / ui_px(span))));
-    }
-};
-
-struct PodcastAction
-{
-    std::string label;
-    UiIcon icon;
-    bool primary;
-    bool enabled;
-};
+using PodcastAction = UiHeroAction;
 
 // Radio-style hero, shared by the Podcasts library, search results and show
 // pages. Returns the index of the clicked action, or -1.
-static int podcast_hero(const AppState &state, const std::string &title,
+static int podcast_hero(const AppState &, const std::string &title,
                         const std::string &subtitle, const std::string &eyebrow,
                         const std::string &art, UiIcon fallback,
                         const std::vector<std::string> &chips,
                         const std::vector<PodcastAction> &actions,
                         double start, double now)
 {
-    const UiMetrics &m = ui_m();
-    const float avail = std::max(1.0f, ImGui::GetContentRegionAvail().x);
-    const bool compact = avail < 620.0f * m.layout_scale;
-    const bool narrow = avail < 460.0f * m.layout_scale;
-    const float hero_h = (narrow ? 272.0f : 210.0f) * m.layout_scale;
-    const float pad = m.space_4;
-    float art_size = narrow ? std::min(avail - pad * 2.0f, avail * 0.30f)
-                            : std::min(hero_h - pad * 2.0f, avail * (compact ? 0.18f : 0.30f));
-    art_size = std::max(art_size, 44.0f * m.layout_scale);
-    const float title_base = narrow ? 21.0f : (compact ? 24.5f : 32.0f);
-    const float sub_base = narrow ? 13.5f : (compact ? 14.5f : 17.0f);
-    const float text_gap = compact ? m.space_4 : m.space_5;
-
-    const ImVec2 origin = ImGui::GetCursorScreenPos();
-    const float art_x = narrow ? origin.x + (avail - art_size) * 0.5f : origin.x + pad;
-    const float art_y = origin.y + pad;
-    ImGui::Dummy(ImVec2(avail, hero_h));
-
-    PodcastAnim anim{now, start};
-    const float t = anim.pop(0.0f, 0.62f);
-    const float lift = (1.0f - t) * ui_anim_offset(10.0f);
-    const float scale = 0.965f + 0.035f * t;
-    const ImVec2 centre(origin.x + avail * 0.5f, origin.y + hero_h * 0.5f);
-    auto C = [&](ImVec2 p) {
-        return ImVec2(centre.x + (p.x - centre.x) * scale,
-                      centre.y + (p.y - centre.y) * scale);
-    };
-
-    ImDrawList *dl = ImGui::GetWindowDrawList();
-    const ImVec2 art_min(art_x, art_y + lift);
-    const ImVec2 art_max(art_x + art_size, art_y + art_size + lift);
-    const ImVec2 art_centre((art_min.x + art_max.x) * 0.5f, (art_min.y + art_max.y) * 0.5f);
-    dl->AddCircleFilled(art_centre, art_size * 0.78f, ui_accent_u32(0.045f * t), 48);
-    dl->AddCircleFilled(art_centre, art_size * 0.62f, ui_accent_u32(0.035f * t), 40);
-
-    const ImVec2 card_min = C(origin);
-    const ImVec2 card_max = C(ImVec2(origin.x + avail, origin.y + hero_h));
-    dl->AddRectFilled(card_min, card_max, ui_with_alpha(ui_col(ui_c().surface_hover), t),
-                      m.radius_lg);
-    dl->AddRectFilled(card_min, card_max, ui_accent_u32(0.040f * t), m.radius_lg);
-    dl->AddRect(card_min, card_max,
-                ui_with_alpha(ui_border_u32(), (0.45f + 0.55f * t) * t), m.radius_lg, 0, 1.0f);
-
-    const float elapsed = (float)(now - start);
-    if (ui_animations_enabled() && elapsed < 4.8f)
-    {
-        for (int k = 0; k < 2; ++k)
-        {
-            const float phase = std::fmod(elapsed * 0.55f + (float)k * 0.5f, 1.0f);
-            const float grow = (6.0f + 30.0f * phase) * m.layout_scale;
-            const float a = 0.16f * (1.0f - phase) * t;
-            if (a > 0.005f)
-                dl->AddRect(ImVec2(art_min.x - grow, art_min.y - grow),
-                            ImVec2(art_max.x + grow, art_max.y + grow),
-                            ui_accent_u32(a), m.radius_lg + grow, 0, 1.5f);
-        }
-        ui_anim_request();
-    }
-
-    dl->AddRectFilled(ImVec2(art_min.x + 3.0f * m.layout_scale, art_min.y + 4.0f * m.layout_scale),
-                      ImVec2(art_max.x + 3.0f * m.layout_scale, art_max.y + 4.0f * m.layout_scale),
-                      IM_COL32(0, 0, 0, (int)(120.0f * t)), m.radius_lg);
-    ui_draw_cover(dl, art, art_min, art_max, m.radius_lg, 1.0f, fallback,
-                  "podcast_hero", true, true);
-
-    const float text_right = origin.x + avail - pad;
-    const float text_x = narrow ? origin.x + pad
-                                : std::min(art_max.x + text_gap, text_right - 1.0f);
-    const float text_w = std::max(1.0f, text_right - text_x);
-    const float centre_x = origin.x + avail * 0.5f;
-    const float text_top = narrow ? (art_y + art_size + m.space_2 + lift)
-                                  : (origin.y + pad + lift);
-    const float title_y = text_top + 22.0f * m.layout_scale;
-    const float title_line = title_base * m.text_scale * 1.20f;
-    const float sub_y = title_y + title_line + 2.0f * m.layout_scale;
-    const float sub_line = sub_base * m.text_scale * 1.24f;
-    const float chips_y = sub_y + sub_line + m.space_3;
-    const float chip_h = 24.0f * m.layout_scale;
-    const float btn_h = m.button_h;
-    const float buttons_y = origin.y + hero_h - pad - btn_h + lift;
-
-    dl->PushClipRect(ImVec2(text_x - 2.0f, origin.y),
-                     ImVec2(text_right + 2.0f, origin.y + hero_h), true);
-
-    // Eyebrow with a live accent dot.
-    {
-        const float fs = 12.0f;
-        const float dot_r = 3.2f * m.layout_scale;
-        const float dot_a = ui_animations_enabled()
-                                ? 0.55f + 0.45f * (0.5f + 0.5f * std::sin(elapsed * 3.0f))
-                                : 1.0f;
-        float ex = text_x;
-        if (narrow)
-            ex = centre_x - (dot_r * 3.0f +
-                             ui_measure_width(g_ui_fonts.medium, fs, eyebrow.c_str())) * 0.5f;
-        dl->AddCircleFilled(ImVec2(ex + dot_r, text_top + 8.0f * m.layout_scale), dot_r,
-                            ui_accent_u32(dot_a * t), 16);
-        dl->AddText(g_ui_fonts.medium, fs * m.text_scale,
-                    ImVec2(ex + dot_r * 3.0f, text_top),
-                    ui_with_alpha(ui_accent_text_u32(), 0.82f * t), eyebrow.c_str());
-    }
-
-    const std::string title_draw = ui_ellipsize(g_ui_fonts.semibold, title_base, title, text_w);
-    const float title_x = narrow ? std::max(text_x, centre_x -
-                                                       ui_measure_width(g_ui_fonts.semibold,
-                                                                        title_base, title_draw) * 0.5f)
-                                 : text_x;
-    dl->AddText(g_ui_fonts.semibold, title_base * m.text_scale, ImVec2(title_x, title_y),
-                ui_with_alpha(ui_text_u32(), t), title_draw.c_str());
-
-    const std::string sub_draw = ui_ellipsize(g_ui_fonts.body, sub_base, subtitle, text_w);
-    const float sub_x = narrow ? std::max(text_x, centre_x -
-                                                   ui_measure_width(g_ui_fonts.body, sub_base,
-                                                                    sub_draw) * 0.5f)
-                               : text_x;
-    dl->AddText(g_ui_fonts.body, sub_base * m.text_scale, ImVec2(sub_x, sub_y),
-                ui_with_alpha(ui_text_dim_u32(), 0.9f * t), sub_draw.c_str());
-
-    if (chips_y + chip_h <= buttons_y - 2.0f * m.layout_scale)
-    {
-        float total_w = 0.0f;
-        size_t fit = 0;
-        for (const std::string &chip : chips)
-        {
-            const float cw = ui_measure_width(g_ui_fonts.body, 13.0f, chip.c_str()) +
-                             20.0f * m.layout_scale;
-            const float add = cw + (fit > 0 ? m.space_2 : 0.0f);
-            if (total_w + add > text_w)
-                break;
-            total_w += add;
-            ++fit;
-        }
-        float cx = narrow ? centre_x - total_w * 0.5f : text_x;
-        for (size_t i = 0; i < fit; ++i)
-        {
-            const float cw = ui_meta_chip(dl, m, chips[i].c_str(), ImVec2(cx, chips_y),
-                                          i == 0, t);
-            cx += cw + m.space_2;
-        }
-    }
-    dl->PopClipRect();
-
-    // Actions: lay them out from the text column; drop the ones that don't fit.
-    std::vector<float> widths;
-    float total_actions = 0.0f;
-    size_t action_fit = 0;
-    for (const PodcastAction &a : actions)
-    {
-        const float w = std::max(118.0f * m.layout_scale,
-                                 ui_measure_width(g_ui_fonts.medium, 16.0f, a.label.c_str()) +
-                                     48.0f * m.layout_scale);
-        const float add = w + (action_fit > 0 ? m.space_2 : 0.0f);
-        if (total_actions + add > text_w)
-            break;
-        widths.push_back(w);
-        total_actions += add;
-        ++action_fit;
-    }
-    float bx = narrow ? centre_x - total_actions * 0.5f : text_x;
-    int clicked = -1;
-    for (size_t i = 0; i < action_fit; ++i)
-    {
-        if (ui_pill_button(("podcast_hero_" + std::to_string(i)).c_str(),
-                           actions[i].label.c_str(), actions[i].icon,
-                           ImVec2(bx, buttons_y), ImVec2(widths[i], btn_h),
-                           actions[i].primary, t, actions[i].enabled))
-            clicked = (int)i;
-        bx += widths[i] + m.space_2;
-    }
-
-    ImGui::SetCursorScreenPos(ImVec2(origin.x, origin.y + hero_h + m.space_5));
-    return clicked;
+    std::vector<UiHeroChip> hero_chips;
+    hero_chips.reserve(chips.size());
+    for (size_t i = 0; i < chips.size(); ++i)
+        hero_chips.push_back({chips[i], i == 0});
+    UiPageAnim anim{now, start};
+    return ui_hero(eyebrow, title, subtitle, art, fallback, "podcast_hero",
+                   hero_chips, actions, anim);
 }
 
 bool podcast_grid(AppState &state, const std::vector<PodcastShow> &shows,

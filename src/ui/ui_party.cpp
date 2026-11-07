@@ -32,50 +32,11 @@
 namespace
 {
 
-float clamp01f(float v)
-{
-    return v < 0.0f ? 0.0f : (v > 1.0f ? 1.0f : v);
-}
-
-float ease_out_back(float t)
-{
-    t = clamp01f(t);
-    const float c1 = 1.70158f;
-    const float c3 = c1 + 1.0f;
-    const float u = t - 1.0f;
-    return 1.0f + c3 * u * u * u + c1 * u * u;
-}
-
 // Mirrors Radio's motion clocks so the Party tab feels like the rest of the
 // app. The page epoch is bumped on tab changes, so returning to Party always
 // replays the entrance instead of depending on a frame-gap heuristic.
-struct PartyAnim
-{
-    double now = 0.0;
-    double start = 0.0;
+using PartyAnim = UiPageAnim;
 
-    float t(float delay, float dur) const
-    {
-        if (!ui_animations_enabled())
-            return 1.0f;
-        const float d = ui_anim_delay(delay);
-        const float du = ui_anim_duration(dur);
-        if (du <= 0.0001f)
-            return 1.0f;
-        return ui_anim_ease_out(clamp01f((float)((now - start - d) / du)));
-    }
-
-    float pop(float delay, float dur) const
-    {
-        if (!ui_animations_enabled())
-            return 1.0f;
-        const float d = ui_anim_delay(delay);
-        const float du = ui_anim_duration(dur);
-        if (du <= 0.0001f)
-            return 1.0f;
-        return ease_out_back(clamp01f((float)((now - start - d) / du)));
-    }
-};
 
 void party_help(const char *text)
 {
@@ -552,7 +513,7 @@ void draw_pending_requests(AppState &state, const PartyAnim &a)
         return;
 
     party_gap();
-    const float ht = a.t(0.12f, 0.36f);
+    const float ht = a.stagger(0.12f, 0.36f);
     const std::string meta = std::to_string(pending.size()) + " waiting";
     ImGui::PushStyleVar(ImGuiStyleVar_Alpha, ht);
     if (ui_section_header("Waiting for approval", meta.c_str(),
@@ -569,7 +530,7 @@ void draw_pending_requests(AppState &state, const PartyAnim &a)
     for (int i = 0; i < (int)pending.size(); ++i)
     {
         const PartyPendingRequest &p = pending[i];
-        const float rt = a.t(0.16f + (float)i * 0.045f, 0.34f);
+        const float rt = a.stagger(0.16f + (float)i * 0.045f, 0.34f);
         const float lift = (1.0f - rt) * ui_anim_offset(8.0f);
         const ImVec2 origin = ImGui::GetCursorScreenPos();
         const float avail = ImGui::GetContentRegionAvail().x;
@@ -645,7 +606,7 @@ void draw_guest_queue(AppState &state, const PartyAnim &a)
         return;
 
     party_gap();
-    const float ht = a.t(0.24f, 0.36f);
+    const float ht = a.stagger(0.24f, 0.36f);
     const std::string meta = std::to_string(guest_items) +
                              (guest_items == 1 ? " song" : " songs");
     ImGui::PushStyleVar(ImGuiStyleVar_Alpha, ht);
@@ -668,7 +629,7 @@ void draw_guest_queue(AppState &state, const PartyAnim &a)
             continue;
         if (shown >= 6)
             break;
-        const float rt = a.t(0.26f + (float)shown * 0.04f, 0.34f);
+        const float rt = a.stagger(0.26f + (float)shown * 0.04f, 0.34f);
         const float lift = (1.0f - rt) * ui_anim_offset(7.0f);
         const ImVec2 origin = ImGui::GetCursorScreenPos();
         const float avail = ImGui::GetContentRegionAvail().x;
@@ -729,7 +690,7 @@ void draw_guest_queue(AppState &state, const PartyAnim &a)
 void draw_how_it_works(const PartyAnim &a)
 {
     party_gap();
-    const float ht = a.t(0.20f, 0.4f);
+    const float ht = a.stagger(0.20f, 0.4f);
     ImGui::PushStyleVar(ImGuiStyleVar_Alpha, ht);
     ui_section_header("How it works", nullptr);
     party_help("1. Click Start party. The QR code appears right here, ready to scan.");
@@ -742,7 +703,7 @@ void draw_how_it_works(const PartyAnim &a)
 void draw_connection_help(const PartyAnim &a, const PartyStatus &st)
 {
     party_gap();
-    const float ht = a.t(0.24f, 0.4f);
+    const float ht = a.stagger(0.24f, 0.4f);
     ImGui::PushStyleVar(ImGuiStyleVar_Alpha, ht);
     ui_section_header("Can't connect?", nullptr);
     party_help("Everyone must be on the same Wi-Fi. Hotspots and public networks often isolate clients, so the hotspot owner can reach the laptop while another phone cannot. Use a normal router, make this laptop the hotspot, or turn off client isolation if your network exposes it.");

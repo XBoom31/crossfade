@@ -231,7 +231,48 @@ float ui_anim_duration(float base_seconds);
 float ui_anim_delay(float base_seconds);
 float ui_anim_offset(float base_px);
 float ui_anim_approach(float current, float target, float speed);
+float ui_anim_clamp01f(float v);
+float ui_anim_ease_out_back(float t);
 void ui_anim_request();
+
+// Shared entrance clock used by the page panels: one start stamp drives the
+// hero pop, staggered rows/chips and section fades, and in_view() keeps
+// content below the fold from animating until it scrolls in.
+struct UiPageAnim
+{
+    double now = 0.0;
+    double start = 0.0;
+
+    float stagger(float delay, float dur) const
+    {
+        if (!ui_animations_enabled())
+            return 1.0f;
+        const float d = ui_anim_delay(delay);
+        const float du = ui_anim_duration(dur);
+        if (du <= 0.0001f)
+            return 1.0f;
+        return ui_anim_ease_out(ui_anim_clamp01f((float)((now - start - d) / du)));
+    }
+
+    float pop(float delay, float dur) const
+    {
+        if (!ui_animations_enabled())
+            return 1.0f;
+        const float d = ui_anim_delay(delay);
+        const float du = ui_anim_duration(dur);
+        if (du <= 0.0001f)
+            return 1.0f;
+        return ui_anim_ease_out_back(ui_anim_clamp01f((float)((now - start - d) / du)));
+    }
+
+    float in_view(float screen_y, float span = 120.0f) const
+    {
+        if (!ui_animations_enabled())
+            return 1.0f;
+        const float bottom = ImGui::GetWindowPos().y + ImGui::GetWindowSize().y;
+        return ui_anim_ease_out(ui_anim_clamp01f((bottom - screen_y) / ui_px(span)));
+    }
+};
 bool is_ui_animating();
 // Page-epoch: bumped on tab switch / search reset. Panels compare their
 // stored epoch against this to decide whether to replay their entrance.

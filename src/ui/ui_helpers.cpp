@@ -468,6 +468,20 @@ float ui_anim_ease_out(float t)
     return 1.0f - inv * inv * inv;
 }
 
+float ui_anim_clamp01f(float v)
+{
+    return v < 0.0f ? 0.0f : (v > 1.0f ? 1.0f : v);
+}
+
+float ui_anim_ease_out_back(float t)
+{
+    t = ui_anim_clamp01f(t);
+    const float c1 = 1.70158f;
+    const float c3 = c1 + 1.0f;
+    const float u = t - 1.0f;
+    return 1.0f + c3 * u * u * u + c1 * u * u;
+}
+
 static float anim_factor()
 {
     switch (g_ui_animation_level)
@@ -485,7 +499,7 @@ float ui_anim_duration(float base_seconds)
 
 float ui_anim_delay(float base_seconds)
 {
-    return g_ui_animation_level > 0 ? base_seconds * anim_factor() : 0.0f;
+    return ui_anim_duration(base_seconds);
 }
 
 float ui_anim_offset(float base_px)

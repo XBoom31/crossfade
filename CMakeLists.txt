@@ -69,6 +69,7 @@ set(SOURCES
     src/ui/ui_backdrop.cpp
     src/ui/ui_layout.cpp
     src/ui/ui_components.cpp
+    src/ui/ui_hero.cpp
     src/ui/ui_icons.cpp
     src/ui/ui_top.cpp
     src/ui/ui_main.cpp
