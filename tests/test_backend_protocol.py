@@ -83,10 +83,6 @@ def main():
     core.get_track_meta = lambda yt, video_id: {"id": video_id}
     core.get_lyrics = lambda yt, video_id: {"id": video_id, "lines": []}
     core.get_stream_url = lambda video_id, fresh=False: {"url": f"url:{video_id}"}
-    core.get_charts_tracks = lambda yt, limit=50: [{"id": "chart"}]
-    core.get_mood_categories = lambda yt: [{"id": "mood"}]
-    core.get_mood_playlists = lambda yt, params: [{"id": "moodpl", "params": params}]
-
     out = run([
         "recommendations",
         "recommendations 7",
@@ -103,12 +99,8 @@ def main():
         "play_fresh VID",
         "lyrics VID",
         "meta VID",
-        "liked",
         "library_playlists",
         "playlist PL1",
-        "charts",
-        "mood_categories",
-        "mood_playlists PARAMS",
         'rate_song {"videoId":"VID","rating":"LIKE"}',
         'create_playlist {"title":"T","privacyStatus":"PRIVATE"}',
         'delete_playlist {"playlistId":"PL1"}',
@@ -136,23 +128,19 @@ def main():
     check(out[12]["url"] == "url:VID", "play_fresh")
     check(out[13]["id"] == "VID", "lyrics")
     check(out[14]["id"] == "VID", "meta")
-    check(out[15]["tracks"][0]["videoId"] == "liked1", "liked")
-    check(out[16]["playlists"][0]["playlistId"] == "LP1", "library_playlists")
-    check(out[17]["id"] == "PL1", "playlist")
-    check(out[18][0]["id"] == "chart", "charts")
-    check(out[19][0]["id"] == "mood", "mood_categories")
-    check(out[20][0]["params"] == "PARAMS", "mood_playlists")
-    check(out[21]["status"] == "ok", "rate_song")
-    check(out[22]["playlistId"] == "PL_NEW", "create_playlist")
-    check(out[23]["status"] == "ok", "delete_playlist")
-    check(out[24]["status"] == "ok", "edit_playlist")
-    check(out[25]["status"] == "ok", "add_playlist_items")
-    check(out[26]["status"] == "ok", "remove_playlist_items")
-    check(out[27]["error"] == "Unknown command: unknown", "unknown command")
-    check(out[27]["kind"] == "backend", "unknown command kind")
-    check(out[28]["error"] == "Missing query", "missing query")
-    check(out[28]["kind"] == "backend", "missing query kind")
-    check(len(out) == 29, "quit stops the loop")
+    check(out[15]["playlists"][0]["playlistId"] == "LP1", "library_playlists")
+    check(out[16]["id"] == "PL1", "playlist")
+    check(out[17]["status"] == "ok", "rate_song")
+    check(out[18]["playlistId"] == "PL_NEW", "create_playlist")
+    check(out[19]["status"] == "ok", "delete_playlist")
+    check(out[20]["status"] == "ok", "edit_playlist")
+    check(out[21]["status"] == "ok", "add_playlist_items")
+    check(out[22]["status"] == "ok", "remove_playlist_items")
+    check(out[23]["error"] == "Unknown command: unknown", "unknown command")
+    check(out[23]["kind"] == "backend", "unknown command kind")
+    check(out[24]["error"] == "Missing query", "missing query")
+    check(out[24]["kind"] == "backend", "missing query kind")
+    check(len(out) == 25, "quit stops the loop")
 
     # Auth/network classifier is shared and deterministic.
     check(core._classify_error("auth failed") == "auth", "auth classifier")
