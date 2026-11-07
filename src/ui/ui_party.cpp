@@ -872,7 +872,7 @@ void draw_party_fullscreen(AppState &state)
         const float copy_w = 152.0f * m.layout_scale;
         const float copy_h = m.button_h;
         if (ui_pill_button("party_fs_copy", "Copy link", UiIcon::Check,
-                           ImVec2((w - copy_w) * 0.5f, url_y + url_w * 0.0f +
+                           ImVec2((w - copy_w) * 0.5f, url_y +
                                                         24.0f * m.layout_scale),
                            ImVec2(copy_w, copy_h), false, 1.0f, true))
         {

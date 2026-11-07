@@ -786,7 +786,7 @@ static void settings_row_label(const char *label, const char *value, const char 
 
 static bool settings_slider_row(const char *id, const char *label, float *value,
                                 float lo, float hi, const char *value_fmt,
-                                const char *help, float drag_speed = 1.0f,
+                                const char *help,
                                 const std::function<std::string(float)> &value_text = {})
 {
     const UiMetrics &m = ui_m();
@@ -804,19 +804,14 @@ static bool settings_slider_row(const char *id, const char *label, float *value,
     ImGui::InvisibleButton("##slider", ImVec2(w, track_h));
     const bool hovered = ImGui::IsItemHovered();
     const bool active = ImGui::IsItemActive();
-    bool changed = false;
     if (active)
     {
         const float t = std::max(0.0f, std::min(1.0f,
                                                  (ImGui::GetIO().MousePos.x - p.x) / w));
         const float nv = lo + t * (hi - lo);
         if (std::fabs(nv - *value) > 1e-6f)
-        {
             *value = nv;
-            changed = true;
-        }
     }
-    (void)changed;
 
     static std::unordered_map<ImGuiID, float> hover_map;
     float &hover_t = hover_map[ImGui::GetItemID()];
@@ -1182,7 +1177,6 @@ void draw_settings_panel(AppState &state)
                                                                   : state.settings.accent_color.c_str(),
                                "Used for highlights, progress bars and accents. Automatic follows your desktop accent or a fresh daily colour.");
             {
-                const ImVec4 current = g_accent;
                 const ImVec2 row = ImGui::GetCursorScreenPos();
                 const float sw = 26.0f * m.layout_scale;
                 const float gap = m.space_2;
@@ -1225,7 +1219,6 @@ void draw_settings_panel(AppState &state)
                 dl->AddCircleFilled(c, sw * 0.42f, ui_accent_u32(1.0f), 24);
                 dl->AddCircle(c, sw * 0.42f, IM_COL32(255, 255, 255, 150), 24, 1.2f);
                 dl->AddCircle(c, sw * 0.56f, ui_accent_u32(0.45f), 24, 1.0f);
-                (void)current;
                 ImGui::SetCursorScreenPos(ImVec2(row.x, row.y + sw + m.space_2));
                 if (ui_ghost_button("Automatic", ImVec2(130.0f * m.layout_scale, m.control_h)))
                 {
@@ -1339,7 +1332,7 @@ void draw_settings_panel(AppState &state)
         if (settings_slider_row("##crossfade", "End-of-track crossfade",
                                 &state.settings.crossfade_duration, 0.0f, 20.0f, "%.1f s",
                                 "Blend the end of one track into the beginning of the next.",
-                                1.0f, [](float v) { return v < 0.05f ? std::string("Off")
+                                [](float v) { return v < 0.05f ? std::string("Off")
                                                                      : std::to_string(v).substr(0, 4) + " s"; }))
             save = true;
         if (settings_toggle_row("##skip_fade", "Crossfade manual skips",
@@ -1790,7 +1783,7 @@ void draw_settings_panel(AppState &state)
     const bool cap_released = settings_slider_row(
         "##dl_cap", "Download cache cap", &cap_gb, 0.0f, 20.0f, "%.0f GB",
         "Keep at most this much downloaded audio. At zero the cache is unlimited; when a cap is reached, the least-listened songs are removed first.",
-        1.0f, [](float v) { return v < 0.5f ? std::string("Unlimited")
+        [](float v) { return v < 0.5f ? std::string("Unlimited")
                                             : std::to_string((int)std::lround(v)) + " GB"; });
     const float snapped = cap_gb < 0.5f ? 0.0f : std::floor(cap_gb + 0.5f);
     if (std::fabs(snapped - state.settings.download_cap_gb) > 0.01f)
@@ -1913,17 +1906,16 @@ void draw_settings_panel(AppState &state)
     const float danger_w = std::max(220.0f * m.layout_scale,
                                     ImGui::CalcTextSize("Clear download cache").x +
                                         ImGui::GetStyle().FramePadding.x * 2.0f + 4.0f);
-    auto danger_row = [&](const char *label, const char *desc, const char *help) -> bool
+    auto danger_row = [&](const char *label, const char *desc) -> bool
     {
         const bool clicked = ui_secondary_button(label, ImVec2(danger_w, m.button_h));
         ImGui::SameLine();
         settings_help(desc);
-        (void)help;
         ImGui::Dummy(ImVec2(0.0f, m.space_1));
         return clicked;
     };
 
-    if (danger_row("Clear download cache", "Delete every downloaded song from disk.", nullptr))
+    if (danger_row("Clear download cache", "Delete every downloaded song from disk."))
     {
         std::string dir = playlists_dir() + "/../audio_cache";
         cancel_pending_metadata(state.current_track_id);
@@ -1934,7 +1926,7 @@ void draw_settings_panel(AppState &state)
             state.downloaded_loaded = false;
             load_downloaded_tracks(state); });
     }
-    if (danger_row("Reset liked songs", "Remove all liked songs.", nullptr))
+    if (danger_row("Reset liked songs", "Remove all liked songs."))
     {
         begin_reset(state, ResetKind::Likes);
         g_reset_snapshot.likes = state.liked_tracks;
@@ -1943,7 +1935,7 @@ void draw_settings_panel(AppState &state)
         ui_notify(UiNotifyType::Warning, "Liked songs reset", "All liked songs were removed.",
                   6.0f, "Undo", &undo_reset);
     }
-    if (danger_row("Reset saved albums", "Remove all saved albums.", nullptr))
+    if (danger_row("Reset saved albums", "Remove all saved albums."))
     {
         begin_reset(state, ResetKind::Albums);
         g_reset_snapshot.albums = state.saved_albums;
@@ -1952,7 +1944,7 @@ void draw_settings_panel(AppState &state)
         ui_notify(UiNotifyType::Warning, "Saved albums reset", "All saved albums were removed.",
                   6.0f, "Undo", &undo_reset);
     }
-    if (danger_row("Reset saved artists", "Remove all saved artists.", nullptr))
+    if (danger_row("Reset saved artists", "Remove all saved artists."))
     {
         begin_reset(state, ResetKind::Artists);
         g_reset_snapshot.artists = state.saved_artists;
@@ -1961,7 +1953,7 @@ void draw_settings_panel(AppState &state)
         ui_notify(UiNotifyType::Warning, "Saved artists reset", "All saved artists were removed.",
                   6.0f, "Undo", &undo_reset);
     }
-    if (danger_row("Reset playlists", "Delete all playlists.", nullptr))
+    if (danger_row("Reset playlists", "Delete all playlists."))
     {
         begin_reset(state, ResetKind::Playlists);
         g_reset_snapshot.playlists = state.playlists;

@@ -361,51 +361,66 @@ static void init_base_style()
 void ui_theme_apply(const Settings &settings, const ImGuiIO &io)
 {
     (void)io;
-    init_base_style();
 
     const float master = clampf(settings.ui_scale, 0.75f, 2.0f);
     const float text = master * clampf(settings.ui_text_scale, 0.5f, 2.0f);
     const float widget = master * clampf(settings.ui_widget_scale, 0.5f, 2.0f);
     const float layout = master * clampf(settings.ui_layout_scale, 0.5f, 2.0f);
 
-    g_ui_layout_scale = layout;
-    g_metrics.scale = master;
-    g_metrics.text_scale = text;
-    g_metrics.widget_scale = widget;
-    g_metrics.layout_scale = layout;
+    // Metrics/style only change when a scale slider moves; rebuilding the
+    // whole ImGuiStyle every rendered frame is pure waste. Theme colours and
+    // the glow/transition animation still update on every call below.
+    static float cached_master = -1.0f, cached_text = -1.0f;
+    static float cached_widget = -1.0f, cached_layout = -1.0f;
+    const bool style_dirty = master != cached_master || text != cached_text ||
+                             widget != cached_widget || layout != cached_layout;
+    if (style_dirty)
+    {
+        cached_master = master;
+        cached_text = text;
+        cached_widget = widget;
+        cached_layout = layout;
+        init_base_style();
 
-    g_metrics.space_1 = 4.0f * layout;
-    g_metrics.space_2 = 8.0f * layout;
-    g_metrics.space_3 = 12.0f * layout;
-    g_metrics.space_4 = 16.0f * layout;
-    g_metrics.space_5 = 24.0f * layout;
-    g_metrics.space_6 = 32.0f * layout;
+        g_ui_layout_scale = layout;
+        g_metrics.scale = master;
+        g_metrics.text_scale = text;
+        g_metrics.widget_scale = widget;
+        g_metrics.layout_scale = layout;
 
-    g_metrics.radius_xs = 4.0f * layout;
-    g_metrics.radius_sm = 7.0f * layout;
-    g_metrics.radius_md = 10.0f * layout;
-    g_metrics.radius_lg = 14.0f * layout;
+        g_metrics.space_1 = 4.0f * layout;
+        g_metrics.space_2 = 8.0f * layout;
+        g_metrics.space_3 = 12.0f * layout;
+        g_metrics.space_4 = 16.0f * layout;
+        g_metrics.space_5 = 24.0f * layout;
+        g_metrics.space_6 = 32.0f * layout;
 
-    g_metrics.control_h = 38.0f * layout;
-    g_metrics.button_h = 40.0f * layout;
-    g_metrics.row_art = 48.0f * layout;
-    g_metrics.row_pad_x = 12.0f * layout;
-    g_metrics.row_pad_y = 9.0f * layout;
-    g_metrics.row_gap = 4.0f * layout;
-    g_metrics.card_gap = 18.0f * layout;
-    g_metrics.sidebar_w = 232.0f * layout;
-    g_metrics.sidebar_rail_w = 68.0f * layout;
-    g_metrics.header_h = 68.0f * layout;
-    g_metrics.bottom_h = 92.0f * layout;
-    g_metrics.content_pad = 24.0f * layout;
-    g_metrics.lyrics_min = 300.0f * layout;
-    g_metrics.lyrics_max = 520.0f * layout;
+        g_metrics.radius_xs = 4.0f * layout;
+        g_metrics.radius_sm = 7.0f * layout;
+        g_metrics.radius_md = 10.0f * layout;
+        g_metrics.radius_lg = 14.0f * layout;
 
-    ImGuiStyle style = g_base_style;
-    style.ScaleAllSizes(widget);
-    style.FontScaleMain = text;
-    style.FontScaleDpi = 1.0f;
-    ImGui::GetStyle() = style;
+        g_metrics.control_h = 38.0f * layout;
+        g_metrics.button_h = 40.0f * layout;
+        g_metrics.row_art = 48.0f * layout;
+        g_metrics.row_pad_x = 12.0f * layout;
+        g_metrics.row_pad_y = 9.0f * layout;
+        g_metrics.row_gap = 4.0f * layout;
+        g_metrics.card_gap = 18.0f * layout;
+        g_metrics.sidebar_w = 232.0f * layout;
+        g_metrics.sidebar_rail_w = 68.0f * layout;
+        g_metrics.header_h = 68.0f * layout;
+        g_metrics.bottom_h = 92.0f * layout;
+        g_metrics.content_pad = 24.0f * layout;
+        g_metrics.lyrics_min = 300.0f * layout;
+        g_metrics.lyrics_max = 520.0f * layout;
+
+        ImGuiStyle style = g_base_style;
+        style.ScaleAllSizes(widget);
+        style.FontScaleMain = text;
+        style.FontScaleDpi = 1.0f;
+        ImGui::GetStyle() = style;
+    }
 
     // Theme target + first-frame snap.
     g_theme_target = settings.day_mode ? 1.0f : 0.0f;

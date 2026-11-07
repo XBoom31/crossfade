@@ -31,11 +31,7 @@ static std::string expand_tilde(const std::string &p)
 #ifdef P100_WINDOWS
         const char *home = getenv("USERPROFILE");
 #else
-    #ifdef P100_WINDOWS
-    const char *home = getenv("USERPROFILE");
-#else
-    const char *home = getenv("HOME");
-#endif
+        const char *home = getenv("HOME");
 #endif
         if (home && *home)
             return std::string(home) + p.substr(1);

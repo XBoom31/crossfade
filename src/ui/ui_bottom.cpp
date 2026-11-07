@@ -690,8 +690,6 @@ void draw_bottom_bar(AppState &state, MpvPlayer &player)
     if (duration < 0.0f)
         duration = 0.0f;
     const bool have_duration = duration > 0.0f;
-    if (current < 0.0f)
-        current = 0.0f;
     const float time_w = 44.0f * m.layout_scale;
     const float seek_bar_w = std::max(40.0f, center_w - time_w * 2.0f - m.space_2 * 2.0f);
     const float seek_y = block_y + row_h + m.space_1;

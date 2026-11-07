@@ -13,6 +13,8 @@ cd "$ROOT"
 # GNU tar warn "file changed as we read it" and exit non-zero.
 tar -czf "$TMP_OUT" \
     --exclude=./build \
+    --exclude=./build-asan \
+    --exclude=./build-tsan \
     --exclude=./wheels \
     --exclude=./__pycache__ \
     --exclude='*.pyc' \

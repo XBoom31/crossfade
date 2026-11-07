@@ -117,10 +117,14 @@ static void apply_ui_scale(const Settings &s)
     power::configure(s.low_power, s.low_power_on_battery);
     power::refresh();
 
-    g_ui_elem.clear();
-    for (const auto &kv : s.ui_elements)
-        g_ui_elem[kv.first] = clampf(kv.second, 0.25f, 3.0f);
-
+    static std::unordered_map<std::string, float> s_applied_elements;
+    if (s_applied_elements != s.ui_elements)
+    {
+        s_applied_elements = s.ui_elements;
+        g_ui_elem.clear();
+        for (const auto &kv : s.ui_elements)
+            g_ui_elem[kv.first] = clampf(kv.second, 0.25f, 3.0f);
+    }
 }
 
 std::queue<PlayRequest> g_play_queue;

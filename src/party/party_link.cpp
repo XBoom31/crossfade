@@ -165,8 +165,6 @@ Parsed parse_candidate(const std::string &token)
         else if (segs[0] == "channel" || segs[0] == "c" || segs[0] == "user" ||
                  (!segs[0].empty() && segs[0][0] == '@'))
             return make(Result::Channel, "", "That's a channel link. Paste a link to a single song.");
-        else if (!segs.empty() && segs[0] == "watch")
-            vid = query_value(query, "v");
         else
             vid = query_value(query, "v");
         if (vid.empty())
