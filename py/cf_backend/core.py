@@ -1691,9 +1691,9 @@ _SEARCH_CACHE_MAX = 100
 _search_cache = {}
 
 
-def _cached_search(query, fn):
-    key = (query or '').strip().lower()
-    if not key:
+def _cached_search(query, fn, scope=''):
+    key = (scope, (query or '').strip().lower())
+    if not key[1]:
         return fn()
     hit = _search_cache.get(key)
     now = time.time()
@@ -1748,10 +1748,10 @@ def run_command_loop(yt, stdin=None, stdout=None):
                         limit = 40
                 result = get_home_tracks(yt, limit=limit)
             elif cmd == 'search':
-                result = (_cached_search(arg, lambda: search_tracks(yt, arg))
+                result = (_cached_search(arg, lambda: search_tracks(yt, arg), 'search')
                           if arg else {'error': 'Missing query'})
             elif cmd == 'search_all':
-                result = (_cached_search(arg, lambda: search_all(yt, arg))
+                result = (_cached_search(arg, lambda: search_all(yt, arg), 'search_all')
                           if arg else {'error': 'Missing query'})
             elif cmd == 'radio':
                 result = get_radio_tracks(yt, arg) if arg else {'error': 'Missing video_id'}
@@ -1773,7 +1773,7 @@ def run_command_loop(yt, stdin=None, stdout=None):
             elif cmd == 'artist_of':
                 result = artist_for_track(yt, arg) if arg else {'error': 'Missing video_id'}
             elif cmd == 'artist_search':
-                result = (_cached_search(arg, lambda: search_artists(yt, arg))
+                result = (_cached_search(arg, lambda: search_artists(yt, arg), 'artist_search')
                           if arg else {'error': 'Missing query'})
             elif cmd == 'play':
                 result = get_stream_url(arg) if arg else {'error': 'Missing video_id'}
@@ -1797,7 +1797,7 @@ def run_command_loop(yt, stdin=None, stdout=None):
             elif cmd == 'podcasts_library':
                 result = get_podcast_library(yt)
             elif cmd == 'podcasts_search':
-                result = (_cached_search(arg, lambda: search_podcasts(yt, arg))
+                result = (_cached_search(arg, lambda: search_podcasts(yt, arg), 'podcasts_search')
                           if arg else {'error': 'Missing query'})
             elif cmd == 'podcast':
                 result = get_podcast_details(yt, arg) if arg else {'error': 'Missing podcast_id'}

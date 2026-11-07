@@ -267,7 +267,11 @@ TrackListPtr get_playlist(const AppState &state)
         return alias_of(state.artist_songs);
     case PlaylistSource::PODCAST:
         return alias_of(state.podcast_tracks);
+    case PlaylistSource::YOUTUBE_PLAYLIST:
+        return std::atomic_load(&state.youtube_playlist_tracks);
     case PlaylistSource::HISTORY:
+        if (state.history_view && !state.history_view->empty())
+            return state.history_view;
         return alias_of(state.playback_history);
     case PlaylistSource::STATS:
         return alias_of(state.stats.tracks);

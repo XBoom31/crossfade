@@ -18,7 +18,7 @@ from cf_backend.core import _err, ensure_config_dir, run_command_loop, secure_au
 
 def _config_dir():
     xdg = os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config")
-    return os.environ.get("P100_CONFIG_DIR") or os.path.join(xdg, "p100")
+    return os.environ.get("P100_CONFIG_DIR") or os.path.join(xdg, "crossfade")
 
 
 CONFIG_DIR = _config_dir()

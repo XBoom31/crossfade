@@ -610,43 +610,6 @@ static void show_notification(const std::string &title, const std::string &body,
 // frames. Main-thread vectors (liked, playlists, history, downloads)
 // are wrapped with a non-owning alias (alias_of).
 // ----------------------------------------------------------------------
-static TrackListPtr get_playlist()
-{
-    switch (g_state.current_playlist_source)
-    {
-    case PlaylistSource::HOME:
-        return std::atomic_load(&g_state.recommendations);
-    case PlaylistSource::SEARCH:
-        return std::atomic_load(&g_state.search_results);
-    case PlaylistSource::DOWNLOADS:
-        return alias_of(g_state.downloaded_tracks);
-    case PlaylistSource::RADIO:
-        return std::atomic_load(&g_state.radio_results);
-    case PlaylistSource::LIKED:
-        return alias_of(g_state.liked_tracks);
-    case PlaylistSource::YOUTUBE_PLAYLIST:
-        return std::atomic_load(&g_state.youtube_playlist_tracks);
-    case PlaylistSource::PLAYLIST:
-        if (g_state.selected_playlist_index >= 0 && g_state.selected_playlist_index < (int)g_state.playlists.size())
-            return alias_of(g_state.playlists[g_state.selected_playlist_index].tracks);
-        return nullptr;
-    case PlaylistSource::ALBUM:
-        return alias_of(g_state.album_tracks);
-    case PlaylistSource::ARTIST:
-        return alias_of(g_state.artist_songs);
-    case PlaylistSource::HISTORY:
-        if (g_state.history_view && !g_state.history_view->empty())
-            return g_state.history_view;
-        return alias_of(g_state.playback_history);
-    case PlaylistSource::STATS:
-        return alias_of(g_state.stats.tracks);
-    case PlaylistSource::SMART:
-        return std::atomic_load(&g_state.smart_view);
-    default:
-        return nullptr;
-    }
-}
-
 // Materialize the active source list into the single global queue. A UI play
 // action sets queue_replace_from_source; this runs once before the pending
 // track is resolved. The current track is played directly and the rest of the
@@ -665,7 +628,7 @@ static void rebuild_queue_from_source()
     g_state.play_queue.clear();
     g_state.queue_cycle.clear();
 
-    auto playlist = get_playlist();
+    auto playlist = get_playlist(g_state);
     if (!playlist || playlist->empty())
     {
         g_state.queue_dirty = true;
@@ -1385,7 +1348,7 @@ static void begin_play_track(const Track &t, int index)
         // Queue entries do not carry a source index. Re-find the row when the
         // active list still contains this track so list highlighting survives
         // a skip.
-        auto playlist = get_playlist();
+        auto playlist = get_playlist(g_state);
         if (playlist)
         {
             for (int i = 0; i < (int)playlist->size(); ++i)
@@ -3147,7 +3110,7 @@ int app_run(int argc, char **argv)
                         target.url = g_state.pending_play_url;
                         target.album_id = g_state.current_album_id;
                         target.artist_id = g_state.current_artist_id;
-                        if (auto playlist = get_playlist())
+                        if (auto playlist = get_playlist(g_state))
                         {
                             for (const auto &row : *playlist)
                             {

@@ -25,7 +25,7 @@ from cf_backend.core import (  # noqa: E402
 )
 
 _XDG_CONFIG = os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config")
-CONFIG_DIR = os.environ.get("P100_CONFIG_DIR") or os.path.join(_XDG_CONFIG, "p100")
+CONFIG_DIR = os.environ.get("P100_CONFIG_DIR") or os.path.join(_XDG_CONFIG, "crossfade")
 
 # Environment overrides keep the repo free of bundled credentials.
 CLIENT_ID = os.environ.get("P100_OAUTH_CLIENT_ID", "")
@@ -37,7 +37,7 @@ def _resolve_oauth_file():
     legacy = os.path.join(CONFIG_DIR, "oauth.json")
     if not os.path.exists(preferred) and os.path.exists(legacy):
         try:
-            _ensure_config_dir()
+            ensure_config_dir(CONFIG_DIR)
             shutil.copy2(legacy, preferred)
             print(f"Migrated {legacy} -> {preferred}", file=sys.stderr)
         except Exception as e:
