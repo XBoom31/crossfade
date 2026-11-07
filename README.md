@@ -625,7 +625,6 @@ history.
 | `imgui.ini` | Window layout |
 | `backend.log` | Backend stderr — the first place to look when auth or `yt-dlp` misbehaves |
 | `crash-*.log`, `crash-*.dmp` | Local crash reports written by the diagnostics handler |
-| `config.ini` | Legacy browser setting; superseded by `settings.json` |
 
 > Some internal filenames and environment variables still use the historical `p100`
 > prefix (`p100-backend.py`, `P100_CONFIG_DIR`, …). They are kept deliberately so existing

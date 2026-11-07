@@ -407,8 +407,8 @@ void draw_podcasts_panel(AppState &state)
                             ? "SEARCHING"
                             : std::to_string(count) + (count == 1 ? " SHOW" : " SHOWS"));
         const std::vector<PodcastAction> actions = {
-            {"Clear search", UiIcon::Close, false, true},
-            {"Search again", UiIcon::Search, true, true},
+            {"Clear search", UiIcon::Close, false, true, ""},
+            {"Search again", UiIcon::Search, true, true, ""},
         };
         const int clicked = podcast_hero(state, "Podcast results", subtitle, "SEARCH", art,
                                          UiIcon::Podcast, chips, actions, s_search_start, now);
@@ -489,9 +489,9 @@ void draw_podcasts_panel(AppState &state)
         else
             std::snprintf(download_label, sizeof(download_label), "Download all");
         std::vector<PodcastAction> actions = {
-            {"Play latest", UiIcon::Play, true, can_play},
-            {saved ? "Saved" : "Save show", saved ? UiIcon::Check : UiIcon::Heart, false, true},
-            {download_label, UiIcon::Download, false, can_play && !downloading},
+            {"Play latest", UiIcon::Play, true, can_play, ""},
+            {saved ? "Saved" : "Save show", saved ? UiIcon::Check : UiIcon::Heart, false, true, ""},
+            {download_label, UiIcon::Download, false, can_play && !downloading, ""},
         };
         const int clicked = podcast_hero(state, show.title,
                                          show.author.empty() ? "Podcast show" : show.author,
@@ -572,8 +572,8 @@ void draw_podcasts_panel(AppState &state)
         chips.push_back(std::to_string(later->size()) + " LATER");
     const std::string featured = shows.empty() ? "" : shows.front().thumbnail_url;
     const std::vector<PodcastAction> actions = {
-        {"Search podcasts", UiIcon::Search, true, true},
-        {"Refresh", UiIcon::Refresh, false, !state.podcast_library_loading},
+        {"Search podcasts", UiIcon::Search, true, true, ""},
+        {"Refresh", UiIcon::Refresh, false, !state.podcast_library_loading, ""},
     };
     const int clicked = podcast_hero(state, "Podcasts",
                                      "Shows, episodes and saved listens from YouTube Music",
