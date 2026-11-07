@@ -24,7 +24,6 @@ package() {
     cd "$pkgname-$pkgver"
     DESTDIR="$pkgdir" cmake --install build
     # Backend venv so the app works right after install.
-    python3 -m venv "$pkgdir/usr/share/crossfade/venv"
-    "$pkgdir/usr/share/crossfade/venv/bin/pip" install --quiet \
-        -r "$pkgdir/usr/share/crossfade/requirements.txt"
+    bash scripts/bootstrap-venv.sh "$pkgdir/usr/share/crossfade/venv" \
+        "$pkgdir/usr/share/crossfade/requirements.txt"
 }

@@ -44,16 +44,13 @@ fi
 
 if [ ! -x "$VENV/bin/python" ]; then
     echo "Creating Python venv at $VENV"
-    python3 -m venv "$VENV"
 fi
-
+WHEELS=""
 if [ -d "$ROOT/wheels" ]; then
-    echo "Installing Python dependencies from $ROOT/wheels"
-    "$VENV/bin/python" -m pip install --no-index --find-links "$ROOT/wheels" -r "$ROOT/requirements.txt"
-else
-    "$VENV/bin/python" -m pip install --upgrade pip
-    "$VENV/bin/python" -m pip install -r "$ROOT/requirements.txt"
+    WHEELS="$ROOT/wheels"
+    echo "Installing Python dependencies from $WHEELS"
 fi
+"$ROOT/scripts/bootstrap-venv.sh" "$VENV" "$ROOT/requirements.txt" "$WHEELS"
 if command -v update-desktop-database >/dev/null 2>&1; then
     update-desktop-database "$PREFIX/share/applications" >/dev/null 2>&1 || true
 fi

@@ -138,7 +138,7 @@ jobs:
           cp build/crossfade "$STAGE/usr/bin/"
           cp scripts/crossfade-login "$STAGE/usr/bin/"
           mkdir -p "$STAGE/usr/share/crossfade/scripts"
-          cp scripts/crossfade-login-helper.py "$STAGE/usr/share/crossfade/scripts/"
+          cp scripts/crossfade-login-helper.py scripts/bootstrap-venv.sh "$STAGE/usr/share/crossfade/scripts/"
           cp p100-backend.py p100-backend-oauth.py requirements.txt "$STAGE/usr/share/crossfade/"
           mkdir -p "$STAGE/usr/share/crossfade/py"
           cp -r py/cf_backend "$STAGE/usr/share/crossfade/py/"
@@ -165,7 +165,7 @@ jobs:
           chmod +x AppDir/usr/bin/crossfade
           cp p100-backend.py p100-backend-oauth.py requirements.txt AppDir/usr/share/crossfade/
           mkdir -p AppDir/usr/share/crossfade/scripts
-          cp scripts/crossfade-login-helper.py AppDir/usr/share/crossfade/scripts/
+          cp scripts/crossfade-login-helper.py scripts/bootstrap-venv.sh AppDir/usr/share/crossfade/scripts/
           mkdir -p AppDir/usr/share/crossfade/py
           cp -r py/cf_backend AppDir/usr/share/crossfade/py/
           cp -r assets/fonts AppDir/usr/share/crossfade/assets/

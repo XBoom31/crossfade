@@ -9,13 +9,10 @@ export LD_LIBRARY_PATH="$APPDIR/usr/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 VENV="${HOME}/.local/share/crossfade/venv"
 REQ="$APPDIR/usr/share/crossfade/requirements.txt"
 
-if [ ! -x "$VENV/bin/python" ]; then
-    if command -v python3 >/dev/null 2>&1; then
-        mkdir -p "$(dirname "$VENV")"
-        python3 -m venv "$VENV" >/dev/null 2>&1 || true
-        [ -x "$VENV/bin/pip" ] && "$VENV/bin/pip" install --quiet --upgrade pip >/dev/null 2>&1 || true
-        [ -x "$VENV/bin/pip" ] && "$VENV/bin/pip" install --quiet -r "$REQ" >/dev/null 2>&1 || true
-    fi
+if [ ! -x "$VENV/bin/python" ] && command -v python3 >/dev/null 2>&1; then
+    mkdir -p "$(dirname "$VENV")"
+    "$APPDIR/usr/share/crossfade/scripts/bootstrap-venv.sh" "$VENV" "$REQ" \
+        >/dev/null 2>&1 || true
 fi
 if [ -x "$VENV/bin/python" ]; then
     export P100_PYTHON="$VENV/bin/python"

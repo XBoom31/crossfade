@@ -195,6 +195,8 @@ install(DIRECTORY assets/fonts DESTINATION ${CMAKE_INSTALL_DATADIR}/crossfade/as
 install(PROGRAMS scripts/crossfade-login DESTINATION ${CMAKE_INSTALL_BINDIR})
 install(PROGRAMS scripts/crossfade-login-helper.py
     DESTINATION ${CMAKE_INSTALL_DATADIR}/crossfade/scripts)
+install(PROGRAMS scripts/bootstrap-venv.sh
+    DESTINATION ${CMAKE_INSTALL_DATADIR}/crossfade/scripts)
 
 # ---- Party mode unit tests (off by default; ./mk stays unchanged) ----
 option(CROSSFADE_BUILD_TESTS "Build crossfade unit tests" ON)
