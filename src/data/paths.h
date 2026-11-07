@@ -13,8 +13,8 @@ inline int mkdir(const char *path, int)
 // Central path resolution for p100.
 //
 // Config rule: $P100_CONFIG_DIR, else $XDG_CONFIG_HOME/crossfade, else
-// ~/.config/p100. The default matches the historical layout so existing
-// installs (and data copied from another machine) keep working unchanged.
+// ~/.config/crossfade. Legacy p100 directories are migrated once on first
+// launch, so installs (and data copied from another machine) keep working.
 
 std::string p100_exe_dir();
 

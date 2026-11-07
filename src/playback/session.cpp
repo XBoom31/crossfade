@@ -19,6 +19,43 @@ static std::string session_file_path()
     return p100_config_path("session.json");
 }
 
+const char *playlist_source_name(PlaylistSource source)
+{
+    switch (source)
+    {
+    case PlaylistSource::HOME: return "home";
+    case PlaylistSource::SEARCH: return "search";
+    case PlaylistSource::DOWNLOADS: return "downloads";
+    case PlaylistSource::RADIO: return "radio";
+    case PlaylistSource::LIKED: return "liked";
+    case PlaylistSource::PLAYLIST: return "playlist";
+    case PlaylistSource::ALBUM: return "album";
+    case PlaylistSource::ARTIST: return "artist";
+    case PlaylistSource::PODCAST: return "podcast";
+    case PlaylistSource::HISTORY: return "history";
+    case PlaylistSource::STATS: return "stats";
+    case PlaylistSource::SMART: return "smart";
+    case PlaylistSource::YOUTUBE_PLAYLIST: return "youtube_playlist";
+    }
+    return "home";
+}
+
+PlaylistSource playlist_source_from_name(const std::string &name)
+{
+    for (PlaylistSource s : {PlaylistSource::HOME, PlaylistSource::SEARCH,
+                             PlaylistSource::DOWNLOADS, PlaylistSource::RADIO,
+                             PlaylistSource::LIKED, PlaylistSource::PLAYLIST,
+                             PlaylistSource::ALBUM, PlaylistSource::ARTIST,
+                             PlaylistSource::PODCAST, PlaylistSource::HISTORY,
+                             PlaylistSource::STATS, PlaylistSource::SMART,
+                             PlaylistSource::YOUTUBE_PLAYLIST})
+    {
+        if (name == playlist_source_name(s))
+            return s;
+    }
+    return PlaylistSource::HOME;
+}
+
 std::string session_json(const AppState &state, double position, int volume)
 {
     auto esc = [](const std::string &s) { return jsonutil::escape(s); };
@@ -33,19 +70,7 @@ std::string session_json(const AppState &state, double position, int volume)
         << "\"track_album_id\":\"" << esc(state.current_album_id) << "\","
         << "\"track_artist_id\":\"" << esc(state.current_artist_id) << "\","
         << "\"source\":\"";
-    switch (state.current_playlist_source)
-    {
-    case PlaylistSource::HOME:      out << "home"; break;
-    case PlaylistSource::SEARCH:    out << "search"; break;
-    case PlaylistSource::DOWNLOADS: out << "downloads"; break;
-    case PlaylistSource::RADIO:     out << "radio"; break;
-    case PlaylistSource::LIKED:     out << "liked"; break;
-    case PlaylistSource::PLAYLIST:  out << "playlist"; break;
-    case PlaylistSource::ALBUM:     out << "album"; break;
-    case PlaylistSource::ARTIST:    out << "artist"; break;
-    case PlaylistSource::PODCAST:   out << "podcast"; break;
-    default:                        out << "home"; break;
-    }
+    out << playlist_source_name(state.current_playlist_source);
     out << "\","
         << "\"playlist_name\":\"" << esc(
             state.current_playlist_source == PlaylistSource::PLAYLIST &&

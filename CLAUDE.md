@@ -74,9 +74,18 @@ The C++ process forks the Python backend at startup, communicating via pipes. Ea
 
 | File | Role |
 |---|---|
-| `main.cpp` | Entry point, SDL/mpv/ImGui init, main loop, event dispatch, session restore |
+| `main.cpp` | Thin entry point that calls `app_run()` |
+| `app/app.cpp` | SDL/mpv/ImGui init, main loop, session restore, shutdown |
+| `app/app_input.cpp` | Touch/trackpad/wheel gesture translation and momentum scrolling |
+| `app/app_playback.cpp` | Queue building, stream resolution, recording, crossfade and player events |
+| `app/app_workers.cpp` | Background search, recommendations, lyrics and cover/download workers |
+| `app/app_internal.h` | Shared app-module globals, types and function declarations |
 | `ui.h` | `AppState` struct (global state), `Track`/`Playlist`/`Settings`/`SessionState` types, UI function declarations, layout constants |
-| `ui_helpers.cpp` | Liked songs persistence (`liked.json`), saved albums/artists persistence (`albums.json`, `artists.json`), album/artist data caches (`album_cache/`, `artist_cache/`), playlist file I/O, session persistence, shared UI helpers |
+| `ui_helpers.cpp` | Shared UI helpers, playlist source resolution, scroll/content fades |
+| `data/store.cpp` | JSON persistence fallbacks (`liked.json`, `history.json`, counts, log, queue) when SQLite is unavailable |
+| `data/cache.cpp` | Album/artist cache files and lyrics cache |
+| `ui_hero.cpp` | Shared hero band used by Radio, list pages and Podcasts |
+| `core/json_util.h` | Shared JSON escaping/parsing and track serialization |
 | `ui_top.cpp` | Top navigation bar (Home/Downloads/Radio/Liked/Albums/Artists/Playlists/Settings) + search bar with debounce |
 | `ui_main.cpp` | Main content area — track list with thumbnails, right-click context menu (like/radio/view album/view artist/save album/save artist/add to playlist), double-click to play |
 | `ui_bottom.cpp` | Bottom bar — album art, track info, prev/play-pause/next buttons, custom seek bar, volume slider |
@@ -84,12 +93,12 @@ The C++ process forks the Python backend at startup, communicating via pipes. Ea
 | `ui_album.cpp` | Album detail view (drill-down with save/unsave, album download) + saved albums grid |
 | `ui_artists.cpp` | Artist detail view (popular songs + albums/singles, save/unsave) + saved artists grid + artist search results |
 | `ui_settings.cpp` | Settings panel (crossfade, volume normalization, notifications, lyrics timing offset, browser choice) + "danger zone" reset buttons |
+| `ui_podcasts.cpp` | Podcast library, search, show pages and episode lists |
 | `ui_lyrics.cpp` | Lyrics side panel on list tabs — Spotify-style treatment (enlarged active line, distance dimming, glow-weighted auto-center scroll, per-line morph on verse change, edge fades), load/retry states; toggled from the bottom bar |
 | `ytdlp.h` / `ytdlp.cpp` | Python backend process management (fork/exec, pipe I/O), JSON parsing (custom, no dependency), audio caching via yt-dlp, `Track` struct |
 | `mpvplayer.h` / `mpvplayer.cpp` | mpv wrapper — play/stop/pause/seek/volume, event callback for start/end/error |
 | `texture.h` / `texture.cpp` | Async thumbnail loading pipeline — curl download → STB decode → GPU upload (thread-safe queue) with failed-URL backoff |
 | `mpris.h` / `mpris.cpp` | MPRIS D-Bus integration (org.mpris.MediaPlayer2.p100) via raw GDBus — Play/Pause/Next/Prev/Seek/Stop, metadata updates |
-| `config.h` / `config.cpp` | Simple browser config (`<config>/config.ini`) |
 | `paths.h` / `paths.cpp` | Config/share/asset path resolution (`P100_CONFIG_DIR`, XDG, installed vs dev tree) |
 | `accent.h` / `accent.cpp` | Accent colour: `P100_ACCENT`, XDG portal, daily date-seeded fallback |
 | `daily_accent.h` | In-tree deterministic date-seeded RGB helper |
@@ -111,7 +120,7 @@ The C++ process forks the Python backend at startup, communicating via pipes. Ea
 
 ### Main loop power management
 
-The main loop uses `SDL_WaitEventTimeout()` with a 200ms timeout when idle (nothing playing) and 1ms when active — this keeps idle CPU usage near zero while maintaining responsive UI during playback. ImGui renders at ~30 FPS.
+The main loop uses `SDL_WaitEventTimeout()` with a per-activity frame budget: 16 ms for animation/input, 100 ms during steady playback, 1 s when fully idle, and a 5 s safety frame. ImGui only renders when a frame is actually due. Low power mode (Settings → System → Power, `--low-power`, or `P100_LOW_POWER=1`) uses 33 ms for interaction, 250 ms during playback and 2 s idle, disables motion, and skips speculative prefetch/downloads.
 
 ### Data flow
 
@@ -123,8 +132,8 @@ The main loop uses `SDL_WaitEventTimeout()` with a 200ms timeout when idle (noth
 ### Persistence locations
 
 All user data lives in one directory, resolved as `$P100_CONFIG_DIR`, then
-`$XDG_CONFIG_HOME/p100`, then `~/.config/p100` (the historical default, kept so
-copied data works unchanged).
+`$XDG_CONFIG_HOME/crossfade`, then `~/.config/crossfade` (legacy `p100` config
+directories are migrated once on first launch).
 
 - `session.json` — last-played track, position, volume, playlist source (saved every 10s + on quit)
 - `settings.json` — crossfade duration, volume normalization, notifications, browser choice, lyrics timing offset (±5 s)

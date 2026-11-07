@@ -2316,10 +2316,19 @@ void set_audio_cache_cap(double bytes)
     g_audio_cache_cap.store(bytes > 0.0 ? bytes : 0.0);
 }
 
-double audio_cache_usage_bytes()
+struct AudioCacheEntry
 {
+    std::filesystem::path path;
+    double size = 0.0;
+    std::filesystem::file_time_type mtime;
+};
+
+// Collect the regular files under the audio cache and their total size.
+static std::vector<AudioCacheEntry> collect_audio_cache(double &total)
+{
+    std::vector<AudioCacheEntry> out;
+    total = 0.0;
     const std::string dir = cache_dir() + "/audio_cache";
-    double total = 0.0;
     std::error_code ec;
     std::filesystem::recursive_directory_iterator it(dir, ec), end;
     while (!ec && it != end)
@@ -2327,12 +2336,23 @@ double audio_cache_usage_bytes()
         if (it->is_regular_file(ec) && !ec)
         {
             const double sz = (double)it->file_size(ec);
+            const auto mt = it->last_write_time(ec);
             if (!ec)
+            {
+                out.push_back({it->path(), sz, mt});
                 total += sz;
+            }
         }
         ec.clear();
         it.increment(ec);
     }
+    return out;
+}
+
+double audio_cache_usage_bytes()
+{
+    double total = 0.0;
+    collect_audio_cache(total);
     return total;
 }
 
@@ -2360,38 +2380,15 @@ static void audio_cache_enforce_cap(const std::string &keep_id)
     const double cap = g_audio_cache_cap.load();
     if (cap <= 0.0)
         return;
-    const std::string dir = cache_dir() + "/audio_cache";
-    struct Ent
-    {
-        std::filesystem::path path;
-        double size = 0.0;
-        std::filesystem::file_time_type mtime;
-    };
-    std::vector<Ent> ents;
     double total = 0.0;
-    std::error_code ec;
-    std::filesystem::recursive_directory_iterator it(dir, ec), end;
-    while (!ec && it != end)
-    {
-        if (it->is_regular_file(ec) && !ec)
-        {
-            const double sz = (double)it->file_size(ec);
-            const auto mt = it->last_write_time(ec);
-            if (!ec)
-            {
-                ents.push_back({it->path(), sz, mt});
-                total += sz;
-            }
-        }
-        ec.clear();
-        it.increment(ec);
-    }
+    std::vector<AudioCacheEntry> ents = collect_audio_cache(total);
     if (total <= cap)
         return;
+    std::error_code ec;
 
     // Evict the least-listened songs first (when a ranking callback is
     // installed); oldest file breaks ties.
-    std::sort(ents.begin(), ents.end(), [](const Ent &a, const Ent &b) {
+    std::sort(ents.begin(), ents.end(), [](const AudioCacheEntry &a, const AudioCacheEntry &b) {
         const int ra = g_audio_cache_rank ? g_audio_cache_rank(a.path.stem().string()) : 0;
         const int rb = g_audio_cache_rank ? g_audio_cache_rank(b.path.stem().string()) : 0;
         if (ra != rb)

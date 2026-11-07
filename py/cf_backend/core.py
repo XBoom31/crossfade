@@ -114,7 +114,7 @@ def _err(msg, kind=None):
 
 
 def _thumb_url(item):
-    thumbs = item.get('thumbnails') or []
+    thumbs = item.get('thumbnails') or item.get('thumbnail') or []
     if thumbs and isinstance(thumbs[-1], dict):
         return thumbs[-1].get('url', '')
     return ''
@@ -129,11 +129,8 @@ def track_to_dict(track):
     else:
         artist_name = str(artists[0]) if artists else ''
     # Search/home items use "thumbnails"; radio/watch-playlist items use the
-    # singular "thumbnail" key. Accept both so radio rows get cover art.
-    thumbnails = track.get('thumbnails') or track.get('thumbnail') or []
-    thumb_url = ''
-    if thumbnails and isinstance(thumbnails[-1], dict):
-        thumb_url = thumbnails[-1].get('url', '')
+    # singular "thumbnail" key. _thumb_url accepts both.
+    thumb_url = _thumb_url(track)
     album_name, album_id = _album_fields(track)
     return {
         'id': video_id,

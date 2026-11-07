@@ -677,6 +677,7 @@ crossfade (C++17, SDL2 + OpenGL + ImGui)
  ├── libmpv player B ─┴── crossfade handoff (end-of-track + manual skips)
  ├── Python backend: main channel  — search, library, lyrics, radio
  ├── Python backend: play channel  — stream-URL resolves (clicks never wait)
+ ├── Python backend: prefetch      — speculative stream warming only
  └── yt-dlp                        — in-process extractor or subprocess fallback
 ```
 
@@ -690,11 +691,12 @@ is instant instead of waiting for a resolve.
 
 ### Backends and data flow
 
-The C++ process keeps **two long-lived Python backends** over stdin/stdout pipes, one JSON
-command per line. Splitting them means speculative work (search prefetch, library refresh)
-can never delay a user click's stream resolve, and vice versa. The play channel is the only
-one that resolves `play` / `play_fresh`; speculative prefetches go to the main channel and
-self-throttle.
+The C++ process keeps **three long-lived Python backends** over stdin/stdout pipes, one
+JSON command per line. Splitting them means a slow speculative resolve can delay neither a
+user click nor a search/metadata request: the play channel is the only one that handles a
+click's `play` / `play_fresh`, while speculative prefetches use their own channel and
+self-throttle there. If either extra channel fails to start, its work falls back to the
+main channel.
 
 A typical click:
 
@@ -730,12 +732,22 @@ animation and a short grace window after input, about 10 FPS during steady playb
 event-driven repaints when fully idle (with a ~1 s safety tick for MPRIS). A full ImGui
 layout and GL redraw does not run every millisecond just because audio is playing.
 
+**Low power mode** (Settings → System → Power, `--low-power`, or
+`P100_LOW_POWER=1`) drops steady playback to ~4 FPS, disables motion, and
+skips speculative stream warming and background downloads. It can also enable
+itself automatically when the system reports it is on battery. Playback is
+unchanged; the trade-off is a less animated UI and slower starts for uncached
+tracks.
+
 ### Module map
 
 | Area | Files |
 |---|---|
 | Thin entry point | `src/main.cpp` |
-| App init, main loop, input dispatch, playback housekeeping, shutdown | `src/app/app.cpp` |
+| App init, main loop, shutdown | `src/app/app.cpp` |
+| Input dispatch and momentum scrolling | `src/app/app_input.cpp` |
+| Playback, queue, recording and crossfade | `src/app/app_playback.cpp` |
+| Background search/recommendation/lyrics workers | `src/app/app_workers.cpp` |
 | Session save/restore JSON | `src/playback/session.cpp` |
 | Core types, settings, playlists, session payloads | `src/core/types.h` |
 | Application state | `src/core/app_state.h` |
@@ -747,8 +759,9 @@ layout and GL redraw does not run every millisecond just because audio is playin
 | Track lists and context menu | `src/ui/ui_main.cpp` |
 | Album and artist pages | `src/ui/ui_album.cpp`, `src/ui/ui_artists.cpp` |
 | Playlists, queue, radio, YouTube library | `src/ui/ui_playlists.cpp`, `src/ui/ui_queue.cpp`, `src/ui/ui_radio.cpp`, `src/ui/ui_youtube.cpp` |
-| Bottom bar, lyrics, notifications | `src/ui/ui_bottom.cpp`, `src/ui/ui_lyrics.cpp`, `src/ui/ui_notify.cpp` |
+| Bottom bar, lyrics, podcasts, notifications | `src/ui/ui_bottom.cpp`, `src/ui/ui_lyrics.cpp`, `src/ui/ui_podcasts.cpp`, `src/ui/ui_notify.cpp` |
 | Party host UI, server, queue, link parsing | `src/ui/ui_party.cpp`, `src/party/party.cpp`, `src/party/party_server.cpp`, `src/party/party_queue.cpp`, `src/party/party_link.cpp`, `src/party/party_util.cpp`, `src/party/party_net.cpp` |
+| Shared hero band | `src/ui/ui_hero.h`, `src/ui/ui_hero.cpp` |
 | Stats, settings, theme, backdrop, components, icons | `src/ui/ui_stats.cpp`, `src/ui/ui_settings.cpp`, `src/ui/ui_theme.cpp`, `src/ui/ui_backdrop.cpp`, `src/ui/ui_components.cpp`, `src/ui/ui_icons.cpp` |
 | Persistence and shared helpers | `src/data/store.cpp`, `src/data/cache.cpp`, `src/ui/playlists_io.cpp`, `src/ui/ui_helpers.cpp` |
 | Duration and text formatting | `src/ui/format.cpp` |

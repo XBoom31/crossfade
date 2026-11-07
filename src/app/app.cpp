@@ -44,6 +44,7 @@
 #include "discord_rpc.h"
 #include "power.h"
 #include "app_internal.h"
+#include "session.h"
 
 // ---- libnotify (Linux desktop notifications; no-op on Windows) ----
 #ifndef P100_WINDOWS
@@ -613,27 +614,7 @@ int app_run(int argc, char **argv)
     if (g_state.session_restore_pending)
     {
         const auto &r = g_state.session_restore;
-        auto source_from_str = [](const std::string &s)
-        {
-            if (s == "search")
-                return PlaylistSource::SEARCH;
-            if (s == "downloads")
-                return PlaylistSource::DOWNLOADS;
-            if (s == "radio")
-                return PlaylistSource::RADIO;
-            if (s == "liked")
-                return PlaylistSource::LIKED;
-            if (s == "playlist")
-                return PlaylistSource::PLAYLIST;
-            if (s == "album")
-                return PlaylistSource::ALBUM;
-            if (s == "artist")
-                return PlaylistSource::ARTIST;
-            if (s == "podcast")
-                return PlaylistSource::PODCAST;
-            return PlaylistSource::HOME;
-        };
-        g_state.current_playlist_source = source_from_str(r.source);
+        g_state.current_playlist_source = playlist_source_from_name(r.source);
     if (g_state.current_playlist_source == PlaylistSource::PLAYLIST && !r.playlist_name.empty())
     {
         for (int i = 0; i < (int)g_state.playlists.size(); ++i)
