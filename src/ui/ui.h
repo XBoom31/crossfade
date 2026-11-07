@@ -179,6 +179,9 @@ using TrackListPtr = std::shared_ptr<const std::vector<Track>>;
 // local search) so playlist access is uniform everywhere.
 TrackListPtr alias_of(const std::vector<Track> &v);
 TrackListPtr get_playlist(const AppState &state);
+// Pure Tab -> list source mapping (side-effect-free; callers still do their
+// own loading/refresh work).
+PlaylistSource playlist_source_for_tab(Tab tab);
 
 // Settings
 void save_settings(const Settings &settings);

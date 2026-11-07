@@ -1,17 +1,8 @@
 #include "types.h"
+#include "test_util.h"
+using testutil::check;
 
 #include <cstdio>
-
-static int g_failures = 0;
-
-static void check(bool cond, const char *what)
-{
-    if (!cond)
-    {
-        std::fprintf(stderr, "FAIL: %s\n", what);
-        ++g_failures;
-    }
-}
 
 int main()
 {
@@ -55,7 +46,7 @@ int main()
     b.party.allow_duplicates = !b.party.allow_duplicates;
     check(!(a == b), "party setting change compares unequal");
 
-    if (g_failures == 0)
+    if (testutil::failures == 0)
         std::printf("settings: all checks passed\n");
-    return g_failures == 0 ? 0 : 1;
+    return testutil::failures == 0 ? 0 : 1;
 }

@@ -330,22 +330,10 @@ void close_artist_view(AppState &state)
             state.artist_return_playlist_index < (int)state.playlists.size())
             state.selected_playlist_index = state.artist_return_playlist_index;
     }
-    else if (ret == Tab::Liked)
-        state.current_playlist_source = PlaylistSource::LIKED;
-    else if (ret == Tab::Downloads)
-        state.current_playlist_source = PlaylistSource::DOWNLOADS;
-    else if (ret == Tab::Radio)
-        state.current_playlist_source = PlaylistSource::RADIO;
-    else if (ret == Tab::History)
-        state.current_playlist_source = PlaylistSource::HISTORY;
-    else if (ret == Tab::Stats)
-        state.current_playlist_source = PlaylistSource::STATS;
-    else if (ret == Tab::Album)
-        state.current_playlist_source = PlaylistSource::ALBUM;
     else if (ret == Tab::Artists || ret == Tab::Albums)
         state.current_playlist_source = state.artist_return_source;
     else
-        state.current_playlist_source = PlaylistSource::HOME;
+        state.current_playlist_source = playlist_source_for_tab(ret);
 }
 
 static SavedArtist artist_from_summary(const ArtistSummary &s)

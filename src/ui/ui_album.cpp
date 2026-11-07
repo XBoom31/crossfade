@@ -278,22 +278,10 @@ void close_album_view(AppState &state)
         if (state.album_return_playlist_index >= 0 && state.album_return_playlist_index < (int)state.playlists.size())
             state.selected_playlist_index = state.album_return_playlist_index;
     }
-    else if (ret == Tab::Liked)
-        state.current_playlist_source = PlaylistSource::LIKED;
-    else if (ret == Tab::Downloads)
-        state.current_playlist_source = PlaylistSource::DOWNLOADS;
-    else if (ret == Tab::Radio)
-        state.current_playlist_source = PlaylistSource::RADIO;
-    else if (ret == Tab::History)
-        state.current_playlist_source = PlaylistSource::HISTORY;
-    else if (ret == Tab::Stats)
-        state.current_playlist_source = PlaylistSource::STATS;
     else if (ret == Tab::Albums)
         state.current_playlist_source = state.album_return_source;
-    else if (ret == Tab::Artist)
-        state.current_playlist_source = PlaylistSource::ARTIST;
     else
-        state.current_playlist_source = PlaylistSource::HOME;
+        state.current_playlist_source = playlist_source_for_tab(ret);
 }
 
 static void save_current_album(AppState &state)

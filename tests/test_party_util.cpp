@@ -1,22 +1,11 @@
 #include "party_util.h"
+#include "test_util.h"
+using testutil::check;
 
 #include <cstdio>
 #include <string>
 #include <unordered_set>
 
-namespace
-{
-int g_failures = 0;
-
-void check(bool cond, const char *what)
-{
-    if (!cond)
-    {
-        std::fprintf(stderr, "FAIL: %s\n", what);
-        ++g_failures;
-    }
-}
-} // namespace
 
 int main()
 {
@@ -63,7 +52,7 @@ int main()
         check(b.take(101.0), "bucket refill");
     }
 
-    if (g_failures == 0)
+    if (testutil::failures == 0)
         std::printf("party_util: all checks passed\n");
-    return g_failures == 0 ? 0 : 1;
+    return testutil::failures == 0 ? 0 : 1;
 }

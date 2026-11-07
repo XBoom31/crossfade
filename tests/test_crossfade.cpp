@@ -1,19 +1,10 @@
 #include "crossfade.h"
+#include "test_util.h"
+using testutil::check;
 
 #include <cmath>
 #include <cstdio>
 #include <string>
-
-static int g_failures = 0;
-
-static void check(bool cond, const char *what)
-{
-    if (!cond)
-    {
-        std::fprintf(stderr, "FAIL: %s\n", what);
-        ++g_failures;
-    }
-}
 
 static bool close_to(double a, double b, double eps = 1e-6)
 {
@@ -116,7 +107,7 @@ int main()
     check(both.find("loudnorm") == 0, "filter normalization first");
     check(both.find(",equalizer=f=60") != std::string::npos, "filter eq after comma");
 
-    if (g_failures == 0)
+    if (testutil::failures == 0)
         std::printf("crossfade: all checks passed\n");
-    return g_failures == 0 ? 0 : 1;
+    return testutil::failures == 0 ? 0 : 1;
 }

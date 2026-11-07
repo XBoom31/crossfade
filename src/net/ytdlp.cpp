@@ -955,6 +955,61 @@ static size_t json_object_end(const std::string &json, size_t obj_start)
     return std::string::npos;
 }
 
+// Walk the objects in a top-level JSON array (no key) and invoke `each`.
+template <typename Fn>
+static void for_each_json_array_object(const std::string &json, Fn &&each)
+{
+    const size_t arr = json.find('[');
+    if (arr == std::string::npos)
+        return;
+    size_t pos = arr + 1;
+    int guard = 0;
+    while (pos < json.size() && guard++ < 1000)
+    {
+        while (pos < json.size() &&
+               (isspace((unsigned char)json[pos]) || json[pos] == ','))
+            ++pos;
+        if (pos >= json.size() || json[pos] == ']')
+            break;
+        if (json[pos] != '{')
+            break;
+        const size_t end = json_object_end(json, pos);
+        if (end == std::string::npos)
+            break;
+        each(json.substr(pos, end - pos + 1));
+        pos = end + 1;
+    }
+}
+
+// Walk the objects in a JSON array field and invoke `each` with each raw
+// object substring. Shared by the artist/search-all/podcast/Spotify parsers.
+template <typename Fn>
+static void for_each_json_object(const std::string &json, const std::string &key, Fn &&each)
+{
+    const size_t key_pos = json.find("\"" + key + "\":");
+    if (key_pos == std::string::npos)
+        return;
+    const size_t arr = json.find('[', key_pos);
+    if (arr == std::string::npos)
+        return;
+    size_t pos = arr + 1;
+    while (pos < json.size())
+    {
+        while (pos < json.size() &&
+               (isspace((unsigned char)json[pos]) || json[pos] == ','))
+            ++pos;
+        if (pos >= json.size() || json[pos] == ']')
+            break;
+        if (json[pos] != '{')
+            break;
+        const size_t end = json_object_end(json, pos);
+        if (end == std::string::npos)
+            break;
+        each(json.substr(pos, end - pos + 1));
+        pos = end + 1;
+    }
+}
+
 static void replace_all_utf8(std::string &s, const char *from, const char *to)
 {
     const std::string needle(from);
@@ -1692,25 +1747,9 @@ std::vector<PodcastEpisode> fetch_episodes_later()
     if (response.empty() || response.find("\"error\"") != std::string::npos)
         return {};
     std::vector<PodcastEpisode> out;
-    size_t arr = response.find('[');
-    if (arr == std::string::npos)
-        return out;
-    size_t pos = arr + 1;
-    int guard = 0;
-    while (pos < response.size() && guard++ < 1000)
-    {
-        while (pos < response.size() && (isspace((unsigned char)response[pos]) || response[pos] == ','))
-            ++pos;
-        if (pos >= response.size() || response[pos] == ']')
-            break;
-        if (response[pos] != '{')
-            break;
-        const size_t end = json_object_end(response, pos);
-        if (end == std::string::npos)
-            break;
-        out.push_back(parse_podcast_episode(response.substr(pos, end - pos + 1)));
-        pos = end + 1;
-    }
+    for_each_json_array_object(response, [&](const std::string &obj) {
+        out.push_back(parse_podcast_episode(obj));
+    });
     return out;
 }
 
@@ -1731,24 +1770,7 @@ std::vector<SpotifyPlaylistSummary> fetch_spotify_library(std::string &error)
             error = "Could not load your Spotify playlists";
         return out;
     }
-    size_t arr = response.find('[');
-    if (arr == std::string::npos)
-        return out;
-    size_t pos = arr + 1;
-    int guard = 0;
-    while (pos < response.size() && guard++ < 1000)
-    {
-        while (pos < response.size() &&
-               (isspace((unsigned char)response[pos]) || response[pos] == ','))
-            ++pos;
-        if (pos >= response.size() || response[pos] == ']')
-            break;
-        if (response[pos] != '{')
-            break;
-        const size_t end = json_object_end(response, pos);
-        if (end == std::string::npos)
-            break;
-        const std::string obj = response.substr(pos, end - pos + 1);
+    for_each_json_array_object(response, [&](const std::string &obj) {
         SpotifyPlaylistSummary item;
         item.id = json_get_string(obj, "id");
         item.kind = json_get_string(obj, "kind");
@@ -1758,8 +1780,7 @@ std::vector<SpotifyPlaylistSummary> fetch_spotify_library(std::string &error)
         item.count = json_get_int(obj, "count");
         if (!item.id.empty() && !item.name.empty())
             out.push_back(std::move(item));
-        pos = end + 1;
-    }
+    });
     return out;
 }
 
@@ -1821,28 +1842,9 @@ PodcastDetails fetch_podcast_details(const std::string &browse_id)
     size_t eps_key = response.find("\"episodes\":");
     if (eps_key != std::string::npos)
     {
-        size_t arr = response.find('[', eps_key);
-        if (arr != std::string::npos)
-        {
-            size_t pos = arr + 1;
-            int guard = 0;
-            while (pos < response.size() && guard++ < 1000)
-            {
-                while (pos < response.size() &&
-                       (isspace((unsigned char)response[pos]) || response[pos] == ','))
-                    ++pos;
-                if (pos >= response.size() || response[pos] == ']')
-                    break;
-                if (response[pos] != '{')
-                    break;
-                size_t end = json_object_end(response, pos);
-                if (end == std::string::npos)
-                    break;
-                details.episodes.push_back(
-                    parse_podcast_episode(response.substr(pos, end - pos + 1)));
-                pos = end + 1;
-            }
-        }
+        for_each_json_object(response, "episodes", [&](const std::string &obj) {
+            details.episodes.push_back(parse_podcast_episode(obj));
+        });
     }
     return details;
 }
@@ -1875,22 +1877,7 @@ bool fetch_album(const std::string &browse_id, Album &out)
     size_t tracks_key = response.find("\"tracks\":");
     if (tracks_key == std::string::npos)
         return !out.title.empty() || !out.tracks.empty();
-    size_t arr = response.find('[', tracks_key);
-    if (arr == std::string::npos)
-        return !out.title.empty();
-    size_t pos = arr + 1;
-    while (pos < response.size())
-    {
-        while (pos < response.size() && (isspace((unsigned char)response[pos]) || response[pos] == ','))
-            pos++;
-        if (pos >= response.size() || response[pos] == ']')
-            break;
-        if (response[pos] != '{')
-            break;
-        size_t end = json_object_end(response, pos);
-        if (end == std::string::npos)
-            break;
-        std::string obj = response.substr(pos, end - pos + 1);
+    for_each_json_object(response, "tracks", [&](const std::string &obj) {
         Track t;
         parse_track_object(obj, t);
         if (t.album.empty())
@@ -1899,8 +1886,7 @@ bool fetch_album(const std::string &browse_id, Album &out)
             t.album_id = out.browse_id;
         if (!t.id.empty() && !t.title.empty())
             out.tracks.push_back(std::move(t));
-        pos = end + 1;
-    }
+    });
     if (out.track_count == 0)
         out.track_count = (int)out.tracks.size();
     return !out.tracks.empty() || !out.title.empty();
@@ -1945,32 +1931,7 @@ bool fetch_artist(const std::string &browse_id, ArtistInfo &out)
     out.thumbnail_url = json_get_string(response, "thumbnail_url");
     out.songs_browse_id = json_get_string(response, "songs_browse_id");
 
-    auto parse_array = [&](const std::string &key, auto &&each) {
-        size_t key_pos = response.find("\"" + key + "\":");
-        if (key_pos == std::string::npos)
-            return;
-        size_t arr = response.find('[', key_pos);
-        if (arr == std::string::npos)
-            return;
-        size_t pos = arr + 1;
-        while (pos < response.size())
-        {
-            while (pos < response.size() &&
-                   (isspace((unsigned char)response[pos]) || response[pos] == ','))
-                pos++;
-            if (pos >= response.size() || response[pos] == ']')
-                break;
-            if (response[pos] != '{')
-                break;
-            size_t end = json_object_end(response, pos);
-            if (end == std::string::npos)
-                break;
-            each(response.substr(pos, end - pos + 1));
-            pos = end + 1;
-        }
-    };
-
-    parse_array("songs", [&](const std::string &obj) {
+    for_each_json_object(response, "songs", [&](const std::string &obj) {
         Track t;
         parse_track_object(obj, t);
         if (t.artist_id.empty())
@@ -1981,7 +1942,7 @@ bool fetch_artist(const std::string &browse_id, ArtistInfo &out)
             out.songs.push_back(std::move(t));
     });
 
-    parse_array("albums", [&](const std::string &obj) {
+    for_each_json_object(response, "albums", [&](const std::string &obj) {
         ArtistAlbum a;
         a.browse_id = json_get_string(obj, "browse_id");
         a.title = json_get_string(obj, "title");
@@ -2063,38 +2024,13 @@ bool fetch_search_all(const std::string &query, SearchAllResult &out)
     if (response.empty() || response.find("\"error\"") != std::string::npos)
         return false;
 
-    auto parse_array = [&](const std::string &key, auto &&each) {
-        size_t key_pos = response.find("\"" + key + "\":");
-        if (key_pos == std::string::npos)
-            return;
-        size_t arr = response.find('[', key_pos);
-        if (arr == std::string::npos)
-            return;
-        size_t pos = arr + 1;
-        while (pos < response.size())
-        {
-            while (pos < response.size() &&
-                   (isspace((unsigned char)response[pos]) || response[pos] == ','))
-                pos++;
-            if (pos >= response.size() || response[pos] == ']')
-                break;
-            if (response[pos] != '{')
-                break;
-            size_t end = json_object_end(response, pos);
-            if (end == std::string::npos)
-                break;
-            each(response.substr(pos, end - pos + 1));
-            pos = end + 1;
-        }
-    };
-
-    parse_array("songs", [&](const std::string &obj) {
+    for_each_json_object(response, "songs", [&](const std::string &obj) {
         Track t;
         parse_track_object(obj, t);
         if (!t.id.empty() && !t.title.empty())
             out.songs.push_back(std::move(t));
     });
-    parse_array("albums", [&](const std::string &obj) {
+    for_each_json_object(response, "albums", [&](const std::string &obj) {
         AlbumSummary a;
         a.browse_id = json_get_string(obj, "browse_id");
         a.title = json_get_string(obj, "title");
@@ -2105,7 +2041,7 @@ bool fetch_search_all(const std::string &query, SearchAllResult &out)
         if (!a.browse_id.empty() && !a.title.empty())
             out.albums.push_back(std::move(a));
     });
-    parse_array("artists", [&](const std::string &obj) {
+    for_each_json_object(response, "artists", [&](const std::string &obj) {
         ArtistSummary a;
         a.browse_id = json_get_string(obj, "browse_id");
         a.name = json_get_string(obj, "name");

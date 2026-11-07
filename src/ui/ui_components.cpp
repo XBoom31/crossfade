@@ -95,32 +95,10 @@ void ui_play_track(AppState &state, const Track &track, int index)
     state.current_track_index = index;
     state.loading = true;
  
-    if (state.current_tab == Tab::Home)
-        state.current_playlist_source = strlen(state.search_buffer) > 0 ? PlaylistSource::SEARCH : PlaylistSource::HOME;
-    else if (state.current_tab == Tab::Downloads)
-        state.current_playlist_source = PlaylistSource::DOWNLOADS;
-    else if (state.current_tab == Tab::Radio)
-        state.current_playlist_source = PlaylistSource::RADIO;
-    else if (state.current_tab == Tab::Liked)
-        state.current_playlist_source = PlaylistSource::LIKED;
-    else if (state.current_tab == Tab::History)
-        state.current_playlist_source = PlaylistSource::HISTORY;
-    else if (state.current_tab == Tab::Playlists)
-        state.current_playlist_source = PlaylistSource::PLAYLIST;
-    else if (state.current_tab == Tab::Album)
-        state.current_playlist_source = PlaylistSource::ALBUM;
-    else if (state.current_tab == Tab::Artist)
-        state.current_playlist_source = PlaylistSource::ARTIST;
-    else if (state.current_tab == Tab::Stats)
-        state.current_playlist_source = PlaylistSource::STATS;
-    else if (state.current_tab == Tab::YouTube)
-        state.current_playlist_source = PlaylistSource::YOUTUBE_PLAYLIST;
-    else if (state.current_tab == Tab::Smart)
-        state.current_playlist_source = PlaylistSource::SMART;
-    else if (state.current_tab == Tab::Podcasts)
-        state.current_playlist_source = PlaylistSource::PODCAST;
-    else
-        state.current_playlist_source = PlaylistSource::HOME;
+    state.current_playlist_source =
+        (state.current_tab == Tab::Home && strlen(state.search_buffer) > 0)
+            ? PlaylistSource::SEARCH
+            : playlist_source_for_tab(state.current_tab);
 
 
     // The History tab displays a snapshot taken on tab entry, so its row

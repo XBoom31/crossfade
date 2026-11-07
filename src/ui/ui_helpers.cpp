@@ -243,6 +243,31 @@ TrackListPtr alias_of(const std::vector<Track> &v)
     return TrackListPtr(&v, [](const std::vector<Track> *) {});
 }
 
+PlaylistSource playlist_source_for_tab(Tab tab)
+{
+    switch (tab)
+    {
+    case Tab::Home: return PlaylistSource::HOME;
+    case Tab::Downloads: return PlaylistSource::DOWNLOADS;
+    case Tab::Radio: return PlaylistSource::RADIO;
+    case Tab::Liked: return PlaylistSource::LIKED;
+    case Tab::Playlists: return PlaylistSource::PLAYLIST;
+    case Tab::Albums: return PlaylistSource::HOME;
+    case Tab::Artists: return PlaylistSource::HOME;
+    case Tab::History: return PlaylistSource::HISTORY;
+    case Tab::Stats: return PlaylistSource::STATS;
+    case Tab::Queue: return PlaylistSource::HOME;
+    case Tab::Album: return PlaylistSource::ALBUM;
+    case Tab::Artist: return PlaylistSource::ARTIST;
+    case Tab::Podcasts: return PlaylistSource::PODCAST;
+    case Tab::Settings: return PlaylistSource::HOME;
+    case Tab::YouTube: return PlaylistSource::YOUTUBE_PLAYLIST;
+    case Tab::Smart: return PlaylistSource::SMART;
+    case Tab::Party: return PlaylistSource::HOME;
+    }
+    return PlaylistSource::HOME;
+}
+
 TrackListPtr get_playlist(const AppState &state)
 {
     switch (state.current_playlist_source)

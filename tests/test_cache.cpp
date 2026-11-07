@@ -1,4 +1,7 @@
 #include "ytdlp.h"
+#include "test_util.h"
+using testutil::write_file;
+using testutil::check;
 #include "paths.h"
 
 #include <cstdio>
@@ -10,29 +13,12 @@
 
 namespace fs = std::filesystem;
 
-static int g_failures = 0;
 static std::unordered_map<std::string, int> g_rank;
-
-static void check(bool cond, const char *what)
-{
-    if (!cond)
-    {
-        std::fprintf(stderr, "FAIL: %s\n", what);
-        ++g_failures;
-    }
-}
 
 static int rank_fn(const std::string &id)
 {
     auto it = g_rank.find(id);
     return it == g_rank.end() ? 0 : it->second;
-}
-
-static void write_file(const fs::path &path, const std::string &text)
-{
-    fs::create_directories(path.parent_path());
-    std::ofstream out(path, std::ios::binary);
-    out << text;
 }
 
 int main()
@@ -110,7 +96,7 @@ int main()
 
     set_audio_cache_rank(nullptr);
     fs::remove_all(root, ec);
-    if (g_failures == 0)
+    if (testutil::failures == 0)
         std::printf("cache: all checks passed\n");
-    return g_failures == 0 ? 0 : 1;
+    return testutil::failures == 0 ? 0 : 1;
 }

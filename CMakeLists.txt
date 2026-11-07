@@ -200,15 +200,37 @@ install(PROGRAMS scripts/crossfade-login-helper.py
 option(CROSSFADE_BUILD_TESTS "Build crossfade unit tests" ON)
 if(CROSSFADE_BUILD_TESTS)
     enable_testing()
+
+    # Every test shares the same include/library surface. Keeping it in one
+    # helper avoids five copies of the same twelve include directories.
+    function(p100_test target)
+        target_include_directories(${target} PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}
+            ${CMAKE_CURRENT_SOURCE_DIR}/src
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/core
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/ui
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/party
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/data
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/net
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/playback
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/app
+            ${CMAKE_CURRENT_SOURCE_DIR}/external/sqlite
+            ${CMAKE_CURRENT_SOURCE_DIR}/external/imgui
+            ${CMAKE_CURRENT_SOURCE_DIR}/external
+            ${MPV_INCLUDE_DIRS}
+            ${MPV_INCLUDE_DIR})
+        target_compile_definitions(${target} PRIVATE
+            P100_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
+            SQLITE_ENABLE_FTS5=1
+            SQLITE_OMIT_LOAD_EXTENSION=1
+            SQLITE_THREADSAFE=1)
+        target_link_libraries(${target} Threads::Threads)
+    endfunction()
+
     foreach(party_test party_link party_queue party_util)
         add_executable(test_${party_test} tests/test_${party_test}.cpp
             src/party/${party_test}.cpp)
-        target_include_directories(test_${party_test} PRIVATE
-            ${CMAKE_CURRENT_SOURCE_DIR}
-            ${CMAKE_CURRENT_SOURCE_DIR}/src/core
-            ${CMAKE_CURRENT_SOURCE_DIR}/src/party
-            ${CMAKE_CURRENT_SOURCE_DIR}/src/net)
-        target_link_libraries(test_${party_test} Threads::Threads)
+        p100_test(test_${party_test})
         add_test(NAME ${party_test} COMMAND test_${party_test})
     endforeach()
     if(WIN32)
@@ -217,130 +239,46 @@ if(CROSSFADE_BUILD_TESTS)
 
     add_executable(test_crossfade tests/test_crossfade.cpp
         src/playback/crossfade.cpp)
-    target_include_directories(test_crossfade PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/playback
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/core
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/ui
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/net
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/party
-        ${CMAKE_CURRENT_SOURCE_DIR}/external/imgui)
-    target_link_libraries(test_crossfade Threads::Threads)
+    p100_test(test_crossfade)
     add_test(NAME crossfade COMMAND test_crossfade)
 
     add_executable(test_tasks tests/test_tasks.cpp src/core/tasks.cpp)
-    target_include_directories(test_tasks PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/core)
-    target_link_libraries(test_tasks Threads::Threads)
+    p100_test(test_tasks)
     add_test(NAME tasks COMMAND test_tasks)
 
     add_executable(test_library tests/test_library.cpp
         src/data/library.cpp src/net/ytdlp.cpp src/data/paths.cpp
         external/sqlite/sqlite3.c)
-    target_include_directories(test_library PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}
-        ${CMAKE_CURRENT_SOURCE_DIR}/src
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/core
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/ui
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/party
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/data
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/net
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/playback
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/app
-        ${CMAKE_CURRENT_SOURCE_DIR}/external/sqlite
-        ${CMAKE_CURRENT_SOURCE_DIR}/external/imgui
-        ${CMAKE_CURRENT_SOURCE_DIR}/external)
-    target_compile_definitions(test_library PRIVATE
-        P100_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
-        SQLITE_ENABLE_FTS5=1
-        SQLITE_OMIT_LOAD_EXTENSION=1
-        SQLITE_THREADSAFE=1)
-    target_link_libraries(test_library Threads::Threads)
+    p100_test(test_library)
     add_test(NAME library COMMAND test_library)
 
     add_executable(test_cache tests/test_cache.cpp
         src/net/ytdlp.cpp src/data/paths.cpp src/data/library.cpp
         external/sqlite/sqlite3.c)
-    target_include_directories(test_cache PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}
-        ${CMAKE_CURRENT_SOURCE_DIR}/src
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/core
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/ui
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/party
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/data
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/net
-        ${CMAKE_CURRENT_SOURCE_DIR}/external/sqlite
-        ${CMAKE_CURRENT_SOURCE_DIR}/external/imgui)
-    target_compile_definitions(test_cache PRIVATE
-        SQLITE_ENABLE_FTS5=1 SQLITE_OMIT_LOAD_EXTENSION=1 SQLITE_THREADSAFE=1)
-    target_link_libraries(test_cache Threads::Threads)
+    p100_test(test_cache)
     add_test(NAME cache COMMAND test_cache)
 
     add_executable(test_json tests/test_json.cpp
         src/net/ytdlp.cpp src/data/paths.cpp src/data/library.cpp
         external/sqlite/sqlite3.c)
-    target_include_directories(test_json PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}
-        ${CMAKE_CURRENT_SOURCE_DIR}/src
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/core
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/ui
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/party
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/data
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/net
-        ${CMAKE_CURRENT_SOURCE_DIR}/external/sqlite
-        ${CMAKE_CURRENT_SOURCE_DIR}/external/imgui)
-    target_compile_definitions(test_json PRIVATE
-        SQLITE_ENABLE_FTS5=1 SQLITE_OMIT_LOAD_EXTENSION=1 SQLITE_THREADSAFE=1)
-    target_link_libraries(test_json Threads::Threads)
+    p100_test(test_json)
     add_test(NAME json COMMAND test_json)
 
     add_executable(test_session tests/test_session.cpp
         src/playback/session.cpp src/data/cache.cpp src/ui/playlists_io.cpp
         src/core/tasks.cpp src/net/ytdlp.cpp src/data/paths.cpp
         src/data/library.cpp external/sqlite/sqlite3.c)
-    target_include_directories(test_session PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}
-        ${CMAKE_CURRENT_SOURCE_DIR}/src
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/core
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/ui
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/party
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/data
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/net
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/playback
-        ${CMAKE_CURRENT_SOURCE_DIR}/external/sqlite
-        ${CMAKE_CURRENT_SOURCE_DIR}/external/imgui
-        ${MPV_INCLUDE_DIRS}
-        ${MPV_INCLUDE_DIR})
-    target_compile_definitions(test_session PRIVATE
-        SQLITE_ENABLE_FTS5=1 SQLITE_OMIT_LOAD_EXTENSION=1 SQLITE_THREADSAFE=1)
-    target_link_libraries(test_session Threads::Threads)
+    p100_test(test_session)
     add_test(NAME session COMMAND test_session)
 
     add_executable(test_playlists tests/test_playlists.cpp
         src/ui/playlists_io.cpp src/core/tasks.cpp src/net/ytdlp.cpp
         src/data/paths.cpp src/data/library.cpp external/sqlite/sqlite3.c)
-    target_include_directories(test_playlists PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}
-        ${CMAKE_CURRENT_SOURCE_DIR}/src
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/core
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/ui
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/party
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/data
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/net
-        ${CMAKE_CURRENT_SOURCE_DIR}/external/sqlite
-        ${CMAKE_CURRENT_SOURCE_DIR}/external/imgui)
-    target_compile_definitions(test_playlists PRIVATE
-        SQLITE_ENABLE_FTS5=1 SQLITE_OMIT_LOAD_EXTENSION=1 SQLITE_THREADSAFE=1)
-    target_link_libraries(test_playlists Threads::Threads)
+    p100_test(test_playlists)
     add_test(NAME playlists COMMAND test_playlists)
 
     add_executable(test_settings tests/test_settings.cpp)
-    target_include_directories(test_settings PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/src
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/core
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/ui
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/party
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/net
-        ${CMAKE_CURRENT_SOURCE_DIR}/external/imgui)
+    p100_test(test_settings)
     add_test(NAME settings COMMAND test_settings)
 
     # Headless HTTP harness used by scripts/party-smoke-test.sh.

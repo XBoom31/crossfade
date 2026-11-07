@@ -1,22 +1,11 @@
 #include "party_queue.h"
+#include "test_util.h"
+using testutil::check;
 #include "ytdlp.h"
 
 #include <cstdio>
 #include <string>
 #include <vector>
-
-namespace
-{
-int g_failures = 0;
-
-void check(bool cond, const char *what)
-{
-    if (!cond)
-    {
-        std::fprintf(stderr, "FAIL: %s\n", what);
-        ++g_failures;
-    }
-}
 
 Track make(const std::string &id, const std::string &guest, const std::string &title = "")
 {
@@ -42,7 +31,6 @@ std::string ids(const std::vector<Track> &q)
     }
     return out;
 }
-} // namespace
 
 int main()
 {
@@ -126,7 +114,7 @@ int main()
         check(party_queue::count_guest_items(q, "a") == 120, "long queue count");
     }
 
-    if (g_failures == 0)
+    if (testutil::failures == 0)
         std::printf("party_queue: all checks passed\n");
-    return g_failures == 0 ? 0 : 1;
+    return testutil::failures == 0 ? 0 : 1;
 }

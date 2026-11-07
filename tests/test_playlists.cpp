@@ -1,4 +1,7 @@
 #include "ui.h"
+#include "test_util.h"
+using testutil::write_file;
+using testutil::check;
 #include "paths.h"
 
 #include <cstdio>
@@ -8,24 +11,6 @@
 #include <string>
 
 namespace fs = std::filesystem;
-
-static int g_failures = 0;
-
-static void check(bool cond, const char *what)
-{
-    if (!cond)
-    {
-        std::fprintf(stderr, "FAIL: %s\n", what);
-        ++g_failures;
-    }
-}
-
-static void write_file(const fs::path &path, const std::string &text)
-{
-    fs::create_directories(path.parent_path());
-    std::ofstream out(path, std::ios::binary);
-    out << text;
-}
 
 static Track make_track(const std::string &id, const std::string &title)
 {
@@ -113,7 +98,7 @@ int main()
     }
 
     fs::remove_all(root, ec);
-    if (g_failures == 0)
+    if (testutil::failures == 0)
         std::printf("playlists: all checks passed\n");
-    return g_failures == 0 ? 0 : 1;
+    return testutil::failures == 0 ? 0 : 1;
 }

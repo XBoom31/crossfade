@@ -1,20 +1,9 @@
 #include "party_link.h"
+#include "test_util.h"
+using testutil::check;
 
 #include <cstdio>
 #include <string>
-
-namespace
-{
-int g_failures = 0;
-
-void check(bool cond, const char *what)
-{
-    if (!cond)
-    {
-        std::fprintf(stderr, "FAIL: %s\n", what);
-        ++g_failures;
-    }
-}
 
 void ok(const std::string &input, const std::string &id)
 {
@@ -23,7 +12,7 @@ void ok(const std::string &input, const std::string &id)
     {
         std::fprintf(stderr, "FAIL: expected %s -> %s (got result %d, id '%s')\n",
                      input.c_str(), id.c_str(), (int)p.result, p.video_id.c_str());
-        ++g_failures;
+        ++testutil::failures;
     }
 }
 
@@ -34,10 +23,9 @@ void bad(const std::string &input, party_link::Result expected)
     {
         std::fprintf(stderr, "FAIL: expected result %d for '%s' (got %d)\n",
                      (int)expected, input.c_str(), (int)p.result);
-        ++g_failures;
+        ++testutil::failures;
     }
 }
-} // namespace
 
 int main()
 {
@@ -69,7 +57,7 @@ int main()
     bad("https://www.youtube.com/watch?v=too-short", party_link::Result::InvalidId);
     bad(std::string(5000, 'a'), party_link::Result::TooLong);
 
-    if (g_failures == 0)
+    if (testutil::failures == 0)
         std::printf("party_link: all checks passed\n");
-    return g_failures == 0 ? 0 : 1;
+    return testutil::failures == 0 ? 0 : 1;
 }

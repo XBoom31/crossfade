@@ -1,18 +1,9 @@
 #include "ytdlp.h"
+#include "test_util.h"
+using testutil::check;
 
 #include <cstdio>
 #include <string>
-
-static int g_failures = 0;
-
-static void check(bool cond, const char *what)
-{
-    if (!cond)
-    {
-        std::fprintf(stderr, "FAIL: %s\n", what);
-        ++g_failures;
-    }
-}
 
 int main()
 {
@@ -127,7 +118,7 @@ int main()
               "full-width punctuation normalized");
     }
 
-    if (g_failures == 0)
+    if (testutil::failures == 0)
         std::printf("json: all checks passed\n");
-    return g_failures == 0 ? 0 : 1;
+    return testutil::failures == 0 ? 0 : 1;
 }

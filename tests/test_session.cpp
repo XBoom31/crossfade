@@ -1,4 +1,7 @@
 #include "session.h"
+#include "test_util.h"
+using testutil::write_file;
+using testutil::check;
 #include "paths.h"
 
 #include <cstdio>
@@ -15,24 +18,6 @@ namespace fs = std::filesystem;
 double MpvPlayer::get_property_double(const std::string &) const
 {
     return 0.0;
-}
-
-static int g_failures = 0;
-
-static void check(bool cond, const char *what)
-{
-    if (!cond)
-    {
-        std::fprintf(stderr, "FAIL: %s\n", what);
-        ++g_failures;
-    }
-}
-
-static void write_file(const fs::path &path, const std::string &text)
-{
-    fs::create_directories(path.parent_path());
-    std::ofstream out(path, std::ios::binary);
-    out << text;
 }
 
 int main()
@@ -124,7 +109,7 @@ int main()
     check(minimal.session_restore.volume == -1, "minimal volume default");
 
     fs::remove_all(root, ec);
-    if (g_failures == 0)
+    if (testutil::failures == 0)
         std::printf("session: all checks passed\n");
-    return g_failures == 0 ? 0 : 1;
+    return testutil::failures == 0 ? 0 : 1;
 }
