@@ -43,33 +43,33 @@
 #include "writeback.h"
 #include "discord_rpc.h"
 #include "power.h"
+#include "app_internal.h"
 
 // ---- libnotify (Linux desktop notifications; no-op on Windows) ----
 #ifndef P100_WINDOWS
 #include <libnotify/notify.h>
 #endif
 
-#define DLOG(...) do { fputs("[p100] ", stderr); fprintf(stderr, __VA_ARGS__); fputc('\n', stderr); fflush(stderr); } while (0)
-#define DNOW() ((long long)(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count()))
+// DLOG / DNOW live in app_internal.h so the split app modules share them.
 
 // ----------------------------------------------------------------------
 // Global state and player
 // ----------------------------------------------------------------------
-static AppState g_state;
-static std::unique_ptr<MpvPlayer> g_player;
+AppState g_state;
+std::unique_ptr<MpvPlayer> g_player;
 // MPRIS holds a reference to this pointer, so it follows player role swaps
 // during crossfade (see maybe_start_crossfade).
-static MpvPlayer *g_player_raw = nullptr;
+MpvPlayer *g_player_raw = nullptr;
 // Second mpv instance used to fade in the next track while the main one
 // fades out; after the swap the roles reverse for the next crossfade.
-static std::unique_ptr<MpvPlayer> g_fade_player;
-static class MprisPlayer *g_mpris = nullptr;
+std::unique_ptr<MpvPlayer> g_fade_player;
+class MprisPlayer *g_mpris = nullptr;
 // The main and fade player event handlers, stored so they can be re-bound
 // when the two players swap roles at the end of a crossfade (each MpvPlayer
 // keeps the callback it was given, but roles move between the objects).
-static std::function<void(const std::string &)> g_main_event_cb;
-static std::function<void(const std::string &)> g_fade_event_cb;
-static std::mutex g_data_mutex;
+std::function<void(const std::string &)> g_main_event_cb;
+std::function<void(const std::string &)> g_fade_event_cb;
+std::mutex g_data_mutex;
 
 // SIGTERM/SIGINT request a clean shutdown (save session, stop workers, tear
 // down GL) instead of leaving the process to be killed mid-write.
@@ -123,33 +123,26 @@ static void apply_ui_scale(const Settings &s)
 
 }
 
-struct PlayRequest
-{
-    std::string path;   // local file or resolved stream URL
-    std::string id;     // video id (for the offline cache)
-    bool remote;        // true when path is a network stream to be recorded
-    std::uint64_t gen = 0; // play generation the request was issued for
-};
-static std::queue<PlayRequest> g_play_queue;
-static std::mutex g_play_queue_mutex;
+std::queue<PlayRequest> g_play_queue;
+std::mutex g_play_queue_mutex;
 // Bumped by begin_play_track(): every selection invalidates resolves still
 // in flight for an earlier selection. A slow (non-cached) resolve that
 // finishes after the user/EOF moved on must not start playing its stale
 // track on top of the current one.
-static std::atomic<std::uint64_t> g_play_generation{0};
+std::atomic<std::uint64_t> g_play_generation{0};
 
 // Pre-resolved stream URL for the upcoming track, so advancing at end of
 // track doesn't wait on a network round-trip.
-static std::map<std::string, std::string> g_prefetched_urls; // video_id -> stream URL
-static std::mutex g_prefetch_mutex;
+std::map<std::string, std::string> g_prefetched_urls; // video_id -> stream URL
+std::mutex g_prefetch_mutex;
 
 // Endless radio: one refill attempt per playing track. The result is
 // published through AppState and consumed on the main thread.
-static bool g_endless_waiting = false;
-static std::string g_endless_seed;
+bool g_endless_waiting = false;
+std::string g_endless_seed;
 // Crossfade state and pure decisions live in playback/crossfade.*. The mpv
 // role swap and event handling stay here with the rest of the playback loop.
-static crossfade::State g_cf;
+crossfade::State g_cf;
 
 // Window visibility: when minimized/hidden the UI is not visible, so the
 // render path is skipped entirely and the loop only wakes for events and
@@ -158,13 +151,13 @@ static bool g_window_hidden = false;
 // Dirty flags for the periodic persistence pass: history / play counts /
 // play log only change on track starts and commits, so the 10 s save pass
 // skips them (and the settings file) unless something actually changed.
-static std::atomic<bool> g_history_dirty{false};
-static std::atomic<bool> g_counts_dirty{false};
+std::atomic<bool> g_history_dirty{false};
+std::atomic<bool> g_counts_dirty{false};
 
 // Watchdog for the resolve path: loading is cleared by mpv's start/error
 // events; if neither ever fires (worker died, backend wedged) this caps how
 // long the 60 FPS spinner cadence can be pinned.
-static std::chrono::steady_clock::time_point g_loading_since;
+std::chrono::steady_clock::time_point g_loading_since;
 static constexpr double kLoadingWatchdogSec = 30.0;
 
 // ---- Discord Rich Presence ----
@@ -178,7 +171,7 @@ static void discord_apply_client_id()
 
 // While a crossfade runs, the incoming track lives on the helper player.
 // UI/MPRIS/Discord should describe that player, not the one fading out.
-static MpvPlayer *display_player()
+MpvPlayer *display_player()
 {
     if ((g_cf.pending.load() || g_cf.active.load()) && g_fade_player &&
         g_state.crossfade_progress >= 0.5f)
@@ -186,7 +179,7 @@ static MpvPlayer *display_player()
     return g_player.get();
 }
 
-static void update_discord_presence()
+void update_discord_presence()
 {
     DiscordPresence p;
     p.active = g_state.playing && !g_state.current_track_id.empty();
@@ -210,364 +203,35 @@ static void update_discord_presence()
 
 // Cancel an in-flight crossfade: restore the main player's volume and
 // silence/stop the helper. Safe to call when no fade is running.
-static void stop_fade()
-{
-    if (!g_fade_player)
-        return;
-    if (g_cf.pending || g_cf.active)
-        g_player->set_volume(g_cf.user_volume);
-    g_cf.pending = false;
-    g_cf.active = false;
-    g_cf.manual = false;
-    g_cf.track = Track{};
-    g_cf.index = -1;
-    g_fade_player->set_stream_record("");
-    g_fade_player->stop();
-    g_fade_player->set_volume(0);
-}
-
-static bool g_endless_attempted = false;
+bool g_endless_attempted = false;
 
 // Fresh stream re-resolution after an uncached track fails to load.
-static bool g_force_fresh_resolve = false;
-static int g_play_retry_count = 0;
-
-// Touchscreen: SDL's synthetic mouse events are disabled, so taps and
-// one-finger drags are translated here. A tap becomes a real click across
-// two frames; a long press becomes a right-click.
-struct TouchGesture
-{
-    bool active = false;
-    SDL_FingerID id = 0;
-    float start_x = 0.0f, start_y = 0.0f;
-    float last_x = 0.0f, last_y = 0.0f;
-    Uint32 start_ticks = 0;
-    Uint32 last_move_ticks = 0;
-    bool scrolling = false;
-    bool long_fired = false;
-    float velocity = 0.0f; // pixels/second in scroll direction
-};
-
-static TouchGesture g_touch;
-static float g_touch_fling_velocity = 0.0f;
-static bool g_touch_fling_active = false;
-static Uint32 g_touch_fling_last_ms = 0;
-
-// Wheel/touchpad scrolling — browser model. A virtual scroll target
-// integrates wheel deltas 1:1 (plus post-release kinetic fling); the rendered
-// position chases the target with a critically-damped filter every frame, so
-// unevenly-spaced touchpad packets become continuous sub-pixel motion and
-// even tiny flicks glide. Children report edge clamping back via
-// scroll_clamp_feedback() so the target stays in the reachable range.
-static float g_scroll_target = 0.0f;        // virtual scroll position, px
-static float g_scroll_pos = 0.0f;           // chased render position, px
-static float g_wheel_velocity = 0.0f;      // active fling speed, px/s
-static float g_wheel_input_velocity = 0.0f; // recent event speed, px/s
-static bool g_wheel_inertia_active = false;
-static Uint32 g_wheel_last_event_ms = 0;
-static Uint32 g_wheel_last_frame_ms = 0;
-static int g_wheel_event_count = 0;
-
-static constexpr float kWheelPixelsPerDelta = 70.0f;
-static constexpr float kWheelChaseTau = 0.05f; // input→display settle, s
-static constexpr float kWheelFlingDecay = 3.0f;
-static constexpr float kWheelFlingMin = 5.0f;
-static constexpr float kWheelFlingMax = 5000.0f;
-static constexpr Uint32 kWheelReleaseMs = 80;
-static constexpr Uint32 kWheelGestureGapMs = 120;
-
-// Horizontal two-finger swipe (back/forward navigation). See the
-// SDL_MOUSEWHEEL handler for the threshold semantics.
-static float g_hwheel_accum = 0.0f;
-static Uint32 g_hwheel_last_ms = 0;
-static constexpr float kHWheelTrigger = 2.0f; // wheel deltas per navigation step
-static constexpr Uint32 kHWheelGapMs = 150;
-
-static void reset_wheel_scroll()
-{
-    g_scroll_target = 0.0f;
-    g_scroll_pos = 0.0f;
-    g_wheel_velocity = 0.0f;
-    g_wheel_input_velocity = 0.0f;
-    g_wheel_inertia_active = false;
-    g_wheel_last_event_ms = 0;
-    g_wheel_event_count = 0;
-}
-
-enum class TouchClickPhase
-{
-    None,
-    Down,
-    Up
-};
-
-static TouchClickPhase g_touch_click_phase = TouchClickPhase::None;
-static int g_touch_click_button = 0;
-static ImVec2 g_touch_click_pos;
-// ImGui::GetTime() of the last tap we synthesized. Track rows treat a recent
-// tap as the "play" gesture (the double-click idiom has no touch analogue);
-// see ui_touch_tap_recent().
-double g_touch_click_time = -1.0e6;
-
-static void queue_touch_click(float x, float y, int button)
-{
-    if (g_touch_click_phase != TouchClickPhase::None)
-        return;
-    g_touch_click_time = ImGui::GetTime();
-    g_touch_click_phase = TouchClickPhase::Down;
-    g_touch_click_button = button;
-    g_touch_click_pos = ImVec2(x, y);
-}
-
-// Feed one half of a synthetic click per frame. Sending down and up in the
-// same NewFrame would leave ImGui with no pressed transition, so the down
-// lands now and the up lands on the next loop iteration.
-static void process_touch_click()
-{
-    ImGuiIO &io = ImGui::GetIO();
-    if (g_touch_click_phase == TouchClickPhase::Down)
-    {
-        io.AddMousePosEvent(g_touch_click_pos.x, g_touch_click_pos.y);
-        io.AddMouseButtonEvent(g_touch_click_button, true);
-        g_touch_click_phase = TouchClickPhase::Up;
-    }
-    else if (g_touch_click_phase == TouchClickPhase::Up)
-    {
-        io.AddMouseButtonEvent(g_touch_click_button, false);
-        g_touch_click_phase = TouchClickPhase::None;
-    }
-}
-
-static void handle_touch_event(const SDL_Event &event, SDL_Window *window)
-{
-    int ww = 0, wh = 0;
-    SDL_GetWindowSize(window, &ww, &wh);
-    if (ww <= 0 || wh <= 0)
-        return;
-    auto px = [&](float nx) { return nx * (float)ww; };
-    auto py = [&](float ny) { return ny * (float)wh; };
-
-    if (event.type == SDL_FINGERDOWN)
-    {
-        if (g_touch.active)
-            return;
-        g_touch.active = true;
-        g_touch.id = event.tfinger.fingerId;
-        g_touch.start_x = g_touch.last_x = px(event.tfinger.x);
-        g_touch.start_y = g_touch.last_y = py(event.tfinger.y);
-        g_touch.start_ticks = SDL_GetTicks();
-        g_touch.last_move_ticks = g_touch.start_ticks;
-        g_touch.scrolling = false;
-        g_touch.long_fired = false;
-        g_touch.velocity = 0.0f;
-        g_touch_fling_active = false;
-        g_touch_fling_velocity = 0.0f;
-        reset_wheel_scroll();
-        ImGui::GetIO().AddMousePosEvent(g_touch.last_x, g_touch.last_y);
-        return;
-    }
-
-    if (!g_touch.active || event.tfinger.fingerId != g_touch.id)
-        return;
-
-    if (event.type == SDL_FINGERMOTION)
-    {
-        const float x = px(event.tfinger.x);
-        const float y = py(event.tfinger.y);
-        const float dx = x - g_touch.start_x;
-        const float dy = y - g_touch.start_y;
-        if (!g_touch.scrolling && dx * dx + dy * dy > 14.0f * 14.0f)
-            g_touch.scrolling = true;
-        const Uint32 now_ms = SDL_GetTicks();
-        const float pixel_dy = y - g_touch.last_y;
-        if (g_touch.scrolling)
-        {
-            const float dt = (now_ms - g_touch.last_move_ticks) / 1000.0f;
-            if (dt > 0.001f && dt < 0.2f)
-            {
-                const float instant = -pixel_dy / dt;
-                // Low-pass the flick velocity so one jittery sample doesn't
-                // dominate the momentum after the finger lifts.
-                g_touch.velocity = g_touch.velocity * 0.65f + instant * 0.35f;
-            }
-            else if (dt >= 0.2f)
-            {
-                g_touch.velocity = -pixel_dy / std::max(dt, 0.001f);
-            }
-            // Direct pixel scroll: content follows the finger exactly.
-            add_scroll_pixels(-pixel_dy);
-        }
-        g_touch.last_move_ticks = now_ms;
-        g_touch.last_x = x;
-        g_touch.last_y = y;
-        ImGui::GetIO().AddMousePosEvent(x, y);
-        return;
-    }
-
-    if (event.type == SDL_FINGERUP)
-    {
-        const float x = px(event.tfinger.x);
-        const float y = py(event.tfinger.y);
-        const bool tap = !g_touch.scrolling && !g_touch.long_fired;
-        const Uint32 now_ms = SDL_GetTicks();
-        float velocity = g_touch.velocity;
-        // Holding still before lifting should not fling.
-        if (now_ms - g_touch.last_move_ticks > 120)
-            velocity = 0.0f;
-        velocity = std::max(-5000.0f, std::min(velocity, 5000.0f));
-        g_touch.active = false;
-        if (g_touch.scrolling && !g_touch.long_fired && std::fabs(velocity) >= 80.0f)
-        {
-            g_touch_fling_velocity = velocity;
-            g_touch_fling_active = true;
-            g_touch_fling_last_ms = now_ms;
-        }
-        if (tap)
-            queue_touch_click(x, y, ImGuiMouseButton_Left);
-        return;
-    }
-}
-
-static void update_touch_long_press()
-{
-    if (!g_touch.active || g_touch.scrolling || g_touch.long_fired)
-        return;
-    if (SDL_GetTicks() - g_touch.start_ticks < 550)
-        return;
-    g_touch.long_fired = true;
-    queue_touch_click(g_touch.last_x, g_touch.last_y, ImGuiMouseButton_Right);
-}
-
-// Kinetic touch scrolling: keep moving after the finger lifts, with an
-// exponential decay similar to a browser's fling.
-static bool update_touch_inertia()
-{
-    if (!g_touch_fling_active)
-        return false;
-    if (g_touch.active)
-    {
-        g_touch_fling_active = false;
-        g_touch_fling_velocity = 0.0f;
-        return false;
-    }
-    const Uint32 now_ms = SDL_GetTicks();
-    float dt = (now_ms - g_touch_fling_last_ms) / 1000.0f;
-    g_touch_fling_last_ms = now_ms;
-    if (dt <= 0.0f)
-        return true;
-    if (dt > 0.05f)
-        dt = 0.05f;
-    add_scroll_pixels(g_touch_fling_velocity * dt);
-    g_touch_fling_velocity *= std::exp(-3.2f * dt);
-    if (std::fabs(g_touch_fling_velocity) < 20.0f)
-    {
-        g_touch_fling_velocity = 0.0f;
-        g_touch_fling_active = false;
-        return false;
-    }
-    return true;
-}
-
-// Wheel/touchpad scrolling. Input is drained with a short time constant while
-// events are arriving; kinetic inertia is only started after the pad goes
-// quiet, using the speed measured from the events themselves.
-static bool update_wheel_inertia()
-{
-    const Uint32 now_ms = SDL_GetTicks();
-    const bool input_active = (now_ms - g_wheel_last_event_ms) <= kWheelReleaseMs;
-    if (!input_active && !g_wheel_inertia_active &&
-        std::fabs(g_scroll_target - g_scroll_pos) < 0.05f)
-        return false;
-
-    float dt = (now_ms - g_wheel_last_frame_ms) / 1000.0f;
-    g_wheel_last_frame_ms = now_ms;
-    if (dt <= 0.0f)
-        return true;
-    if (dt > 0.05f)
-        dt = 0.05f;
-
-    // Edge feedback from the last frame: the hovered child clamped the
-    // scroll, so pull the target back into the reachable range and stop any
-    // fling pushing into the edge.
-    const float unapplied = take_scroll_clamp_feedback();
-    if (unapplied != 0.0f)
-    {
-        g_scroll_target += unapplied;
-        if (g_wheel_inertia_active)
-        {
-            g_wheel_velocity = 0.0f;
-            g_wheel_inertia_active = false;
-        }
-    }
-
-    if (input_active)
-    {
-        g_wheel_inertia_active = false;
-        g_wheel_velocity = 0.0f;
-    }
-    else if (!g_wheel_inertia_active)
-    {
-        const float fling = std::max(-kWheelFlingMax,
-                                     std::min(g_wheel_input_velocity, kWheelFlingMax));
-        if (std::fabs(fling) >= kWheelFlingMin)
-        {
-            g_wheel_velocity = fling;
-            g_wheel_inertia_active = true;
-        }
-        g_wheel_input_velocity = 0.0f;
-        g_wheel_event_count = 0;
-    }
-
-    if (g_wheel_inertia_active)
-    {
-        g_scroll_target += g_wheel_velocity * dt;
-        g_wheel_velocity *= std::exp(-kWheelFlingDecay * dt);
-        if (std::fabs(g_wheel_velocity) < kWheelFlingMin)
-        {
-            g_wheel_velocity = 0.0f;
-            g_wheel_inertia_active = false;
-        }
-    }
-
-    // Critically-damped chase: the rendered position follows the target,
-    // turning discrete wheel packets into continuous sub-pixel motion.
-    const float chase = 1.0f - std::exp(-dt / kWheelChaseTau);
-    const float new_pos = g_scroll_pos + (g_scroll_target - g_scroll_pos) * chase;
-    add_scroll_pixels(new_pos - g_scroll_pos);
-    g_scroll_pos = new_pos;
-
-    if (!input_active && !g_wheel_inertia_active &&
-        std::fabs(g_scroll_target - g_scroll_pos) < 0.05f)
-    {
-        reset_wheel_scroll();
-        return false;
-    }
-    return true;
-}
+bool g_force_fresh_resolve = false;
+int g_play_retry_count = 0;
 
 // Path of the in-progress stream recording (empty when not recording).
-static std::string g_recording_path; // final destination
-static std::string g_recording_temp; // where mpv is writing right now
-static std::string g_recording_id;
+std::string g_recording_path; // final destination
+std::string g_recording_temp; // where mpv is writing right now
+std::string g_recording_id;
 // Source duration of the track being recorded (mpv's "duration" property of
 // the remote stream), captured after its start event. Compared against the
 // finished recording's duration before it's accepted into the cache.
-static bool g_recording_started = false;
-static double g_recording_duration = 0.0;
-static bool notify_init_done = false;
+bool g_recording_started = false;
+double g_recording_duration = 0.0;
+bool notify_init_done = false;
 
 // Session-restore seek that had to wait for the demuxer cache: seeking past
 // the cached region would leave a hole in the stream recording, so the jump
 // is issued once the target is covered (or when the deadline passes).
-static double g_pending_restore_seek = -1.0;
-static std::string g_pending_restore_seek_id;
-static std::uint64_t g_pending_restore_seek_gen = 0;
-static std::chrono::steady_clock::time_point g_pending_restore_seek_deadline;
+double g_pending_restore_seek = -1.0;
+std::string g_pending_restore_seek_id;
+std::uint64_t g_pending_restore_seek_gen = 0;
+std::chrono::steady_clock::time_point g_pending_restore_seek_deadline;
 
 // ----------------------------------------------------------------------
 // Notification helper
 // ----------------------------------------------------------------------
-static void show_notification(const std::string &title, const std::string &body, const std::string &icon_path = "")
+void show_notification(const std::string &title, const std::string &body, const std::string &icon_path)
 {
 #ifndef P100_WINDOWS
     if (!notify_init_done || !g_state.settings.show_notifications)
@@ -614,136 +278,13 @@ static void show_notification(const std::string &title, const std::string &body,
 // action sets queue_replace_from_source; this runs once before the pending
 // track is resolved. The current track is played directly and the rest of the
 // list becomes Up Next, so manual skips and natural advances share one order.
-static void rebuild_queue_from_source()
-{
-    if (!g_state.queue_replace_from_source)
-        return;
-    g_state.queue_replace_from_source = false;
-
-    const std::string want_id = g_state.queue_replace_id;
-    g_state.queue_replace_id.clear();
-    int start = g_state.queue_replace_index;
-    g_state.queue_replace_index = 0;
-
-    g_state.play_queue.clear();
-    g_state.queue_cycle.clear();
-
-    auto playlist = get_playlist(g_state);
-    if (!playlist || playlist->empty())
-    {
-        g_state.queue_dirty = true;
-        return;
-    }
-
-    if (!want_id.empty())
-    {
-        // Row indices can drift (History is a snapshot), so trust the track
-        // id first and use the index only as a fallback.
-        for (int i = 0; i < (int)playlist->size(); ++i)
-        {
-            if ((*playlist)[i].id == want_id)
-            {
-                start = i;
-                break;
-            }
-        }
-    }
-    if (start < 0 || start >= (int)playlist->size())
-        start = 0;
-
-    g_state.queue_cycle = *playlist;
-    for (Track &t : g_state.queue_cycle)
-        t.from_queue_source = true;
-
-    g_state.play_queue.reserve(playlist->size() - (size_t)start);
-    for (int i = start + 1; i < (int)playlist->size(); ++i)
-    {
-        Track t = (*playlist)[i];
-        t.from_queue_source = true;
-        g_state.play_queue.push_back(std::move(t));
-    }
-
-    if (g_state.settings.shuffle_enabled && g_state.play_queue.size() > 1)
-    {
-        static std::mt19937 rng(
-            (unsigned)std::chrono::steady_clock::now().time_since_epoch().count());
-        std::shuffle(g_state.play_queue.begin(), g_state.play_queue.end(), rng);
-    }
-
-    g_state.queue_dirty = true;
-    g_state.repaint_requested = true;
-}
-
 // ----------------------------------------------------------------------
 // Background audio resolver
 // ----------------------------------------------------------------------
 // Why the last stream resolve failed (classified backend error), consumed by
 // the mpv error handler to give the "Playback failed" toast a real reason.
-static std::mutex g_play_fail_mutex;
-static std::string g_play_fail_hint;
-
-static void resolve_audio(const std::string &video_id, const std::string &video_url,
-                          const std::string &title, const std::string &artist,
-                          const std::string &thumb, bool fresh = false,
-                          std::uint64_t gen = 0)
-{
-    (void)title;
-    (void)artist;
-    (void)thumb;
-    PlayRequest req;
-    req.id = video_id;
-    req.gen = gen;
-    req.path = find_cached_audio_path(video_id);
-    req.remote = false;
-    if (req.path.empty())
-    {
-        // Not cached: play the resolved stream URL immediately. The bytes
-        // are saved into the offline cache as they stream (mpv
-        // stream-record), so there's no second download.
-        {
-            std::lock_guard<std::mutex> lock(g_prefetch_mutex);
-            if (fresh)
-                g_prefetched_urls.erase(video_id);
-            else
-            {
-                auto it = g_prefetched_urls.find(video_id);
-                // An empty value is an in-flight prefetch: resolving the
-                // same track ourselves below is fine, the worker's result
-                // will simply serve a later request.
-                if (it != g_prefetched_urls.end() && !it->second.empty())
-                {
-                    req.path = it->second;
-                    g_prefetched_urls.erase(it);
-                }
-            }
-        }
-        if (req.path.empty())
-        {
-            const bool user_facing = g_state.pending_manual_play.load();
-            req.path = fresh ? fetch_stream_url_fresh(video_id)
-                             : fetch_stream_url(video_id);
-            if (req.path.empty())
-            {
-                // The backend couldn't resolve a URL. Tell the user why when
-                // this was their own play request (speculative prefetch
-                // failures stay silent, they retry later anyway).
-                BackendError err = take_backend_error();
-                if (err && user_facing)
-                {
-                    ui_notify_backend_error(err);
-                    std::lock_guard<std::mutex> lock(g_play_fail_mutex);
-                    g_play_fail_hint = backend_error_user_message(err);
-                }
-                req.path = video_url; // mpv resolves this itself as a fallback
-            }
-        }
-        req.remote = true;
-    }
-    {
-        std::lock_guard<std::mutex> lock(g_play_queue_mutex);
-        g_play_queue.push(std::move(req));
-    }
-}
+std::mutex g_play_fail_mutex;
+std::string g_play_fail_hint;
 
 // Resolve upcoming stream URLs ahead of time so clicking a track or reaching
 // the end of the current one starts without the ~2-4s extraction round-trip.
@@ -755,156 +296,23 @@ static void resolve_audio(const std::string &video_id, const std::string &video_
 // track: resolves run one at a time (self-throttled), never touch the play
 // channel a user click depends on, and `cancel_search_id` aborts the
 // remaining entries the moment a newer search supersedes them.
-void prefetch_urls_for(const std::vector<Track> &tracks, size_t count,
-                       int cancel_search_id)
-{
-    if (power::low_power())
-        return; // no speculative network work in low power mode
-    std::vector<std::string> ids;
-    ids.reserve(std::min(count, tracks.size()));
-    for (const Track &t : tracks)
-    {
-        if (ids.size() >= count)
-            break;
-        if (t.id.empty() || !find_cached_audio_path(t.id).empty())
-            continue;
-        {
-            std::lock_guard<std::mutex> lock(g_prefetch_mutex);
-            if (g_prefetched_urls.count(t.id))
-                continue;
-            g_prefetched_urls[t.id]; // reserve the slot (empty = in flight)
-        }
-        ids.push_back(t.id);
-    }
-    if (ids.empty())
-        return;
-
-    tasks::spawn([ids = std::move(ids), cancel_search_id]()
-    {
-        for (size_t i = 0; i < ids.size(); ++i)
-        {
-            if (cancel_search_id != 0 && g_state.search_id != cancel_search_id)
-            {
-                // Superseded: release the slots not yet resolved (completed
-                // URLs stay warmed) so a future list can warm them again.
-                std::lock_guard<std::mutex> lock(g_prefetch_mutex);
-                for (size_t j = i; j < ids.size(); ++j)
-                    g_prefetched_urls.erase(ids[j]);
-                return;
-            }
-            std::string url = fetch_stream_url_prefetch(ids[i]);
-            std::lock_guard<std::mutex> lock(g_prefetch_mutex);
-            if (url.empty())
-                g_prefetched_urls.erase(ids[i]); // failed: allow a retry later
-            else
-                g_prefetched_urls[ids[i]] = url;
-        }
-    });
-}
-
 // Warm stream URLs one at a time. The backend handles commands serially, so
 // firing ten independent prefetch threads (as prefetch_urls_for does) can put
 // a user's "start this station" request behind a long queue. This variant
 // keeps at most one speculative resolve in flight and stops as soon as the
 // caller's request token changes.
-void prefetch_urls_for_serial(const std::vector<Track> &tracks, size_t count,
-                              const std::atomic<uint64_t> *cancel_token,
-                              uint64_t token)
-{
-    if (power::low_power())
-        return; // no speculative network work in low power mode
-    std::vector<std::string> ids;
-    ids.reserve(std::min(count, tracks.size()));
-    for (const Track &t : tracks)
-    {
-        if (ids.size() >= count)
-            break;
-        if (t.id.empty() || !find_cached_audio_path(t.id).empty())
-            continue;
-        ids.push_back(t.id);
-    }
-    if (ids.empty())
-        return;
-
-    tasks::spawn([ids = std::move(ids), cancel_token, token]() {
-        for (const std::string &id : ids)
-        {
-            if (cancel_token && cancel_token->load() != token)
-                return;
-            {
-                std::lock_guard<std::mutex> lock(g_prefetch_mutex);
-                if (g_prefetched_urls.count(id))
-                    continue; // already warmed or another worker is on it
-                g_prefetched_urls[id]; // reserve the in-flight slot
-            }
-
-            const std::string url = fetch_stream_url(id);
-            {
-                std::lock_guard<std::mutex> lock(g_prefetch_mutex);
-                if (url.empty())
-                    g_prefetched_urls.erase(id);
-                else
-                    g_prefetched_urls[id] = url;
-            }
-
-            if (cancel_token && cancel_token->load() != token)
-                return;
-            std::this_thread::sleep_for(std::chrono::milliseconds(120));
-        }
-    });
-}
-
 // The tracks playback will touch next: the head of the single global queue.
-static std::vector<Track> upcoming_tracks()
-{
-    std::vector<Track> out;
-    const size_t n = std::min<size_t>(3, g_state.play_queue.size());
-    out.reserve(n);
-    for (size_t i = 0; i < n; ++i)
-        out.push_back(g_state.play_queue[i]);
-    return out;
-}
-
-static void prefetch_next_track()
-{
-    prefetch_urls_for(upcoming_tracks(), 3);
-}
-
 // Cover sweep: a downloaded track's album cover is fetched the first time a
 // row showing it is drawn, so one transient failure (offline moment, network
 // hiccup) leaves it permanently blank -- the texture loader only retries a
 // failed URL while that row is on screen and its backoff has expired. This
 // sweep re-fetches missing covers for every downloaded track in the
 // background; it is stat-only when everything is already cached.
-static std::atomic<bool> g_cover_sweep_running{false};
-static void cover_sweep_worker(std::vector<Track> tracks)
-{
-    for (const auto &t : tracks)
-    {
-        if (t.id.empty() || t.thumbnail_url.empty())
-            continue;
-        if (!thumbnail_is_cached(t.thumbnail_url))
-            get_cached_thumbnail_path(t.thumbnail_url);
-    }
-    g_cover_sweep_running = false;
-    g_state.repaint_requested = true;
-}
-
-static void maybe_sweep_missing_covers()
-{
-    if (power::low_power())
-        return;
-    if (!g_state.downloaded_loaded || g_state.downloaded_tracks.empty())
-        return;
-    if (g_cover_sweep_running.exchange(true))
-        return;
-    tasks::spawn([tracks = g_state.downloaded_tracks]() { cover_sweep_worker(tracks); });
-}
-
+std::atomic<bool> g_cover_sweep_running{false};
 // Full downloads currently running (video_id -> nothing). Guards against
 // stacking duplicate downloads for the same track.
-static std::set<std::string> g_downloading;
-static std::mutex g_download_mutex;
+std::set<std::string> g_downloading;
+std::mutex g_download_mutex;
 
 // Download a track fully into the audio cache in the background. Used to
 // pre-fetch the *next* track (so advancing always starts from disk, Spotify
@@ -913,1025 +321,56 @@ static std::mutex g_download_mutex;
 // subprocess (CPU + network burst); letting a track change fan out several
 // concurrently stole noticeable power, and the losers of the race get
 // retried on the next predownload pass anyway.
-static std::atomic<int> g_bg_download_count{0};
-static constexpr int kMaxBgDownloads = 2;
-
-static void background_download(const std::string &video_id)
-{
-    if (power::low_power())
-        return; // low power: never download ahead of playback
-    if (video_id.empty())
-        return;
-    if (!find_cached_audio_path(video_id).empty())
-        return;
-    {
-        std::lock_guard<std::mutex> lock(g_download_mutex);
-        if (!g_downloading.insert(video_id).second)
-            return; // already running
-        if (g_bg_download_count.load() >= kMaxBgDownloads)
-        {
-            g_downloading.erase(video_id);
-            return; // retried by the next predownload pass
-        }
-    }
-    g_bg_download_count.fetch_add(1);
-    tasks::spawn([video_id]()
-                {
-        std::string path = get_cached_audio_path(video_id);
-        g_bg_download_count.fetch_sub(1);
-        {
-            std::lock_guard<std::mutex> lock(g_download_mutex);
-            g_downloading.erase(video_id);
-        }
-        if (!path.empty())
-            g_downloads_dirty = true; });
-}
+std::atomic<int> g_bg_download_count{0};
 
 // While the current song plays, make sure the next one will start from the
 // local cache: resolve its URL and pull down the whole file in the
 // background (a few MB, seconds at typical bandwidth).
-static void predownload_next_track()
-{
-    if (power::low_power())
-        return;
-    for (const Track &t : upcoming_tracks())
-        background_download(t.id);
-}
-
 // Container extension for a resolved stream URL (mpv stream-record writes
 // the raw stream, so the label must match the mime type). The result is a
 // best-effort guess: finalize_recording() re-checks the finished bytes with
 // sniff_audio_container_ext() and renames to the real container if wrong.
-static std::string stream_container_ext(const std::string &url)
-{
-    // Case-insensitive copy: the mime type arrives raw or percent-encoded
-    // and the URL's casing is not guaranteed.
-    std::string u = url;
-    for (char &c : u)
-        c = (char)tolower((unsigned char)c);
-    auto has = [&](const char *needle)
-    { return u.find(needle) != std::string::npos; };
-
-    if (has("mime=audio%2fmp4") || has("mime=audio/mp4"))
-        return "m4a";
-    if (has("mime=audio%2fmpeg") || has("mime=audio/mpeg"))
-        return "mp3";
-    if (has("mime=audio%2fwebm") || has("mime=audio/webm"))
-        return "webm";
-    if (has("mime=audio%2fogg") || has("mime=audio/ogg"))
-        return "ogg";
-
-    // Fall back to the YouTube audio itag when the mime param is absent.
-    if (size_t p = u.find("itag="); p != std::string::npos && p + 5 < u.size())
-    {
-        const int itag = atoi(u.c_str() + p + 5);
-        switch (itag)
-        {
-        case 139: // AAC in MP4
-        case 140:
-        case 141:
-            return "m4a";
-        case 170: // Vorbis/Opus in WebM
-        case 171:
-        case 249:
-        case 250:
-        case 251:
-            return "webm";
-        }
-    }
-    return "webm"; // YouTube's default audio-only muxer
-}
-
 // The current stream played through to the end: keep the recording and
 // write its metadata sidecar (off-thread; the fetch is network-bound).
-static void finalize_recording()
-{
-    if (g_recording_path.empty())
-        return;
-    g_player->set_stream_record("");
-    std::string path = g_recording_path;
-    std::string temp = g_recording_temp;
-    std::string id = g_recording_id;
-    const double expected_duration = g_recording_duration;
-    g_recording_path.clear();
-    g_recording_temp.clear();
-    g_recording_id.clear();
-    g_recording_started = false;
-    g_recording_duration = 0.0;
-    if (g_player->was_seeked())
-    {
-        // A seek outside the demuxer cache makes mpv skip stream data, so
-        // the file has a hole in it. Repair in the background: the user
-        // listened to (most of) the track, so it deserves a cache entry.
-        remove(temp.c_str());
-        background_download(id);
-        return;
-    }
-    // Validate off-thread: mpv documents that seeks/stream switches can stop
-    // the recorder outright, and a truncated or empty file must never reach
-    // the cache as a "downloaded" song.
-    tasks::spawn([temp, path, id, expected_duration]() mutable
-                {
-        const double got = probe_audio_file_duration(temp);
-        if (got <= 0.0 || (expected_duration > 0.0 && got < expected_duration - 5.0))
-        {
-            fprintf(stderr, "Discarding recording %s: duration %.1fs (source %.1fs)\n",
-                    id.c_str(), got, expected_duration);
-            remove(temp.c_str());
-            // mpv's recorder can stop silently mid-stream (documented for
-            // seeks / stream switches); the bytes are unusable but the song
-            // was heard -- fetch a clean copy in the background.
-            background_download(id);
-            return;
-        }
-        // Trust the recorded bytes over the mime/itag guess: mpv picked its
-        // muxer from the extension we gave it, and a wrong container under a
-        // lying extension is an unplayable cache entry.
-        const size_t dot = path.find_last_of('.');
-        const std::string declared = dot == std::string::npos ? "" : path.substr(dot + 1);
-        const std::string real_ext = sniff_audio_container_ext(temp, declared);
-        if (real_ext != declared && !real_ext.empty())
-            path = recorded_audio_path(id, real_ext);
-        if (path.empty() || rename(temp.c_str(), path.c_str()) != 0)
-            return;
-        g_downloads_dirty = true;
-        finalize_recorded_audio(id, path); });
-}
-
 // A track was skipped/stopped before finishing: drop the partial recording.
 // If the track had actually started playing (not an instant skip-through),
 // repair it in the background so the cache still ends up with the song.
-static void discard_recording()
-{
-    if (g_recording_temp.empty())
-        return;
-    g_player->set_stream_record("");
-    remove(g_recording_temp.c_str());
-    const bool heard = (g_state.listen_track_id == g_recording_id &&
-                        g_state.listen_seconds >= 2.0);
-    if (heard)
-        background_download(g_recording_id);
-    g_recording_path.clear();
-    g_recording_temp.clear();
-    g_recording_id.clear();
-    g_recording_started = false;
-    g_recording_duration = 0.0;
-}
-
 // ----------------------------------------------------------------------
 // Data fetchers
 // ----------------------------------------------------------------------
-static void commit_play_count()
-{
-    if (g_state.current_track_id.empty())
-        return;
-
-    ++g_state.play_counts[g_state.current_track_id];
-
-    PlayEvent ev;
-    ev.id = g_state.current_track_id;
-    ev.title = g_state.current_title;
-    ev.artist = g_state.current_artist;
-    ev.thumbnail_url = g_state.current_thumbnail_url;
-    ev.ts = (int64_t)time(nullptr);
-    g_state.play_log.push_back(ev);
-    if ((int)g_state.play_log.size() > kPlayLogCap)
-        g_state.play_log.erase(g_state.play_log.begin(),
-                               g_state.play_log.end() - kPlayLogCap);
-    g_state.stats_dirty = true;
-    g_counts_dirty = true;
-}
-
-static void load_recommendations(bool force = false)
-{
-    auto tracks = fetch_recommendations(force);
-    BackendError err = take_backend_error();
-    if (err)
-        ui_notify_backend_error(err);
-    // Don't clobber a good list with an empty one (e.g. a refresh that hit
-    // a transient backend error) -- keep what's on screen and surface the
-    // error instead.
-    if (!tracks.empty())
-    {
-        auto snapshot = std::make_shared<const std::vector<Track>>(std::move(tracks));
-        std::atomic_store(&g_state.recommendations, snapshot);
-        g_state.home_failed = false;
-        g_state.home_error_msg.clear();
-        // Publish the list first: the header spinner should stop as soon as
-        // the new recommendations are on screen, not while we warm the first
-        // few URLs in the background.
-        g_state.home_refreshing = false;
-        g_state.repaint_requested = true;
-        prefetch_urls_for(*snapshot, 3);
-    }
-    else if (err)
-    {
-        // Nothing on screen (or the refresh failed): remember why, so the
-        // Home tab can show an inline error + Retry instead of an empty list.
-        g_state.home_failed = true;
-        g_state.home_error_msg = backend_error_user_message(err);
-    }
-    std::lock_guard<std::mutex> lock(g_data_mutex);
-    g_state.status_text = "Ready.";
-    g_state.home_refreshing = false;
-    g_state.backend_status = err;
-    g_state.repaint_requested = true;
-}
-
-static void artist_search_and_update(const std::string &query, int expect_id)
-{
-    if (query.empty())
-    {
-        std::atomic_store(&g_state.artist_search_results,
-                          std::make_shared<const std::vector<ArtistSummary>>());
-        g_state.artist_search_loading = false;
-        return;
-    }
-    auto artists = fetch_artist_search(query);
-    if (g_state.search_id == expect_id && g_state.current_tab == Tab::Artists)
-    {
-        std::atomic_store(&g_state.artist_search_results,
-                          std::make_shared<const std::vector<ArtistSummary>>(std::move(artists)));
-        g_state.artist_search_loading = false;
-    }
-    BackendError err = take_backend_error();
-    if (err)
-        ui_notify_backend_error(err);
-    {
-        std::lock_guard<std::mutex> lock(g_data_mutex);
-        g_state.backend_status = err;
-    }
-    g_state.repaint_requested = true;
-}
-
-static bool text_matches_query(const std::string &haystack, const std::string &needle)
-{
-    if (needle.empty())
-        return true;
-    return std::search(haystack.begin(), haystack.end(), needle.begin(), needle.end(),
-                       [](char a, char b) {
-                           return std::tolower((unsigned char)a) ==
-                                  std::tolower((unsigned char)b);
-                       }) != haystack.end();
-}
-
-static void merge_local_search_results(const std::string &query, SearchAllResult &results)
-{
-    std::unordered_set<std::string> seen;
-
-    auto local_tracks = library::search_tracks(query, 60);
-    std::vector<Track> tracks;
-    tracks.reserve(local_tracks.size() + results.songs.size());
-    for (auto &t : local_tracks)
-        if (seen.insert(t.id).second)
-            tracks.push_back(std::move(t));
-    for (auto &t : results.songs)
-        if (seen.insert(t.id).second)
-            tracks.push_back(std::move(t));
-    results.songs = std::move(tracks);
-
-    std::unordered_set<std::string> seen_albums;
-    std::vector<AlbumSummary> albums;
-    for (const auto &a : library::load_saved_albums())
-    {
-        if (!text_matches_query(a.title, query) && !text_matches_query(a.artist, query))
-            continue;
-        AlbumSummary s;
-        s.browse_id = a.browse_id;
-        s.title = a.title;
-        s.artist = a.artist;
-        s.year = a.year;
-        s.thumbnail_url = a.thumbnail_url;
-        s.track_count = a.track_count;
-        if (seen_albums.insert(s.browse_id).second)
-            albums.push_back(std::move(s));
-    }
-    for (auto &a : results.albums)
-        if (seen_albums.insert(a.browse_id).second)
-            albums.push_back(std::move(a));
-    results.albums = std::move(albums);
-
-    std::unordered_set<std::string> seen_artists;
-    std::vector<ArtistSummary> artists;
-    for (const auto &a : library::load_saved_artists())
-    {
-        if (!text_matches_query(a.name, query))
-            continue;
-        ArtistSummary s;
-        s.browse_id = a.browse_id;
-        s.name = a.name;
-        s.thumbnail_url = a.thumbnail_url;
-        s.subscribers = a.subscribers;
-        if (seen_artists.insert(s.browse_id).second)
-            artists.push_back(std::move(s));
-    }
-    for (auto &a : results.artists)
-        if (seen_artists.insert(a.browse_id).second)
-            artists.push_back(std::move(a));
-    results.artists = std::move(artists);
-}
-
-static void search_all_and_update(const std::string &query, int expect_id)
-{
-    if (query.empty())
-    {
-        std::atomic_store(&g_state.search_results,
-                          std::make_shared<const std::vector<Track>>());
-        std::atomic_store(&g_state.search_album_results,
-                          std::make_shared<const std::vector<AlbumSummary>>());
-        std::atomic_store(&g_state.search_artist_results,
-                          std::make_shared<const std::vector<ArtistSummary>>());
-        g_state.search_loading = false;
-        return;
-    }
-
-    SearchAllResult results;
-    bool ok = fetch_search_all(query, results);
-    if (!ok)
-    {
-        // Older/partially-updated backends may not know search_all yet.
-        results.songs = fetch_search(query);
-        ok = !results.songs.empty();
-    }
-
-
-    if (g_state.search_id == expect_id)
-    {
-        // Local library rows are authoritative and instant; put them first,
-        // then append online results that aren't already present.
-        merge_local_search_results(query, results);
-        // Warm the URLs of the visible results so clicking one starts fast.
-        // Depth matches the rows a search page shows; warming runs on the
-        // main backend channel and aborts as soon as search_id changes.
-        prefetch_urls_for(results.songs, 10, expect_id);
-        std::atomic_store(&g_state.search_results,
-                          std::make_shared<const std::vector<Track>>(std::move(results.songs)));
-        std::atomic_store(&g_state.search_album_results,
-                          std::make_shared<const std::vector<AlbumSummary>>(std::move(results.albums)));
-        std::atomic_store(&g_state.search_artist_results,
-                          std::make_shared<const std::vector<ArtistSummary>>(std::move(results.artists)));
-        g_state.current_playlist_source = PlaylistSource::SEARCH;
-        g_state.search_loading = false;
-        // Success clears any previous failure state; a genuinely empty result
-        // (no hits) keeps search_failed false so "no results" stays honest.
-        if (ok)
-        {
-            g_state.search_failed = false;
-            g_state.search_error_msg.clear();
-        }
-    }
-    BackendError err = take_backend_error();
-    if (err)
-    {
-        ui_notify_backend_error(err);
-        if (g_state.search_id == expect_id)
-        {
-            g_state.search_failed = true;
-            g_state.search_error_msg = backend_error_user_message(err);
-        }
-    }
-    std::lock_guard<std::mutex> lock(g_data_mutex);
-    g_state.backend_status = err;
-    g_state.repaint_requested = true;
-}
-
 // Lyrics: disk cache first (works offline, including for tracks playing
 // from the local audio cache), then a metadata-only backend request that
 // asks for the lyrics alone -- no stream resolution, no downloads.
-static void load_lyrics_worker(std::string track_id, int expect_seq)
-{
-    Lyrics lx;
-    if (!load_lyrics_cache(track_id, lx))
-    {
-        if (fetch_lyrics(track_id, lx))
-            save_lyrics_cache(track_id, lx); // caches real lyrics and "none" results
-        else
-            lx.ok = false; // fetch failed: don't cache, retry on next play/open
-    }
-
-    // Discard if a newer request superseded this one.
-    if (g_state.lyrics_seq.load() != expect_seq)
-        return;
-
-    auto view = std::make_shared<LyricsView>();
-    view->track_id = std::move(track_id);
-    view->lyrics = std::move(lx);
-    std::atomic_store(&g_state.lyrics, std::shared_ptr<const LyricsView>(std::move(view)));
-    g_state.lyrics_loading = false;
-    g_state.repaint_requested = true;
-}
-
-static void begin_play_track(const Track &t, int index)
-{
-    if (t.id.empty())
-        return;
-    g_endless_waiting = false;
-    stop_fade();
-    // Invalidate resolves still in flight for the previous selection; this
-    // request's generation is captured when the resolver thread is spawned.
-    g_play_generation.fetch_add(1);
-    if (!g_force_fresh_resolve)
-        g_play_retry_count = 0;
-    g_state.loading = true;
-    g_loading_since = std::chrono::steady_clock::now();
-    g_state.current_title = t.title;
-    g_state.current_artist = t.artist;
-    g_state.current_thumbnail_url = t.thumbnail_url;
-    g_state.current_track_id = t.id;
-    g_state.current_album_id = t.album_id;
-    g_state.current_artist_id = t.artist_id;
-    g_state.current_track_url = t.url; // <-- persistent
-    g_state.status_text = "Loading...";
-    int resolved_index = index;
-    if (resolved_index < 0)
-    {
-        // Queue entries do not carry a source index. Re-find the row when the
-        // active list still contains this track so list highlighting survives
-        // a skip.
-        auto playlist = get_playlist(g_state);
-        if (playlist)
-        {
-            for (int i = 0; i < (int)playlist->size(); ++i)
-            {
-                if ((*playlist)[i].id == t.id)
-                {
-                    resolved_index = i;
-                    break;
-                }
-            }
-        }
-    }
-    g_state.current_track_index = resolved_index;
-
-    g_state.pending_manual_play = true;
-    g_state.pending_play_url = t.url;
-    g_state.pending_play_title = t.title;
-    g_state.pending_play_artist = t.artist;
-    g_state.pending_play_thumbnail_url = t.thumbnail_url;
-    g_state.pending_video_id = t.id;
-    g_state.pending_video_url = t.url;
-}
-
-static void replay_current_track()
-{
-    Track t;
-    t.id = g_state.current_track_id;
-    t.title = g_state.current_title;
-    t.artist = g_state.current_artist;
-    t.artist_id = g_state.current_artist_id;
-    t.album_id = g_state.current_album_id;
-    t.thumbnail_url = g_state.current_thumbnail_url;
-    t.url = g_state.current_track_url;
-    begin_play_track(t, g_state.current_track_index);
-}
-
-static bool advance_playback(bool manual = false);
-
 // Start one endless-radio refill when the remaining queue/source is short.
 // Returns true if a refill is loading (or was already in flight).
-static bool maybe_start_endless_refill()
-{
-    if (!g_state.settings.endless_radio || g_state.settings.repeat_mode != 0 ||
-        g_state.settings.shuffle_enabled)
-        return false;
-    if (g_state.current_track_id.empty())
-        return false;
-    if (g_endless_seed != g_state.current_track_id)
-    {
-        g_endless_seed = g_state.current_track_id;
-        g_endless_attempted = false;
-    }
-    if (g_state.endless_loading.load())
-        return true;
-    if (g_endless_attempted)
-        return false;
-    if (g_state.play_queue.size() >= 100)
-        return false;
-
-    const int remaining = (int)g_state.play_queue.size();
-    if (remaining > 3)
-        return false;
-
-    g_endless_attempted = true;
-    g_state.endless_loading = true;
-    const std::string seed = g_state.current_track_id;
-    tasks::spawn([seed]()
-                {
-        std::vector<Track> results;
-        try {
-            results = fetch_radio(seed);
-        } catch (...) {}
-        std::atomic_store(&g_state.endless_results,
-                          std::make_shared<const std::vector<Track>>(std::move(results)));
-        g_state.endless_ready = true;
-        g_state.endless_loading = false;
-        g_state.repaint_requested = true; });
-    return true;
-}
-
 // Append deduped endless-radio results to the queue. When playback already
 // stopped at the end of the source list, start the first new entry now.
-static void consume_endless_results()
-{
-    if (!g_state.endless_ready.exchange(false))
-        return;
-    auto results = std::atomic_load(&g_state.endless_results);
-    bool appended = false;
-
-    if (g_state.settings.endless_radio && results)
-    {
-        std::unordered_set<std::string> seen;
-        if (!g_state.current_track_id.empty())
-            seen.insert(g_state.current_track_id);
-        for (const auto &t : g_state.play_queue)
-            if (!t.id.empty())
-                seen.insert(t.id);
-        for (const auto &t : g_state.playback_history)
-            if (!t.id.empty())
-                seen.insert(t.id);
-
-        for (const auto &t : *results)
-        {
-            if (t.id.empty() || seen.count(t.id))
-                continue;
-            if (g_state.play_queue.size() >= 100)
-                break;
-            seen.insert(t.id);
-            g_state.play_queue.push_back(t);
-            appended = true;
-        }
-        g_state.endless_loading = false;
-    }
-
-    if (appended)
-    {
-        g_state.queue_dirty = true;
-        g_state.repaint_requested = true;
-        prefetch_next_track();
-    }
-
-    if (g_endless_waiting)
-    {
-        g_endless_waiting = false;
-        if (appended)
-        {
-            if (!advance_playback())
-                g_state.status_text = "Ready.";
-        }
-        else if (!g_state.endless_loading.load())
-        {
-            g_state.status_text = "Ready.";
-        }
-    }
-}
-
 // Refill the single global queue from the source-list snapshot used for
 // repeat-all / shuffle. Manual "Play next" pins and guest requests already in
 // the queue are not part of the cycle; they were one-shot entries.
-static void refill_queue_from_cycle()
-{
-    if (g_state.queue_cycle.empty())
-        return;
-    g_state.play_queue = g_state.queue_cycle;
-    if (g_state.settings.shuffle_enabled && g_state.play_queue.size() > 1)
-    {
-        static std::mt19937 rng(
-            (unsigned)std::chrono::steady_clock::now().time_since_epoch().count());
-        std::shuffle(g_state.play_queue.begin(), g_state.play_queue.end(), rng);
-    }
-    g_state.queue_dirty = true;
-}
-
 // Decide what plays next without starting it: the head of the global queue.
 // `allow_refill` lets natural/manual advance wrap the source cycle when repeat
 // is on. Returns false when playback should stop.
-struct NextPick
-{
-    Track track;
-};
-static bool select_next_track(bool allow_refill, bool consume, NextPick &out)
-{
-    if (g_state.play_queue.empty() && allow_refill &&
-        g_state.settings.repeat_mode != 0)
-        refill_queue_from_cycle();
-
-    if (g_state.play_queue.empty())
-        return false;
-
-    out.track = g_state.play_queue.front();
-    if (consume)
-    {
-        g_state.play_queue.erase(g_state.play_queue.begin());
-        g_state.queue_dirty = true;
-    }
-    return true;
-}
-
 // Shared per-track bookkeeping for a fade transition. The helper player's
 // events are not routed through the main "start" handler, so metadata,
 // history, MPRIS and the notification are updated here when the fade begins.
-static void adopt_fade_track(const Track &consumed, int consumed_index)
-{
-    g_state.loading = false;
-    // Keep the outgoing track around for the first half of the fade. Lyrics
-    // and their metadata stay in sync with the bottom bar's midpoint switch.
-    g_state.crossfade_from_track = Track{};
-    g_state.crossfade_from_track.id = g_state.current_track_id;
-    g_state.crossfade_from_track.title = g_state.current_title;
-    g_state.crossfade_from_track.artist = g_state.current_artist;
-    g_state.crossfade_from_track.thumbnail_url = g_state.current_thumbnail_url;
-    g_state.crossfade_from_track.url = g_state.current_track_url;
-    g_state.crossfade_from_track.album_id = g_state.current_album_id;
-    g_state.crossfade_from_track.artist_id = g_state.current_artist_id;
-    g_state.current_title = consumed.title;
-    g_state.current_artist = consumed.artist;
-    g_state.current_thumbnail_url = consumed.thumbnail_url;
-    g_state.current_track_id = consumed.id;
-    g_state.current_album_id = consumed.album_id;
-    g_state.current_artist_id = consumed.artist_id;
-    g_state.current_track_url = consumed.url;
-    g_state.status_text = "Playing";
-    g_state.current_track_index = consumed_index;
-    g_state.listen_track_id = consumed.id;
-    g_state.listen_seconds = 0.0;
-    g_state.listen_counted = false;
-    // Lyrics stay on the outgoing track until the visual midpoint; the render
-    // loop queues the incoming lyrics when crossfade_progress crosses 0.5.
-
-    // History/notification bookkeeping, mirroring the main "start" path.
-    g_history_dirty = true;
-    {
-        Track history_entry;
-        history_entry.id = consumed.id;
-        history_entry.title = consumed.title;
-        history_entry.artist = consumed.artist;
-        history_entry.thumbnail_url = consumed.thumbnail_url;
-        history_entry.url = consumed.url;
-        history_entry.duration_sec = consumed.duration_sec;
-        for (auto it = g_state.playback_history.begin();
-             it != g_state.playback_history.end(); ++it)
-        {
-            if (it->id == history_entry.id)
-            {
-                g_state.playback_history.erase(it);
-                break;
-            }
-        }
-        g_state.playback_history.insert(g_state.playback_history.begin(), history_entry);
-        if (g_state.playback_history.size() > 200)
-            g_state.playback_history.resize(200);
-    }
-    if (g_mpris)
-    {
-        g_mpris->update_metadata(consumed, (double)consumed.duration_sec);
-        g_mpris->update_playback_status(true);
-        update_discord_presence();
-    }
-    {
-        std::string title = consumed.title.empty() ? "Unknown Track" : consumed.title;
-        std::string artist = consumed.artist.empty() ? "Unknown Artist" : consumed.artist;
-        // Stat-only: never a synchronous curl on the main thread (the async
-        // pipeline fetches the art; the notification falls back to a generic
-        // icon until it lands).
-        std::string thumb_path = thumbnail_is_cached(consumed.thumbnail_url)
-                                     ? get_cached_thumbnail_path(consumed.thumbnail_url)
-                                     : "";
-        if (thumb_path.empty())
-            thumb_path = "audio-x-generic";
-        show_notification(title, "by " + artist, thumb_path);
-    }
-}
-
 // A manual skip can crossfade only while audio is actually playing and the
 // target already exists as a complete file in the local audio cache.
-static bool can_start_manual_crossfade(const Track &t)
-{
-    if (!g_state.settings.skip_crossfade_enabled)
-        return false;
-    if (g_state.settings.skip_crossfade_duration <= 0.0f)
-        return false;
-    if (!g_state.playing.load() || !g_player || !g_player->is_playing())
-        return false;
-    if (t.id.empty())
-        return false;
-    return true;
-}
-
 // Promote the helper player (the track that faded in) to be the main player
 // and retire the outgoing one. Shared by timer-driven manual fades and by
 // selections that arrive while a fade is already in flight.
-static void promote_fade_player_to_main()
-{
-    if (!g_fade_player)
-        return;
-    g_cf.pending = false;
-    g_cf.active = false;
-    g_cf.manual = false;
-
-    g_player.swap(g_fade_player);
-    g_player_raw = g_player.get();
-    // Callbacks live on the objects, not the roles: move them with the swap.
-    g_player->set_event_callback(g_main_event_cb);
-    g_fade_player->set_event_callback(g_fade_event_cb);
-    g_player->set_volume(g_cf.user_volume);
-    g_fade_player->set_volume(0);
-    g_fade_player->set_stream_record("");
-    g_fade_player->stop();
-
-    g_cf.track = Track{};
-    g_cf.index = -1;
-    g_state.playing = true;
-    if (!g_state.current_track_id.empty() &&
-        g_state.lyrics_requested_id != g_state.current_track_id)
-    {
-        g_state.lyrics_requested_id = g_state.current_track_id;
-        g_state.lyrics_dirty = true;
-    }
-    g_state.repaint_requested = true;
-}
-
 // Finish a timer-driven manual fade: promote the incoming helper player to
 // be the main player and retire the (cut-short) outgoing one.
-static void finish_manual_crossfade()
-{
-    if (!g_fade_player)
-        return;
-    promote_fade_player_to_main();
-    g_state.loading = false;
-    g_state.status_text = "Playing";
-
-    prefetch_next_track();
-    predownload_next_track();
-    maybe_start_endless_refill();
-}
-
 // A manual selection (track click, queue row, next/prev) arrived while a
 // crossfade is already in flight. Settle that transition first: otherwise
 // the helper player can keep playing the old "next" track while the new
 // selection is loaded into the main player, leaving an orphaned player the
 // app no longer tracks.
-static void settle_inflight_crossfade()
-{
-    if (!g_fade_player)
-        return;
-    if (g_cf.active.load())
-    {
-        // The faded-in track is already audible, so make it the outgoing
-        // track for the new selection instead of letting the helper linger.
-        discard_recording();
-        promote_fade_player_to_main();
-    }
-    else if (g_cf.pending.load())
-    {
-        // The incoming track never became audible: cancel it and keep the
-        // current main player, which can switch to the new selection.
-        stop_fade();
-    }
-}
-
-static void start_manual_crossfade(const Track &t, int index,
-                                   const std::string &cached_path, double seconds)
-{
-    // Restart semantics: a second Next during a fade cancels the running one
-    // and starts a fresh fade toward the newly picked track.
-    stop_fade();
-    // The outgoing track is being skipped, so drop its partial recording now
-    // (while the listen timer still refers to it -- discard_recording repairs
-    // it in the background when enough was heard).
-    discard_recording();
-    // Invalidate resolves still in flight for an earlier selection.
-    g_play_generation.fetch_add(1);
-    g_state.pending_manual_play = false;
-    g_state.pending_play_url.clear();
-
-    g_cf.track = t;
-    g_cf.index = index;
-    adopt_fade_track(t, index);
-
-    g_cf.user_volume = (float)g_player->get_property_double("volume");
-    if (g_cf.user_volume <= 0.0f)
-        g_cf.user_volume = 100.0f;
-    g_fade_player->set_stream_record("");
-    g_fade_player->set_volume(0);
-    g_cf.seconds = seconds;
-    g_cf.manual = true;
-    g_cf.pending = true;
-    g_cf.start = std::chrono::steady_clock::now();
-    g_fade_player->play(cached_path);
-
-    prefetch_next_track();
-    predownload_next_track();
-    maybe_start_endless_refill();
-}
-
 // Returns true when the transition was handed to a manual crossfade; false
 // means the caller should fall back to the normal instant track switch.
-static bool try_start_manual_crossfade(const Track &t, int index)
-{
-    if (!can_start_manual_crossfade(t))
-        return false;
-
-    // Don't start a fade that the outgoing file would finish before the
-    // incoming one reaches full volume; an instant switch is cleaner there.
-    const double dur = g_player->cached_duration();
-    const double pos = g_player->cached_time_pos();
-    if (dur > 0.0 && pos >= 0.0 && dur - pos < 0.5)
-        return false;
-
-    const std::string cached = find_cached_audio_path(t.id);
-    if (cached.empty())
-        return false;
-
-    double cf = (double)g_state.settings.skip_crossfade_duration;
-    if (t.duration_sec > 0)
-        cf = std::min(cf, t.duration_sec * 0.5);
-    if (dur > 0.0 && pos >= 0.0)
-        cf = std::min(cf, dur - pos);
-    if (cf < 0.1)
-        cf = 0.1;
-
-    start_manual_crossfade(t, index, cached, cf);
-    return true;
-}
-
-static void maybe_start_crossfade()
-{
-    // Keep mpv's crossfade option in sync with the settings slider (unused
-    // by mpv 0.41+, which has no crossfade support, but harmless).
-    if (g_cf.applied_duration != g_state.settings.crossfade_duration)
-    {
-        g_cf.applied_duration = g_state.settings.crossfade_duration;
-        g_player->set_crossfade(g_cf.applied_duration);
-    }
-
-    // Playback speed: applied to BOTH instances so it survives the crossfade
-    // role swap.
-    static float g_applied_speed = -1.0f;
-    if (g_applied_speed != g_state.settings.playback_speed)
-    {
-        g_applied_speed = g_state.settings.playback_speed;
-        g_player->set_speed((double)g_applied_speed);
-        g_fade_player->set_speed((double)g_applied_speed);
-    }
-
-    // Audio filters (normalization + EQ): one chain on both instances.
-    static std::string g_applied_af;
-    static bool g_af_first = true;
-    std::string af = crossfade::audio_filter(g_state.settings);
-    if (g_af_first || af != g_applied_af)
-    {
-        g_af_first = false;
-        g_applied_af = af;
-        g_player->set_af(af);
-        g_fade_player->set_af(af);
-    }
-
-    // Manual skip fades are timer-driven: the outgoing file does not reach
-    // EOF, so promote the helper once the ramp has run its course.
-    if (g_cf.manual.load())
-    {
-        const double elapsed = std::chrono::duration<double>(
-                                   std::chrono::steady_clock::now() - g_cf.start)
-                                   .count();
-        switch (crossfade::plan_manual(g_cf.manual, g_cf.pending, g_cf.active, elapsed,
-                                       g_cf.seconds))
-        {
-        case crossfade::ManualAction::Cancel:
-            g_cf.manual = false;
-            break;
-        case crossfade::ManualAction::Finish:
-            finish_manual_crossfade();
-            return;
-        case crossfade::ManualAction::StartFailed:
-        {
-            // The cached file never started (vanished, decoder error): fall
-            // back to the normal switch instead of leaving silence.
-            Track target = g_cf.track;
-            const int target_index = g_cf.index;
-            g_cf.track = Track{};
-            g_cf.index = -1;
-            stop_fade();
-            if (!target.id.empty())
-                begin_play_track(target, target_index);
-            return;
-        }
-        case crossfade::ManualAction::None:
-            break;
-        }
-    }
-
-    // Drive the fade: perceptually even, constant-power ramp on the two
-    // players, and mirror the app's play/pause intent onto the helper.
-    // The ramp runs at ~20 Hz -- plenty for a smooth loudness glide; writing
-    // mpv properties on every 16 ms frame only burns wakeups.
-    if ((g_cf.pending || g_cf.active) && g_fade_player)
-    {
-        static std::chrono::steady_clock::time_point s_last_ramp;
-        const auto ramp_now = std::chrono::steady_clock::now();
-        if (ramp_now - s_last_ramp < std::chrono::milliseconds(50))
-            return;
-        s_last_ramp = ramp_now;
-        const double cf = std::max(g_cf.seconds, 0.1);
-        const double elapsed = std::chrono::duration<double>(
-                                   std::chrono::steady_clock::now() - g_cf.start)
-                                   .count();
-        const double t = std::min(elapsed / cf, 1.0);
-        const crossfade::Gains g = crossfade::gains(t);
-        g_fade_player->set_volume(g.incoming * g_cf.user_volume);
-        g_player->set_volume(g.outgoing * g_cf.user_volume);
-        g_fade_player->set_paused(!g_state.playing.load());
-    }
-
-    if (g_state.settings.crossfade_duration <= 0.0f)
-        return;
-    if (g_cf.pending || g_cf.active)
-        return;
-    if (!g_state.playing.load() || g_state.loading)
-        return;
-    if (g_state.settings.repeat_mode == 2)
-        return; // repeat-one replays via replay_current_track()
-
-    const double dur = g_player->cached_duration();
-    if (dur <= 0.0)
-        return;
-    // Never spend more than half the track on the fade: a 20 s setting on a
-    // 15 s interlude would otherwise start the next track straight away.
-    const double cf = std::min((double)g_state.settings.crossfade_duration, dur * 0.5);
-    if (cf <= 0.0)
-        return;
-    const double pos = g_player->cached_time_pos();
-    if (pos <= 0.0 || dur - pos > cf)
-        return;
-
-    NextPick pick;
-    if (!select_next_track(false, false, pick))
-        return;
-    // Crossfade only plays the next track from the local cache (the
-    // predownload worker usually has it ready): playing a resolved remote
-    // URL here would bypass the stream-recording machinery and risk the
-    // 403s of stale googlevideo links. When it isn't cached yet, the
-    // normal advance at end-of-file handles it without a fade.
-    std::string src = find_cached_audio_path(pick.track.id);
-    crossfade::NaturalInputs fade_inputs;
-    fade_inputs.crossfade_duration = g_state.settings.crossfade_duration;
-    fade_inputs.track_duration = dur;
-    fade_inputs.position = pos;
-    fade_inputs.playing = g_state.playing;
-    fade_inputs.loading = g_state.loading;
-    fade_inputs.already_fading = g_cf.pending || g_cf.active;
-    fade_inputs.repeat_one = g_state.settings.repeat_mode == 2;
-    fade_inputs.target_cached = !src.empty();
-    if (!crossfade::should_start_natural(fade_inputs))
-        return;
-
-    // Consume exactly the peeked pick.
-    if (g_state.play_queue.empty() ||
-        g_state.play_queue.front().id != pick.track.id)
-        return; // queue changed underneath us
-    g_state.play_queue.erase(g_state.play_queue.begin());
-    g_state.queue_dirty = true;
-    const Track &consumed = pick.track;
-    const int consumed_index = -1;
-
-    g_cf.track = consumed;
-    g_cf.index = consumed_index;
-
-    adopt_fade_track(consumed, consumed_index);
-
-    // Start the next track silently on the helper player; the per-frame
-    // volume ramp below fades the two into each other.
-    g_cf.user_volume = (float)g_player->get_property_double("volume");
-    if (g_cf.user_volume <= 0.0f)
-        g_cf.user_volume = 100.0f;
-    g_fade_player->set_stream_record("");
-    g_fade_player->set_volume(0);
-    g_cf.seconds = cf;
-    g_cf.manual = false; // natural end-of-track fade
-    g_cf.pending = true;
-    g_cf.start = std::chrono::steady_clock::now();
-    g_fade_player->play(src);
-
-    prefetch_next_track();
-    predownload_next_track();
-    maybe_start_endless_refill();
-}
-
 // Advance playback: pop the head of the single global queue. Manual skips and
 // natural end-of-track use exactly the same order, so guest requests can no
 // longer be stranded by pressing Next.
-static bool advance_playback(bool manual)
-{
-    NextPick pick;
-    if (select_next_track(true, true, pick))
-    {
-        if (manual && try_start_manual_crossfade(pick.track, -1))
-            return true;
-        begin_play_track(pick.track, -1);
-        return true;
-    }
-    return false;
-}
-
 // ----------------------------------------------------------------------
 // Main
 // ----------------------------------------------------------------------
@@ -2239,309 +678,8 @@ int app_run(int argc, char **argv)
 #endif
 
     // ---- Event callback ----
-    g_main_event_cb = [&](const std::string &event)
-    {
-        if (event == "start") {
-            static bool logged_first_audio = false;
-            if (!logged_first_audio)
-            {
-                DLOG("boot: first audio at %lld", DNOW());
-                logged_first_audio = true;
-            }
-            g_state.loading = false;
-            g_state.status_text = "Playing";
-            g_state.repaint_requested = true;
-
-            bool was_manual = g_state.pending_manual_play.exchange(false);
-            if (was_manual) {
-                // UI already updated for the track we asked for.
-            } else {
-                // Unexpected auto-start: the metadata set by begin_play_track()
-                // is the closest guess and must be kept — do NOT advance the
-                // index here. A stale (superseded) resolve playing after a
-                // newer one already started used to land in this branch and
-                // overwrite the indicator with the *next* list entry while a
-                // different song was audible.
-                g_state.playing = true;
-            }
-
-            // Start timing this listen. The play count / stats entry is
-            // only committed once 10s of actual playback have elapsed (see
-            // the main loop), so skipped tracks don't count.
-            g_state.listen_track_id = g_state.current_track_id;
-            g_state.listen_seconds = 0.0;
-            g_state.listen_counted = false;
-
-            // The track now under recording reports its duration from here
-            // on; finalize_recording() validates the finished file against
-            // it (may still be 0 until the header is parsed -> polled in the
-            // main loop until it shows up).
-            if (!g_recording_path.empty())
-            {
-                g_recording_started = true;
-                const double d = g_player->get_property_double("duration");
-                if (d > 0.0)
-                    g_recording_duration = d;
-            }
-
-            if (g_state.session_restore_pending) {
-                g_state.session_restore_pending = false;
-                const double restore_pos = g_state.session_restore.position;
-                if (restore_pos > 0)
-                {
-                    // The stream just started, so the cache almost certainly
-                    // doesn't cover the saved position yet; seeking there
-                    // now would skip data and break this track's recording.
-                    // Wait (bounded) until the target is inside the cached
-                    // region, then jump without hurting the recording.
-                    if (g_recording_path.empty() || g_player->is_position_cached(restore_pos))
-                        g_player->seek(restore_pos);
-                    else
-                    {
-                        g_pending_restore_seek = restore_pos;
-                        g_pending_restore_seek_id = g_state.current_track_id;
-                        g_pending_restore_seek_gen = g_player->seek_generation();
-                        g_pending_restore_seek_deadline =
-                            std::chrono::steady_clock::now() + std::chrono::seconds(15);
-                    }
-                }
-                int vol = g_state.session_restore.volume;
-                if (vol >= 0 && vol <= 100)
-                    g_player->set_volume(vol);
-            }
-            // Make mpv match the app's play/pause intent. The saved state
-            // was folded into g_state.playing when the track was queued, and
-            // any play/pause the user pressed while it was still resolving
-            // is honored here, so a single click always sticks.
-            g_player->set_paused(!g_state.playing.load());
-            if (!g_state.playing)
-                g_state.status_text = "Paused";
-
-            Track current_track;
-            current_track.id = g_state.current_track_id;
-            current_track.title = g_state.current_title;
-            current_track.artist = g_state.current_artist;
-            current_track.thumbnail_url = g_state.current_thumbnail_url;
-            current_track.url = g_state.current_track_url;
-            double duration = g_player->get_property_double("duration");
-            mpris->update_metadata(current_track, duration);
-            mpris->update_playback_status(g_state.playing);
-            update_discord_presence();
-            double position = g_player->get_property_double("time-pos");
-            mpris->update_position(position);
-            double vol = g_player->get_property_double("volume");
-            mpris->update_volume(vol / 100.0);
-
-            std::string title = g_state.current_title;
-            std::string artist = g_state.current_artist;
-            if (title.empty()) title = "Unknown Track";
-            if (artist.empty()) artist = "Unknown Artist";
-            std::string thumb_path = thumbnail_is_cached(g_state.current_thumbnail_url)
-                                         ? get_cached_thumbnail_path(g_state.current_thumbnail_url)
-                                         : "";
-            if (thumb_path.empty()) thumb_path = "audio-x-generic";
-            show_notification(title, "by " + artist, thumb_path);
-
-            // ---- Record playback history ----
-            g_history_dirty = true;
-            {
-                Track history_entry;
-                history_entry.id = g_state.current_track_id;
-                history_entry.title = g_state.current_title;
-                history_entry.artist = g_state.current_artist;
-                history_entry.thumbnail_url = g_state.current_thumbnail_url;
-                history_entry.url = g_state.current_track_url;
-                history_entry.duration_sec = (int)duration;
-                // Insert at front (most-recent-first). Drop an earlier
-                // entry for the same track first: history keeps one row per
-                // track, so repeats don't stack duplicates.
-                for (auto it = g_state.playback_history.begin();
-                     it != g_state.playback_history.end(); ++it)
-                {
-                    if (it->id == history_entry.id)
-                    {
-                        g_state.playback_history.erase(it);
-                        break;
-                    }
-                }
-                g_state.playback_history.insert(g_state.playback_history.begin(), history_entry);
-                // Cap at 200 entries
-                if (g_state.playback_history.size() > 200)
-                    g_state.playback_history.resize(200);
-            }
-
-            prefetch_next_track();
-            predownload_next_track();
-
-            // Mark the track for a lyrics lookup. The actual fetch happens
-            // in the main loop and only while the lyrics panel is open, so
-            // playing with the panel closed costs nothing.
-            g_state.lyrics_requested_id = g_state.current_track_id;
-            g_state.lyrics_dirty = true;
-
-            maybe_start_endless_refill();
-
-        } else if (event == "end") {
-            DLOG("EVENT end");
-            if (g_cf.active.exchange(false)) {
-                // The helper player already faded the next track in; this
-                // EOF is just the outgoing file reaching its end. Finalize
-                // its recording, then promote the helper to be the main
-                // player (roles swap, so the next crossfade reuses the
-                // freshly retired instance).
-                finalize_recording();
-                g_cf.manual = false;
-                g_player.swap(g_fade_player);
-                g_player_raw = g_player.get();
-                // The callbacks live on the MpvPlayer objects, not the
-                // roles: move them with the swap or the new main player
-                // would keep swallowing its own end-of-file events.
-                g_player->set_event_callback(g_main_event_cb);
-                g_fade_player->set_event_callback(g_fade_event_cb);
-                g_player->set_volume(g_cf.user_volume);
-                g_fade_player->set_volume(0);
-                g_cf.track = Track{};
-                g_cf.index = -1;
-                if (!g_state.current_track_id.empty() &&
-                    g_state.lyrics_requested_id != g_state.current_track_id)
-                {
-                    g_state.lyrics_requested_id = g_state.current_track_id;
-                    g_state.lyrics_dirty = true;
-                }
-                g_state.repaint_requested = true;
-                if (g_state.sleep_at_end_of_track)
-                {
-                    // "Stop after this track": the next track already faded
-                    // in, so pause it immediately.
-                    g_state.sleep_at_end_of_track = false;
-                    g_player->set_paused(true);
-                    g_state.playing = false;
-                    mpris->update_playback_status(false);
-                    update_discord_presence();
-                    ui_notify(UiNotifyType::Info, "Sleep timer",
-                              "Paused at end of track.");
-                }
-                return;
-            }
-            // Fade was issued but the helper never started (e.g. its file
-            // vanished): cancel it so the normal advance doesn't overlap.
-            if (g_cf.pending.exchange(false))
-            {
-                const bool manual = g_cf.manual.exchange(false);
-                Track target = g_cf.track;
-                const int target_index = g_cf.index;
-                g_fade_player->set_stream_record("");
-                g_fade_player->stop();
-                if (manual)
-                {
-                    // The outgoing file ended before the helper started:
-                    // finalize it and start the target through the normal
-                    // path so the transition isn't lost.
-                    g_cf.track = Track{};
-                    g_cf.index = -1;
-                    finalize_recording();
-                    if (!target.id.empty())
-                        begin_play_track(target, target_index);
-                    return;
-                }
-            }
-            // A manual selection is already pending (its resolve is still
-            // running): let it take over instead of advancing. Advancing
-            // here is what makes a slow non-cached resolve finish after
-            // this EOF and overwrite the track that was actually picked.
-            if (g_state.pending_manual_play.load() || !g_state.pending_play_url.empty())
-            {
-                finalize_recording();
-                return;
-            }
-            g_state.playing = false;
-            g_state.repaint_requested = true;
-            mpris->update_playback_status(false);
-            update_discord_presence();
-            // Track finished on its own: keep the stream recording, then
-            // advance to the next entry explicitly (so the UI metadata
-            // always matches what is actually playing).
-            finalize_recording();
-            if (g_state.sleep_at_end_of_track)
-            {
-                g_state.sleep_at_end_of_track = false;
-                ui_notify(UiNotifyType::Info, "Sleep timer",
-                          "Paused at end of track.");
-            }
-            else if (g_state.settings.repeat_mode == 2)
-            {
-                replay_current_track();
-            }
-            else if (!advance_playback())
-            {
-                if (g_state.settings.endless_radio && g_state.settings.repeat_mode == 0)
-                {
-                    g_endless_waiting = true;
-                    if (maybe_start_endless_refill() || g_state.endless_ready.load())
-                        g_state.status_text = "Loading endless radio...";
-                    else
-                    {
-                        g_endless_waiting = false;
-                        g_state.status_text = "Ready.";
-                    }
-                }
-                else
-                {
-                    g_state.status_text = "Ready.";
-                }
-            }
-        } else if (event == "stop" || event.rfind("error", 0) == 0) {
-            DLOG("EVENT %s", event.c_str());
-            stop_fade();
-            const bool started_playing = (g_state.listen_track_id == g_state.current_track_id &&
-                                          g_state.listen_seconds >= 2.0);
-            const bool load_failed = event.rfind("error", 0) == 0 &&
-                                     !g_state.current_track_id.empty() &&
-                                     find_cached_audio_path(g_state.current_track_id).empty() &&
-                                     !started_playing;
-            if (load_failed && g_play_retry_count < 2)
-            {
-                ++g_play_retry_count;
-                g_force_fresh_resolve = true;
-                g_state.status_text = "Retrying stream...";
-                g_state.repaint_requested = true;
-                replay_current_track();
-            }
-            else
-            {
-                if (event.rfind("error", 0) == 0)
-                {
-                    // Prefer the classified reason from the failed resolve
-                    // (auth / network / backend) over a generic message.
-                    std::string hint;
-                    {
-                        std::lock_guard<std::mutex> lock(g_play_fail_mutex);
-                        hint = std::move(g_play_fail_hint);
-                        g_play_fail_hint.clear();
-                    }
-                    ui_notify(UiNotifyType::Warning, "Playback failed",
-                              hint.empty()
-                                  ? (g_state.current_title.empty()
-                                         ? "The stream could not be loaded. Try again in a moment."
-                                         : "Couldn't play \"" + g_state.current_title +
-                                               "\". Check your connection or try again.")
-                                  : hint,
-                              8.0f);
-                }
-                g_state.loading = false;
-                g_state.playing = false;
-                g_state.pending_manual_play = false;
-                g_state.status_text = "Ready.";
-                g_state.repaint_requested = true;
-                g_state.listen_track_id.clear();
-                // NB: don't discard the recording here. A manual skip fires
-                // this *after* the next track has already begun recording, so
-                // the consume path / shutdown are responsible for cleanup.
-                mpris->update_playback_status(false);
-                update_discord_presence();
-            }
-    }
-    };
+    g_main_event_cb = [&mpris](const std::string &event)
+    { handle_player_event(event, mpris.get()); };
     g_player->set_event_callback(g_main_event_cb);
 
     // ---- Ultra‑low‑power main loop ----
@@ -2684,105 +822,13 @@ int app_run(int argc, char **argv)
                 // io.MouseWheel during NewFrame() from an internal event queue,
                 // which is too late for smooth_scroll_begin_frame().
                 if (event.type == SDL_MOUSEWHEEL)
-                {
-#if SDL_VERSION_ATLEAST(2, 0, 18)
-                    const float delta = event.wheel.preciseY;
-#else
-                    const float delta = (float)event.wheel.y;
-#endif
-                    if (delta != 0.0f)
-                    {
-                        // Wheel-up is negative scroll. Deltas integrate into
-                        // the virtual target 1:1; the chase filter in
-                        // update_wheel_inertia() renders them continuously.
-                        g_touch_fling_active = false;
-                        g_touch_fling_velocity = 0.0f;
+                    handle_wheel_event(event);
 
-                        const Uint32 now_ms = SDL_GetTicks();
-                        const Uint32 gap_ms = now_ms - g_wheel_last_event_ms;
-                        const float pixels = -delta * kWheelPixelsPerDelta;
-
-                        if (gap_ms <= kWheelGestureGapMs)
-                        {
-                            if (gap_ms > 0)
-                            {
-                                const float instant =
-                                    pixels / std::max(gap_ms / 1000.0f, 0.001f);
-                                g_wheel_input_velocity =
-                                    g_wheel_input_velocity * 0.65f + instant * 0.35f;
-                            }
-                            ++g_wheel_event_count;
-                        }
-                        else
-                        {
-                            g_wheel_input_velocity = 0.0f;
-                            g_wheel_last_frame_ms = now_ms;
-                            g_wheel_event_count = 1;
-                        }
-
-                        g_scroll_target += pixels;
-                        g_wheel_last_event_ms = now_ms;
-                        g_wheel_inertia_active = false;
-                        g_wheel_velocity = 0.0f;
-                    }
-
-                    // Horizontal touchpad swipe: two-finger navigation, like
-                    // a browser. Deltas accumulate during one swipe (events
-                    // arriving closer than kHWheelGapMs); crossing the
-                    // threshold fires once and re-arms, so a long swipe can
-                    // navigate several steps. Field-tested: a rightward
-                    // finger swipe sends wheel.x > 0, so that is Forward and
-                    // wheel.x < 0 is Back.
-#if SDL_VERSION_ATLEAST(2, 0, 18)
-                    const float xdelta = event.wheel.preciseX;
-#else
-                    const float xdelta = (float)event.wheel.x;
-#endif
-                    if (xdelta != 0.0f)
-                    {
-                        // A toast under the cursor owns the horizontal
-                        // gesture: it tracks the fingers (swipe-to-dismiss)
-                        // instead of triggering back/forward navigation.
-                        // Same delta direction as nav: positive xdelta is a
-                        // rightward finger swipe, so the toast follows it.
-                        if (ui_notify_swipe_feed(xdelta * kWheelPixelsPerDelta))
-                        {
-                            g_state.repaint_requested = true;
-                        }
-                        else
-                        {
-                        const Uint32 now_ms = SDL_GetTicks();
-                        if (now_ms - g_hwheel_last_ms > kHWheelGapMs ||
-                            (g_hwheel_accum != 0.0f && g_hwheel_accum * xdelta < 0.0f))
-                        {
-                            // New swipe: enough time passed since the last
-                            // event, or the direction flipped.
-                            g_hwheel_accum = 0.0f;
-                        }
-                        g_hwheel_accum += xdelta;
-                        g_hwheel_last_ms = now_ms;
-                        while (std::abs(g_hwheel_accum) >= kHWheelTrigger)
-                        {
-                            const bool back = g_hwheel_accum < 0.0f;
-                            g_hwheel_accum -=
-                                back ? -kHWheelTrigger : kHWheelTrigger;
-                            if (back)
-                                ui_go_back(g_state);
-                            else
-                                ui_go_forward(g_state);
-                            g_state.repaint_requested = true;
-                        }
-                        }
-                    }
-                }
                 if (event.type == SDL_MOUSEBUTTONDOWN)
                 {
                     // A click means the user is taking control; stop any
                     // momentum so the clicked target doesn't drift away.
-                    reset_wheel_scroll();
-                    g_hwheel_accum = 0.0f;
-                    g_touch_fling_active = false;
-                    g_touch_fling_velocity = 0.0f;
+                    reset_pointer_gestures();
                 }
                 if (event.type == SDL_FINGERDOWN ||
                     event.type == SDL_FINGERMOTION ||

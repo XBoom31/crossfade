@@ -54,6 +54,9 @@ target_link_libraries(imgui PUBLIC SDL2::SDL2 OpenGL::GL)
 set(SOURCES
     src/main.cpp
     src/app/app.cpp
+    src/app/app_input.cpp
+    src/app/app_playback.cpp
+    src/app/app_workers.cpp
     src/core/power.cpp
     src/core/tasks.cpp
     src/data/accent.cpp
