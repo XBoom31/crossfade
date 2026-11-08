@@ -862,6 +862,7 @@ int app_run(int argc, char **argv)
     // loop below used wait_ms=1 while playing, i.e. a fresh layout + swap
     // on every wakeup.
     bool running = true;
+    bool first_frame_done = false;
     bool show_demo = false;
     bool backend_boot_reported = false;
     bool defer_play = start_hidden && !autoplay_last;
@@ -886,6 +887,7 @@ int app_run(int argc, char **argv)
         SDL_ShowWindow(window);
         SDL_RestoreWindow(window);
         SDL_RaiseWindow(window);
+        DLOG("warm start: shown at %lld", DNOW());
         g_window_hidden = false;
         defer_play = false;
         if (warm_keep == 2 && backend_boot_state.load(std::memory_order_acquire) == 0)
@@ -1959,6 +1961,12 @@ int app_run(int argc, char **argv)
             ui_backdrop_render_shader();
             ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
             SDL_GL_SwapWindow(window);
+            if (!first_frame_done)
+            {
+                first_frame_done = true;
+                diagnostics::mark("first-frame");
+                DLOG("boot: first frame at %lld", DNOW());
+            }
             last_render_time = std::chrono::steady_clock::now();
             }
 
