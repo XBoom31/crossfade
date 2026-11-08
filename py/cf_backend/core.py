@@ -1571,7 +1571,9 @@ def _in_process_extract(video_id, client_arg, browser):
     if client_arg:
         opts['extractor_args'] = {'youtube': {'player_client': [client_arg]}}
     if browser:
-        opts['cookiesfrombrowser'] = browser
+        # yt-dlp expects (browser, profile, keyring, container); a bare string
+        # is unpacked character-by-character ("firefox" -> 7 args).
+        opts['cookiesfrombrowser'] = (browser,)
     try:
         with _ydl_cls(opts) as ydl:
             info = ydl.extract_info(
