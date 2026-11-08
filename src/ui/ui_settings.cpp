@@ -1885,9 +1885,18 @@ void draw_settings_panel(AppState &state)
         SettingsCard card("Diagnostics", "Local-only troubleshooting.", UiIcon::Stats);
     settings_help("Local-only troubleshooting. Nothing here is uploaded automatically.");
     {
-        const std::string status = library::status_text();
+        // SQLite status runs several COUNT queries; refresh it at most twice
+        // a second instead of once per rendered frame.
+        static std::string s_library_status;
+        static double s_library_status_at = -1.0e9;
+        const double now = ImGui::GetTime();
+        if (now - s_library_status_at > 0.5)
+        {
+            s_library_status = library::status_text();
+            s_library_status_at = now;
+        }
         ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + content_w);
-        ImGui::TextUnformatted(status.c_str());
+        ImGui::TextUnformatted(s_library_status.c_str());
         ImGui::PopTextWrapPos();
         if (!library::backup_dir().empty())
             settings_help(("Legacy JSON backup: " + library::backup_dir()).c_str());
