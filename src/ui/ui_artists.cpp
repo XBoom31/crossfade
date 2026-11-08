@@ -229,7 +229,7 @@ void open_artist_view(AppState &state, const std::string &browse_id,
     state.current_tab = Tab::Artist;
     state.current_playlist_source = PlaylistSource::ARTIST;
 
-    tasks::spawn([&state, browse_id]() {
+    tasks::spawn("artist-fetch", [&state, browse_id]() {
         fetch_artist_into(state, browse_id);
     });
 }
@@ -271,7 +271,7 @@ void open_artist_from_track(AppState &state, const Track &track)
     state.current_tab = Tab::Artist;
     state.current_playlist_source = PlaylistSource::ARTIST;
 
-    tasks::spawn([&state, track]() {
+    tasks::spawn("artist-open", [&state, track]() {
         std::string artist_id, artist_name;
         if (fetch_artist_for_track(track.id, artist_id, artist_name))
         {

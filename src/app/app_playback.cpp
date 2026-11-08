@@ -194,7 +194,7 @@ void prefetch_urls_for(const std::vector<Track> &tracks, size_t count,
     if (ids.empty())
         return;
 
-    tasks::spawn([ids = std::move(ids), cancel_search_id]()
+    tasks::spawn("prefetch", [ids = std::move(ids), cancel_search_id]()
     {
         for (size_t i = 0; i < ids.size(); ++i)
         {
@@ -237,7 +237,7 @@ void prefetch_urls_for_serial(const std::vector<Track> &tracks, size_t count,
     if (ids.empty())
         return;
 
-    tasks::spawn([ids = std::move(ids), cancel_token, token]() {
+    tasks::spawn("prefetch-serial", [ids = std::move(ids), cancel_token, token]() {
         for (const std::string &id : ids)
         {
             if (cancel_token && cancel_token->load() != token)
@@ -359,7 +359,7 @@ void finalize_recording()
     // Validate off-thread: mpv documents that seeks/stream switches can stop
     // the recorder outright, and a truncated or empty file must never reach
     // the cache as a "downloaded" song.
-    tasks::spawn([temp, path, id, expected_duration]() mutable
+    tasks::spawn("finalize-recording", [temp, path, id, expected_duration]() mutable
                 {
         const double got = probe_audio_file_duration(temp);
         if (got <= 0.0 || (expected_duration > 0.0 && got < expected_duration - 5.0))
@@ -521,7 +521,7 @@ bool maybe_start_endless_refill()
     g_endless_attempted = true;
     g_state.endless_loading = true;
     const std::string seed = g_state.current_track_id;
-    tasks::spawn([seed]()
+    tasks::spawn("endless-radio", [seed]()
                 {
         std::vector<Track> results;
         try {

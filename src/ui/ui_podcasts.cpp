@@ -153,7 +153,7 @@ void download_episode_async(const std::string &id)
 {
     if (id.empty() || !find_cached_audio_path(id).empty())
         return;
-    tasks::spawn([id]() {
+    tasks::spawn("podcast-fetch", [id]() {
         const std::string path = get_cached_audio_path(id);
         g_downloads_dirty = true;
         if (path.empty())
@@ -178,7 +178,7 @@ void download_all_episodes(AppState &state)
     g_podcast_download_done = 0;
     g_podcast_download_total = (int)ids.size();
     AppState *sp = &state;
-    tasks::spawn([sp, ids]() {
+    tasks::spawn("podcast-download", [sp, ids]() {
         int done = 0;
         for (const auto &id : ids)
         {
@@ -233,7 +233,7 @@ void load_show(AppState &state, const PodcastShow &show)
 
     AppState *sp = &state;
     const std::string id = show.browse_id;
-    tasks::spawn([sp, id]() {
+    tasks::spawn("podcast-open", [sp, id]() {
         PodcastDetails details = fetch_podcast_details(id);
         if (sp->podcast_selected.browse_id != id)
             return;
@@ -339,7 +339,7 @@ void load_podcast_library(AppState &state)
         return;
     state.podcast_library_loading = true;
     AppState *sp = &state;
-    tasks::spawn([sp]() {
+    tasks::spawn("podcast", [sp]() {
         auto shows = fetch_podcast_library();
         auto later = fetch_episodes_later();
         std::atomic_store(&sp->podcast_shows,

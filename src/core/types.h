@@ -149,6 +149,18 @@ struct StatsSnapshot
 
 // ----------------------------------------------------------------------
 // Settings structure
+struct EqBand
+{
+    float freq = 0.0f; // centre frequency, Hz
+    float gain = 0.0f; // dB
+    float q = 1.0f;    // filter Q
+};
+
+inline bool operator==(const EqBand &a, const EqBand &b)
+{
+    return a.freq == b.freq && a.gain == b.gain && a.q == b.q;
+}
+
 struct Settings
 {
     float crossfade_duration = 5.0f;
@@ -263,11 +275,21 @@ struct Settings
     // instances so it survives the crossfade role swap.
     float playback_speed = 1.0f;
 
-    // 5-band equalizer (mpv lavfi `equalizer` chain) + volume normalization.
-    // Band centres: 60 / 230 / 910 / 3600 / 14000 Hz; gains in dB (-12..+12).
-    // Both compose the single `af` string pushed to mpv.
+    // Equalizer (mpv lavfi `equalizer` chain) + volume normalization. Bands
+    // are user-editable (frequency, gain, Q); the default is the historical
+    // five-band layout. Both compose the single `af` string pushed to mpv.
     bool eq_enabled = false;
-    float eq_gains[5] = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
+    // UI state for the equalizer editor: 0=5, 1=10, 2=15, 3=31, 4=custom;
+    // preset: 0=Flat, 1=Bass, 2=Vocal, 3=Rock, 4=Electronic, 5=Custom.
+    int eq_layout = 0;
+    int eq_preset = 0;
+    std::vector<EqBand> eq_bands = {
+        {60.0f, 0.0f, 1.0f},
+        {230.0f, 0.0f, 1.0f},
+        {910.0f, 0.0f, 1.0f},
+        {3600.0f, 0.0f, 1.0f},
+        {14000.0f, 0.0f, 1.0f},
+    };
 
     // Discord Rich Presence: application client id (empty = off). Also
     // overridable via P100_DISCORD_CLIENT_ID.
@@ -280,9 +302,6 @@ struct Settings
     // Used by the periodic-save dirty check in the main loop.
     bool operator==(const Settings &o) const
     {
-        bool eq_same = true;
-        for (int i = 0; i < 5; ++i)
-            eq_same = eq_same && eq_gains[i] == o.eq_gains[i];
         return crossfade_duration == o.crossfade_duration &&
                skip_crossfade_enabled == o.skip_crossfade_enabled &&
                skip_crossfade_duration == o.skip_crossfade_duration &&
@@ -317,7 +336,9 @@ struct Settings
                notes == o.notes && download_cap_gb == o.download_cap_gb &&
                warm_stream_resolver == o.warm_stream_resolver &&
                playback_speed == o.playback_speed && eq_enabled == o.eq_enabled &&
-               eq_same && discord_client_id == o.discord_client_id &&
+               eq_bands == o.eq_bands && eq_layout == o.eq_layout &&
+               eq_preset == o.eq_preset &&
+               discord_client_id == o.discord_client_id &&
                server_sync == o.server_sync && party == o.party;
     }
 };

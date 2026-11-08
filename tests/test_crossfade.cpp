@@ -98,14 +98,34 @@ int main()
     check(crossfade::audio_filter(s) == "loudnorm=I=-16:TP=-1.5:LRA=11",
           "filter loudnorm");
     s.volume_normalization = false;
+
+    // Flat bands are skipped entirely: an enabled-but-flat EQ costs nothing.
     s.eq_enabled = true;
+    check(crossfade::audio_filter(s).empty(), "flat eq skipped");
+    s.eq_bands[0].gain = 3.0f;
+    s.eq_bands[4].gain = -2.0f;
     const std::string eq = crossfade::audio_filter(s);
-    check(eq.find("equalizer=f=60") != std::string::npos, "filter eq low");
-    check(eq.find("equalizer=f=14000") != std::string::npos, "filter eq high");
+    check(eq.find("equalizer=f=60.0") != std::string::npos, "filter eq low");
+    check(eq.find("equalizer=f=14000.0") != std::string::npos, "filter eq high");
+    check(eq.find("g=3.00") != std::string::npos, "filter eq gain");
+    check(eq.find("equalizer=") != std::string::npos, "filter eq present");
+
+    s.eq_bands.clear();
+    for (int i = 0; i < 31; ++i)
+        s.eq_bands.push_back({20.0f * std::pow(10.0f, i / 10.0f), 3.0f, 4.318f});
+    const std::string eq31 = crossfade::audio_filter(s);
+    size_t count = 0, at = 0;
+    while ((at = eq31.find("equalizer=", at)) != std::string::npos)
+    {
+        ++count;
+        at += 10;
+    }
+    check(count == 31, "filter eq 31 bands");
+
     s.volume_normalization = true;
     const std::string both = crossfade::audio_filter(s);
     check(both.find("loudnorm") == 0, "filter normalization first");
-    check(both.find(",equalizer=f=60") != std::string::npos, "filter eq after comma");
+    check(both.find(",equalizer=f=20.0") != std::string::npos, "filter eq after comma");
 
     if (testutil::failures == 0)
         std::printf("crossfade: all checks passed\n");

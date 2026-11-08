@@ -49,7 +49,7 @@ void maybe_sweep_missing_covers()
         return;
     if (g_cover_sweep_running.exchange(true))
         return;
-    tasks::spawn([tracks = g_state.downloaded_tracks]() { cover_sweep_worker(tracks); });
+    tasks::spawn("cover-sweep", [tracks = g_state.downloaded_tracks]() { cover_sweep_worker(tracks); });
 }
 
 
@@ -72,7 +72,7 @@ void background_download(const std::string &video_id)
         }
     }
     g_bg_download_count.fetch_add(1);
-    tasks::spawn([video_id]()
+    tasks::spawn("download", [video_id]()
                 {
         std::string path = get_cached_audio_path(video_id);
         g_bg_download_count.fetch_sub(1);

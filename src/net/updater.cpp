@@ -143,7 +143,7 @@ void check_async()
         g_status.message.clear();
     }
 
-    tasks::spawn([]()
+    tasks::spawn("update-check", []()
                 {
         std::string out;
         const std::string cmd =

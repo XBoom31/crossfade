@@ -74,7 +74,7 @@ static void start_album_download(AppState &state, const std::string &browse_id)
     state.album_download_done = 0;
     state.album_download_total = (int)ids.size();
 
-    tasks::spawn([&state, ids]() {
+    tasks::spawn("album-download", [&state, ids]() {
         int done = 0;
         for (const auto &id : ids)
         {
@@ -178,7 +178,7 @@ void open_album_view(AppState &state, const std::string &browse_id)
     state.current_tab = Tab::Album;
     state.current_playlist_source = PlaylistSource::ALBUM;
 
-    tasks::spawn([&state, browse_id]() {
+    tasks::spawn("album-fetch", [&state, browse_id]() {
         fetch_album_into(state, browse_id);
     });
 }
@@ -216,7 +216,7 @@ void open_album_from_track(AppState &state, const Track &track)
     state.current_tab = Tab::Album;
     state.current_playlist_source = PlaylistSource::ALBUM;
 
-    tasks::spawn([&state, track]() {
+    tasks::spawn("album-open", [&state, track]() {
         std::string bid, bname;
         if (fetch_album_for_track(track.id, bid, bname))
         {

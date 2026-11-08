@@ -385,7 +385,7 @@ static void begin_station(AppState &state, const Track &seed, int plays, bool sw
         state.current_tab = Tab::Radio;
     }
 
-    tasks::spawn([&state, seed_copy, plays, token]() {
+    tasks::spawn("radio-build", [&state, seed_copy, plays, token]() {
         std::vector<Track> results;
         bool ok = false;
         try

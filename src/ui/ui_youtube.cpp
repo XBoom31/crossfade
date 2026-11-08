@@ -33,7 +33,7 @@ void draw_youtube_panel(AppState &state)
     if (!state.youtube_playlists_loaded && !state.youtube_playlists_loading.load())
     {
         state.youtube_playlists_loading = true;
-        tasks::spawn([&state]() {
+        tasks::spawn("youtube", [&state]() {
             auto pls = fetch_youtube_playlists();
             BackendError err = take_backend_error();
             if (!pls.empty())
@@ -55,7 +55,7 @@ void draw_youtube_panel(AppState &state)
     {
         state.youtube_playlists_refreshed = true;
         state.youtube_playlists_loading = true;
-        tasks::spawn([&state]() {
+        tasks::spawn("youtube", [&state]() {
             auto pls = fetch_youtube_playlists();
             BackendError err = take_backend_error();
             if (!pls.empty())
@@ -85,7 +85,7 @@ void draw_youtube_panel(AppState &state)
         for (const auto &pl : state.youtube_playlists)
             if (!pl.id.empty())
                 ids.push_back(pl.id);
-        tasks::spawn([&state, ids]() {
+        tasks::spawn("youtube-playlist", [&state, ids]() {
             for (const auto &pid : ids)
             {
                 // Skip if already cached.
@@ -229,7 +229,7 @@ void draw_youtube_panel(AppState &state)
         {
             state.youtube_playlist_loading = true;
             std::string pid = pl.id;
-            tasks::spawn([&state, pid]() {
+            tasks::spawn("youtube-playlist", [&state, pid]() {
                 auto tracks = fetch_youtube_playlist(pid);
                 BackendError err = take_backend_error();
                 if (!tracks.empty() || !err)
@@ -262,7 +262,7 @@ void draw_youtube_panel(AppState &state)
             state.youtube_playlist_refreshed_id = pl.id;
             state.youtube_playlist_loading = true;
             std::string pid = pl.id;
-            tasks::spawn([&state, pid]() {
+            tasks::spawn("youtube-playlist", [&state, pid]() {
                 auto tracks = fetch_youtube_playlist(pid);
                 BackendError err = take_backend_error();
                 if (!tracks.empty())

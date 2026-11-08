@@ -254,7 +254,7 @@ void cache_art_async(const std::string &id, const std::string &url)
 {
     if (id.empty() || url.empty())
         return;
-    tasks::spawn([id, url]() {
+    tasks::spawn("party-art", [id, url]() {
         std::string path = get_cached_thumbnail_path(url);
         if (path.empty())
             return;
@@ -584,7 +584,7 @@ void meta_cache_put(const Track &t)
 bool fetch_meta_bounded(const std::string &id, Track &out, std::string &error)
 {
     auto w = std::make_shared<MetaWait>();
-    tasks::spawn([w, id]() {
+    tasks::spawn("party-meta", [w, id]() {
         Track t;
         std::string err;
         bool ok = fetch_track_meta(id, t, err);

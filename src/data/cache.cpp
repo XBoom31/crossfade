@@ -203,7 +203,7 @@ void prefetch_album_cache(const std::string &browse_id)
     if (browse_id.empty())
         return;
     std::string path = album_cache_path(browse_id);
-    tasks::spawn([browse_id, path]() {
+    tasks::spawn("album-prefetch", [browse_id, path]() {
         std::error_code ec;
         if (std::filesystem::exists(path, ec))
             return;
@@ -321,7 +321,7 @@ void prefetch_artist_cache(const std::string &browse_id)
     if (browse_id.empty())
         return;
     std::string path = artist_cache_path(browse_id);
-    tasks::spawn([browse_id, path]() {
+    tasks::spawn("artist-prefetch", [browse_id, path]() {
         std::error_code ec;
         if (std::filesystem::exists(path, ec))
             return;

@@ -63,12 +63,14 @@ std::string audio_filter(const Settings &s)
         af = "loudnorm=I=-16:TP=-1.5:LRA=11";
     if (s.eq_enabled)
     {
-        static const float kBandHz[5] = {60.0f, 230.0f, 910.0f, 3600.0f, 14000.0f};
-        for (int i = 0; i < 5; ++i)
+        for (const EqBand &b : s.eq_bands)
         {
-            char band[64];
-            std::snprintf(band, sizeof(band), "%sequalizer=f=%.0f:t=q:w=1:g=%.1f",
-                          af.empty() ? "" : ",", kBandHz[i], (double)s.eq_gains[i]);
+            if (std::fabs(b.gain) < 0.05f || b.freq < 20.0f || b.freq > 20000.0f)
+                continue; // flat bands cost nothing
+            char band[80];
+            std::snprintf(band, sizeof(band), "%sequalizer=f=%.1f:t=q:w=%.3f:g=%.2f",
+                          af.empty() ? "" : ",", (double)b.freq, (double)b.q,
+                          (double)b.gain);
             af += band;
         }
     }

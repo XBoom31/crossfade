@@ -72,7 +72,7 @@ static void begin_spotify_import(AppState &state)
     std::atomic_store(&state.spotify_import_result,
                       std::shared_ptr<const SpotifyImportResult>());
     AppState *sp = &state;
-    tasks::spawn([sp, link]() {
+    tasks::spawn("spotify-import", [sp, link]() {
         auto result = fetch_spotify_import(link);
         std::atomic_store(&sp->spotify_import_result,
                           std::make_shared<const SpotifyImportResult>(std::move(result)));
@@ -136,7 +136,7 @@ static void refresh_spotify_library(AppState &state)
         return;
     state.spotify_library_loaded = false;
     AppState *sp = &state;
-    tasks::spawn([sp]() {
+    tasks::spawn("spotify", [sp]() {
         std::string error;
         auto list = fetch_spotify_library(error);
         std::atomic_store(&sp->spotify_playlists,
