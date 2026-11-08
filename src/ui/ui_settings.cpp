@@ -32,6 +32,7 @@
 #include <unordered_map>
 #include <functional>
 
+
 // ----------------------------------------------------------------------
 // Undo for the destructive reset buttons
 // ----------------------------------------------------------------------
@@ -1995,7 +1996,13 @@ void draw_settings_panel(AppState &state)
         const std::string script = p100_share_dir() + "/scripts/crossfade-login-helper.py";
         AppState *sp = &state;
         tasks::spawn([sp, script]() {
+#ifdef P100_WINDOWS
+            // The vendored venv has ytmusicapi/yt-dlp and the Windows helper
+            // opens a Tkinter sign-in window (no WebKitGTK/gi dependency).
+            const std::string cmd = "\"" + backend_pythonw_path() + "\" \"" + script + "\" --google";
+#else
             const std::string cmd = "python3 \"" + script + "\" --google";
+#endif
             const int rc = std::system(cmd.c_str());
             if (rc == 0)
             {
@@ -2017,7 +2024,11 @@ void draw_settings_panel(AppState &state)
         const std::string script = p100_share_dir() + "/scripts/crossfade-login-helper.py";
         AppState *sp = &state;
         tasks::spawn([sp, script]() {
+#ifdef P100_WINDOWS
+            const std::string cmd = "\"" + backend_pythonw_path() + "\" \"" + script + "\" --import-firefox";
+#else
             const std::string cmd = "python3 \"" + script + "\" --import-firefox";
+#endif
             const int rc = std::system(cmd.c_str());
             if (rc == 0)
             {
@@ -2033,7 +2044,11 @@ void draw_settings_panel(AppState &state)
             sp->repaint_requested = true;
         });
     }
+#ifdef P100_WINDOWS
+    settings_help("Opens YouTube Music in your browser, then a small window turns the request headers you copy from DevTools into a saved session. No WebKitGTK or OAuth client keys involved.");
+#else
     settings_help("Sign in without copying request headers. The popup needs WebKitGTK; without it the helper falls back to your Firefox session. No OAuth client keys are involved.");
+#endif
     if (state.settings.auth_mode == "oauth" && !std::filesystem::exists(backend_auth_file_path()))
         ImGui::TextColored(ui_c().accent_text, "No OAuth token yet - use the login command below.");
 

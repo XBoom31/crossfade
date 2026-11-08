@@ -331,6 +331,8 @@ jobs:
             packaging/windows/make_browser_json.py "$root/share/crossfade/"
           New-Item -ItemType Directory -Path "$root/share/crossfade/py" -Force | Out-Null
           Copy-Item py/cf_backend "$root/share/crossfade/py/cf_backend" -Recurse
+          New-Item -ItemType Directory -Path "$root/share/crossfade/scripts" -Force | Out-Null
+          Copy-Item scripts/crossfade-login-helper.py "$root/share/crossfade/scripts/"
           Copy-Item assets/fonts "$root/share/crossfade/assets/fonts" -Recurse
           Copy-Item README.md, LICENSE "$root/"
           # The one-click installer downloads this exact filename from the

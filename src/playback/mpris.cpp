@@ -524,7 +524,7 @@ private:
 // ------------------------------------------------------------
 // Public interface
 // ------------------------------------------------------------
-MprisPlayer::MprisPlayer(AppState &state, MpvPlayer *&player)
+MprisPlayer::MprisPlayer(AppState &state, MpvPlayer *&player, void *)
     : pImpl(std::make_unique<Impl>(state, player)) {}
 
 MprisPlayer::~MprisPlayer() = default;

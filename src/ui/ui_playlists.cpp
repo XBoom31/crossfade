@@ -15,6 +15,10 @@
 #include <filesystem>
 #include <fstream>
 
+#ifdef P100_WINDOWS
+#include "win_process.h"
+#endif
+
 // ---- Playlist export (M3U / XSPF) ----
 struct ExportPopupState
 {
@@ -453,8 +457,13 @@ void draw_playlists_panel(AppState &state)
             state.spotify_login_running = true;
             AppState *sp = &state;
             tasks::spawn([sp, script]() {
+#ifdef P100_WINDOWS
+                const std::string cmd = "\"" + backend_pythonw_path() + "\" \"" + script + "\" --spotify";
+                const int rc = winproc::system_hidden(cmd);
+#else
                 const std::string cmd = "python3 \"" + script + "\" --spotify";
                 const int rc = std::system(cmd.c_str());
+#endif
                 sp->spotify_login_running = false;
                 if (rc == 0)
                 {

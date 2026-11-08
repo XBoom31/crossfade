@@ -19,6 +19,10 @@ from concurrent.futures import ThreadPoolExecutor
 
 YTDLP = os.environ.get('P100_YTDLP') or 'yt-dlp'
 
+# crossfade is a GUI app on Windows: child console processes must not get a
+# console window of their own.
+_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0) if sys.platform == "win32" else 0
+
 # video_id -> (resolved_at, url); avoids re-running yt-dlp for repeat plays.
 _STREAM_TTL = 7200  # googlevideo URLs are valid ~6h; probed before caching
 _stream_cache = {}
@@ -1617,7 +1621,7 @@ def _extract_stream_url(video_id, client_arg, browser):
         attempts.append(cmd[:3] + ["--cookies-from-browser", browser] + cmd[3:])
     for attempt in attempts:
         try:
-            url = subprocess.check_output(attempt, text=True).strip()
+            url = subprocess.check_output(attempt, text=True, creationflags=_NO_WINDOW).strip()
             if url:
                 return url, None
         except Exception as e:

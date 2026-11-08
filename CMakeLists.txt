@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(crossfade VERSION 0.3.0 LANGUAGES C CXX)
+project(crossfade VERSION 0.3.1 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -109,9 +109,15 @@ set(SOURCES
 )
 
 if(P100_WIN)
-    # Linux desktop integration has no Windows counterpart yet; the stubs
-    # keep the same class/function surface so main.cpp compiles untouched.
-    list(APPEND SOURCES win32/mpris_stub.cpp win32/discord_rpc_stub.cpp)
+    # Windows desktop integration: System Media Transport Controls (SMTC) for
+    # the media flyout/media keys and WinRT toasts for track notifications.
+    # win_process.cpp keeps helper processes console-free for the GUI build.
+    list(APPEND SOURCES
+        src/core/win_process.cpp
+        win32/media_session.cpp
+        win32/mpris_windows.cpp
+        win32/notifications.cpp
+        win32/discord_rpc_stub.cpp)
 else()
     list(APPEND SOURCES src/playback/mpris.cpp src/net/discord_rpc.cpp)
 endif()
@@ -151,7 +157,13 @@ target_include_directories(crossfade PRIVATE
 )
 
 if(P100_WIN)
-    target_include_directories(crossfade PRIVATE ${MPV_INCLUDE_DIR} external)
+    # GUI subsystem: no console window when launched from Explorer. stdout/
+    # stderr still work when started from a terminal; child processes are
+    # created with CREATE_NO_WINDOW (see win_process.cpp).
+    set_target_properties(crossfade PROPERTIES WIN32_EXECUTABLE TRUE)
+
+    target_include_directories(crossfade PRIVATE ${MPV_INCLUDE_DIR} external
+        ${CMAKE_CURRENT_SOURCE_DIR}/win32)
     target_link_libraries(crossfade
         imgui
         SDL2::SDL2main
@@ -162,6 +174,8 @@ if(P100_WIN)
         iphlpapi
         bcrypt
         shell32
+        advapi32
+        runtimeobject
         dbghelp
     )
 else()
@@ -302,11 +316,41 @@ if(CROSSFADE_BUILD_TESTS)
         target_link_libraries(party_smoke_server ws2_32 iphlpapi bcrypt)
     endif()
 
+    # Windows desktop-integration smoke test (SMTC + toasts). Standalone: it
+    # links only the win32 modules so failures point at the platform layer.
+    if(WIN32)
+        add_executable(test_win_platform
+            tests/test_win_platform.cpp
+            win32/media_session.cpp
+            win32/notifications.cpp)
+        target_include_directories(test_win_platform PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/win32)
+        target_link_libraries(test_win_platform
+            Threads::Threads
+            runtimeobject
+            user32
+            shell32
+            advapi32)
+        # Not part of ctest: the deep check needs an interactive desktop (the
+        # system media flyout / notification platform). scripts/windows-platform-smoke.ps1
+        # drives this executable end-to-end.
+        if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+            target_compile_options(test_win_platform PRIVATE ${CROSSFADE_WARNINGS})
+        endif()
+    endif()
+
     if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
         foreach(tgt test_party_link test_party_queue test_party_util test_library
                     test_crossfade test_cache test_json test_session test_playlists
                     test_settings)
             target_compile_options(${tgt} PRIVATE ${CROSSFADE_WARNINGS})
+        endforeach()
+    endif()
+
+    # Tests that compile ytdlp.cpp need the Windows hidden-process helpers.
+    if(WIN32)
+        foreach(tgt test_library test_cache test_json test_session test_playlists)
+            target_sources(${tgt} PRIVATE src/core/win_process.cpp)
         endforeach()
     endif()
 endif()

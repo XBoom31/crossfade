@@ -116,10 +116,26 @@ $lnk2.WorkingDirectory = "$Root\bin"
 $lnk2.Description  = "Sign in to YouTube Music for crossfade"
 $lnk2.Save()
 
+# ---- 5. Optional: hidden warm start at sign-in -----------------------------
+if ($Host.Name -eq "ConsoleHost") {
+    $runKey = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"
+    $warmValue = "`"$Root\bin\crossfade.exe`" --warm"
+    $warmAnswer = Read-Host "Start crossfade hidden in the background when you sign in? [Y/n]"
+    if ($warmAnswer -match '^(n|no)$') {
+        Remove-ItemProperty -Path $runKey -Name crossfade -ErrorAction SilentlyContinue
+        Write-Host "  Background start disabled. Launch crossfade from the Start Menu."
+    }
+    else {
+        New-ItemProperty -Path $runKey -Name crossfade -Value $warmValue `
+            -PropertyType String -Force | Out-Null
+        Write-Host "  crossfade will start hidden at sign-in; open it from the Start Menu."
+    }
+}
+
 Write-Host ""
 Write-Host "Installed." -ForegroundColor Green
 Write-Host "  - Start crossfade from the Start Menu."
-Write-Host "  - Sign in: Start Menu -> crossfade-login (one-time)."
+Write-Host "  - Sign in: Start Menu -> crossfade-login, or Settings -> Sign in with browser."
 Write-Host "    (Copy the request headers it asks for; it takes them from the clipboard.)"
 Write-Host ""
 if ($Host.Name -eq "ConsoleHost") {

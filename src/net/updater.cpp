@@ -4,6 +4,7 @@
 
 #ifdef _WIN32
 #include "ui_notify.h"
+#include "win_process.h"
 
 #include <windows.h>
 #include <shellapi.h>
@@ -149,14 +150,14 @@ void check_async()
         const std::string cmd =
             std::string("curl -fsSL --connect-timeout 8 --max-time 20 \"") + kVersionUrl +
             "\" 2>nul";
-        FILE *pipe = _popen(cmd.c_str(), "rb");
+        FILE *pipe = winproc::popen_hidden(cmd, "rb");
         if (pipe)
         {
             char buf[256];
             size_t n = fread(buf, 1, sizeof(buf) - 1, pipe);
             if (n > 0)
                 out.assign(buf, n);
-            _pclose(pipe);
+            winproc::pclose_hidden(pipe);
         }
 
         const std::string latest = trim_version(out);

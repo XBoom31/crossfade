@@ -3,6 +3,8 @@
 
 --google: open a WebKitGTK sign-in window and write browser.json. If WebKitGTK
           is unavailable, fall back to importing cookies from Firefox.
+          On Windows: open YouTube Music in the default browser and a small
+          Tkinter window that turns copied request headers into browser.json.
 --import-firefox: import an existing Firefox YouTube Music session.
 --spotify: open a WebKitGTK Spotify sign-in and save the sp_dc cookie.
 """
@@ -20,9 +22,15 @@ import time
 import urllib.request
 import uuid
 
-CONFIG = os.environ.get("P100_CONFIG_DIR") or os.path.join(
-    os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config"), "crossfade")
-UA = ("Mozilla/5.0 (X11; Linux x86_64; rv:140.0) Gecko/20100101 Firefox/140.0")
+if sys.platform == "win32":
+    _BASE = os.environ.get("APPDATA") or os.path.expanduser("~")
+    CONFIG = os.environ.get("P100_CONFIG_DIR") or os.path.join(_BASE, "crossfade")
+    UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:140.0) "
+          "Gecko/20100101 Firefox/140.0")
+else:
+    CONFIG = os.environ.get("P100_CONFIG_DIR") or os.path.join(
+        os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config"), "crossfade")
+    UA = "Mozilla/5.0 (X11; Linux x86_64; rv:140.0) Gecko/20100101 Firefox/140.0"
 
 
 def _write_private(path, text):
@@ -73,7 +81,11 @@ def _write_browser_json(cookie_header, cookies):
 
 def _firefox_cookie_db():
     home = os.path.expanduser("~")
-    ini = os.path.join(home, ".mozilla", "firefox", "profiles.ini")
+    if sys.platform == "win32":
+        root = os.path.join(os.environ.get("APPDATA", home), "Mozilla", "Firefox")
+    else:
+        root = os.path.join(home, ".mozilla", "firefox")
+    ini = os.path.join(root, "profiles.ini")
     candidates = []
     if os.path.exists(ini):
         cp = configparser.ConfigParser()
@@ -85,7 +97,7 @@ def _firefox_cookie_db():
                 path = cp.get(section, "Path", fallback="")
             if os.path.isdir(path):
                 candidates.append(path)
-    candidates += glob.glob(os.path.join(home, ".mozilla", "firefox", "*"))
+    candidates += glob.glob(os.path.join(root, "*"))
     for path in candidates:
         db = os.path.join(path, "cookies.sqlite")
         if os.path.exists(db):
@@ -121,6 +133,169 @@ def import_firefox():
         raise RuntimeError("Firefox has no signed-in YouTube Music session")
     header = "; ".join(f"{k}={v}" for k, v in cookies.items())
     return _write_browser_json(header, cookies)
+
+
+def _find_make_browser_json():
+    here = os.path.dirname(os.path.abspath(__file__))
+    candidates = []
+    share = os.environ.get("P100_SHARE_DIR")
+    if share:
+        candidates.append(os.path.join(share, "make_browser_json.py"))
+    candidates += [
+        os.path.join(here, "..", "make_browser_json.py"),
+        os.path.join(here, "..", "packaging", "windows", "make_browser_json.py"),
+        os.path.join(here, "make_browser_json.py"),
+    ]
+    for path in candidates:
+        path = os.path.abspath(path)
+        if os.path.isfile(path):
+            return path
+    return ""
+
+
+def _clipboard_text():
+    import subprocess
+    try:
+        result = subprocess.run(
+            ["powershell", "-NoProfile", "-Command", "Get-Clipboard"],
+            capture_output=True, timeout=15,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+        return result.stdout.decode("utf-8", errors="replace")
+    except Exception:
+        return ""
+
+
+def _finish_windows_login(text, make_json):
+    """Write browser.json from a copied header block. Returns (ok, output)."""
+    import subprocess
+    tmp = tempfile.NamedTemporaryFile("w", suffix=".txt", delete=False, encoding="utf-8")
+    try:
+        tmp.write(text)
+        tmp.close()
+        result = subprocess.run(
+            [sys.executable, make_json, tmp.name],
+            capture_output=True, text=True, timeout=180,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+        return result.returncode == 0, (result.stdout or "") + (result.stderr or "")
+    except Exception as e:
+        return False, str(e)
+    finally:
+        try:
+            os.unlink(tmp.name)
+        except OSError:
+            pass
+
+
+def _windows_login():
+    """Browser + Tkinter clipboard flow for Windows (no WebKitGTK/gi needed).
+
+    The sign-in itself happens in the user's normal browser, which already has
+    their Google session. DevTools' "Copy request headers" gives us the cookie
+    block; make_browser_json.py turns it into browser.json and verifies it.
+    """
+    import webbrowser
+
+    make_json = _find_make_browser_json()
+    if not make_json:
+        raise RuntimeError("make_browser_json.py was not found; reinstall crossfade")
+
+    site = "https://music.youtube.com/"
+    webbrowser.open(site)
+
+    try:
+        import tkinter as tk
+        from tkinter import messagebox
+    except Exception:
+        # No Tk (rare): wait for the headers on the clipboard in the console.
+        print("Waiting for request headers on the clipboard ...", file=sys.stderr)
+        deadline = time.time() + 600
+        while time.time() < deadline:
+            text = _clipboard_text()
+            if "cookie" in text.lower():
+                ok, output = _finish_windows_login(text, make_json)
+                print(output)
+                if ok:
+                    return True
+                raise RuntimeError(output.strip()[-500:] or "sign-in failed")
+            time.sleep(1)
+        raise RuntimeError("timed out waiting for the clipboard")
+
+    root = tk.Tk()
+    root.title("Sign in to crossfade")
+    root.geometry("600x400")
+    root.minsize(520, 340)
+    root.attributes("-topmost", True)
+    root.after(1000, lambda: root.attributes("-topmost", False))
+    completed = {"ok": False}
+
+    frame = tk.Frame(root, padx=18, pady=16)
+    frame.pack(fill="both", expand=True)
+
+    tk.Label(frame, text="Sign in to YouTube Music", font=("Segoe UI", 14, "bold"),
+             anchor="w").pack(fill="x")
+    instructions = (
+        "1. Your browser opened YouTube Music. Make sure you are signed in\n"
+        "   (your profile picture is visible in the top-right corner).\n\n"
+        "2. Press F12, open the Network tab, and click any POST request to\n"
+        "   music.youtube.com. Right-click it and choose\n"
+        "   Copy -> Copy request headers.\n\n"
+        "3. Come back to this window and click \"I copied the headers\"."
+    )
+    tk.Label(frame, text=instructions, justify="left", anchor="w",
+             font=("Segoe UI", 10), wraplength=545).pack(fill="x", pady=(10, 8))
+
+    status = tk.StringVar(value="")
+    tk.Label(frame, textvariable=status, fg="#555", anchor="w",
+             font=("Segoe UI", 9)).pack(fill="x")
+
+    buttons = tk.Frame(frame)
+    buttons.pack(side="bottom", fill="x", pady=(12, 0))
+
+    def open_browser():
+        webbrowser.open(site)
+
+    def finish():
+        try:
+            text = root.clipboard_get()
+        except tk.TclError:
+            text = ""
+        if "cookie" not in text.lower():
+            messagebox.showwarning(
+                "No request headers",
+                "The clipboard does not contain request headers.\n\n"
+                "In the browser: F12 -> Network -> click a POST request to "
+                "music.youtube.com -> right-click -> Copy -> Copy request headers.",
+                parent=root,
+            )
+            return
+        status.set("Signing in ...")
+        root.update_idletasks()
+        ok, output = _finish_windows_login(text, make_json)
+        if ok:
+            completed["ok"] = True
+            messagebox.showinfo(
+                "Signed in",
+                "crossfade is signed in to YouTube Music.\n\n"
+                "Restart crossfade if it is already running.",
+                parent=root,
+            )
+            root.destroy()
+            return
+        status.set("")
+        tail = "\n".join(output.strip().splitlines()[-14:])
+        messagebox.showerror("Sign-in failed", tail or "Unknown error", parent=root)
+
+    tk.Button(buttons, text="Open YouTube Music again", command=open_browser,
+              width=24).pack(side="left")
+    tk.Button(buttons, text="I copied the headers", command=finish,
+              width=22, default="active").pack(side="right")
+    tk.Button(buttons, text="Cancel", command=root.destroy,
+              width=10).pack(side="right", padx=(0, 8))
+
+    root.mainloop()
+    return completed["ok"]
 
 
 def _webview(site):
@@ -281,6 +456,9 @@ def main():
             import_firefox()
         elif args.spotify:
             _webview("spotify")
+        elif sys.platform == "win32":
+            if not _windows_login():
+                raise RuntimeError("sign-in was cancelled or did not finish")
         else:
             try:
                 _webview("google")

@@ -49,9 +49,12 @@
 #include "data_transfer.h"
 #include "session.h"
 
-// ---- libnotify (Linux desktop notifications; no-op on Windows) ----
+// ---- libnotify (Linux) / toast notifications (Windows) ----
 #ifndef P100_WINDOWS
 #include <libnotify/notify.h>
+#else
+#include "notifications.h"
+#include <SDL_syswm.h>
 #endif
 
 // DLOG / DNOW live in app_internal.h so the split app modules share them.
@@ -245,10 +248,18 @@ std::chrono::steady_clock::time_point g_pending_restore_seek_deadline;
 // ----------------------------------------------------------------------
 void show_notification(const std::string &title, const std::string &body, const std::string &icon_path)
 {
-#ifndef P100_WINDOWS
     if (!notify_init_done || !g_state.settings.show_notifications)
         return;
 
+#ifdef P100_WINDOWS
+    // The Windows implementation runs on its own worker thread; the icon is a
+    // cached cover file or a freedesktop icon name (ignored there).
+    win_notify::Toast toast;
+    toast.title = title;
+    toast.body = body;
+    toast.image = icon_path;
+    win_notify::show(toast);
+#else
     static NotifyNotification *n = nullptr;
     if (!n)
     {
@@ -274,9 +285,6 @@ void show_notification(const std::string &title, const std::string &body, const 
             g_error_free(error);
     }
 #endif
-    (void)title;
-    (void)body;
-    (void)icon_path;
 }
 
 // ----------------------------------------------------------------------
@@ -503,8 +511,7 @@ int app_run(int argc, char **argv)
             if (warm_start::send(warm_start::Command::Toggle))
                 return 0;
         }
-        else if ((warm_flag || g_state.settings.warm_start) &&
-                 warm_start::send(warm_start::Command::Show))
+        else if (warm_start::send(warm_start::Command::Show))
             return 0;
     }
 
@@ -632,8 +639,14 @@ int app_run(int argc, char **argv)
     update_accent(g_state.settings);
     diagnostics::mark("accent");
 
-    // ---- libnotify init ----
-#ifndef P100_WINDOWS
+    // ---- desktop notifications ----
+#ifdef P100_WINDOWS
+    {
+        char exe_path[MAX_PATH] = {};
+        GetModuleFileNameA(nullptr, exe_path, MAX_PATH);
+        notify_init_done = win_notify::init("Crossfade.Music", "Crossfade", exe_path);
+    }
+#else
     notify_init("crossfade");
     notify_init_done = true;
 #endif
@@ -779,8 +792,15 @@ int app_run(int argc, char **argv)
     // user's most-played songs in the background.
     ui_radio_init(g_state);
 
-    // ---- MPRIS ----
-    auto mpris = std::make_unique<MprisPlayer>(g_state, g_player_raw);
+    // ---- MPRIS (Linux) / System Media Transport Controls (Windows) ----
+    void *native_window = nullptr;
+#ifdef P100_WINDOWS
+    SDL_SysWMinfo wm_info;
+    SDL_VERSION(&wm_info.version);
+    if (SDL_GetWindowWMInfo(window, &wm_info))
+        native_window = (void *)wm_info.info.win.window;
+#endif
+    auto mpris = std::make_unique<MprisPlayer>(g_state, g_player_raw, native_window);
     g_mpris = mpris.get();
     diagnostics::mark("mpris");
 
@@ -904,6 +924,17 @@ int app_run(int argc, char **argv)
     auto last_frame_time = last_save_time;
     auto next_frame = last_save_time;
     auto last_activity_time = last_save_time;
+
+    // Baseline for the auth-file watcher: signing in (in-app helper, the
+    // crossfade-login command or another process) replaces browser.json /
+    // browseroauth.json while the app is running.
+    std::filesystem::file_time_type last_auth_mtime{};
+    bool last_auth_mtime_known = false;
+    {
+        std::error_code ec;
+        last_auth_mtime = std::filesystem::last_write_time(backend_auth_file_path(), ec);
+        last_auth_mtime_known = !ec;
+    }
 
     diagnostics::mark("loop");
     diagnostics::start_watchdog();
@@ -1756,6 +1787,24 @@ int app_run(int argc, char **argv)
                 writeback_set_enabled(g_state.settings.server_sync);
                 discord_apply_client_id();
 
+                // Signing in (in-app helper, crossfade-login command or another
+                // process) replaces the auth file while the app is running.
+                // Restart the backend so the new session is used without a
+                // relaunch.
+                {
+                    std::error_code mtime_ec;
+                    const auto mtime =
+                        std::filesystem::last_write_time(backend_auth_file_path(), mtime_ec);
+                    if (!mtime_ec &&
+                        (!last_auth_mtime_known || mtime != last_auth_mtime))
+                    {
+                        DLOG("auth file changed; restarting backend");
+                        g_state.auth_refresh_requested = true;
+                        last_auth_mtime = mtime;
+                        last_auth_mtime_known = true;
+                    }
+                }
+
                 // Periodic cover sweep: heals downloads whose cover fetch
                 // failed transiently at some point (backlogged ones heal on
                 // the first pass; the timer starts already due for that).
@@ -2024,7 +2073,9 @@ int app_run(int argc, char **argv)
     SDL_Quit();
     DLOG("shutdown: notify");
 
-#ifndef P100_WINDOWS
+#ifdef P100_WINDOWS
+    win_notify::shutdown();
+#else
     if (notify_init_done)
         notify_uninit();
 #endif

@@ -1,6 +1,7 @@
 build/
 build-asan/
 build-tsan/
+venv/
 wheels/
 __pycache__/
 *.pyc

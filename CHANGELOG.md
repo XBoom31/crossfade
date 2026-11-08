@@ -2,6 +2,29 @@
 
 All notable changes to crossfade are documented here.
 
+## 0.3.1 - 2026-11-08
+
+### Added
+
+- **Windows desktop integration.** Native System Media Transport Controls
+  (media flyout, hardware media keys, lock screen, album art, timeline seek)
+  and WinRT track notifications with cached cover art. Signing in now uses a
+  Tkinter window plus your default browser instead of requiring WebKitGTK,
+  Firefox cookie import works on Windows, and an already-running app picks up
+  a new session automatically.
+- **Windows warm start.** The single-instance warm start now works on Windows
+  through a per-session named pipe: `--warm`, `--toggle`, `--quit` and
+  `--new-instance` behave like the Linux build. The Windows installer asks
+  whether to start crossfade hidden at sign-in, so reopening it from the Start
+  Menu is instant.
+- **No console window on Windows.** The app links as a GUI application; helper
+  processes (backend, yt-dlp, curl, login) are started without console windows.
+
+### Fixed
+
+- Windows sign-in no longer fails with `No module named 'gi'`, and the backend
+  is found through a dev-tree or installed venv.
+
 ## 0.3.0 - 2026-11-08
 
 ### Added

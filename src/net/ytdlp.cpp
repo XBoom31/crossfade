@@ -23,6 +23,7 @@
 
 #ifdef P100_WINDOWS
 #include <windows.h>
+#include "win_process.h"
 #define popen _popen
 #define pclose _pclose
 #else
@@ -612,7 +613,7 @@ static bool spawn_backend(BackendChannel &ch)
     si.hStdError = err_handle ? err_handle : GetStdHandle(STD_ERROR_HANDLE);
     PROCESS_INFORMATION pi = {};
     BOOL ok = CreateProcessA(nullptr, cmdline.data(), nullptr, nullptr, TRUE,
-                             0, nullptr, nullptr, &si, &pi);
+                             CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi);
     if (in_read)
         CloseHandle(in_read);
     if (out_write)
@@ -1306,7 +1307,12 @@ static Track fetch_track_metadata(const std::string &video_id)
     std::string cmd = shell_quote(ytdlp_bin()) + " -j --skip-download " + cookie_arg() + " " + t.url + kShellErrRedirect;
     std::array<char, 128> buffer;
     std::string result;
+#ifdef P100_WINDOWS
+    std::unique_ptr<FILE, decltype(&winproc::pclose_hidden)> pipe(
+        winproc::popen_hidden(cmd, "r"), winproc::pclose_hidden);
+#else
     std::unique_ptr<FILE, decltype(&pclose)> pipe(popen(cmd.c_str(), "r"), pclose);
+#endif
 
     if (pipe)
     {
@@ -1320,7 +1326,12 @@ static Track fetch_track_metadata(const std::string &video_id)
         // Some tracks are only fetchable without cookie access (public
         // content); don't fail the whole cache write because of that.
         cmd = shell_quote(ytdlp_bin()) + " -j --skip-download " + t.url + kShellErrRedirect;
+#ifdef P100_WINDOWS
+        std::unique_ptr<FILE, decltype(&winproc::pclose_hidden)> p2(
+            winproc::popen_hidden(cmd, "r"), winproc::pclose_hidden);
+#else
         std::unique_ptr<FILE, decltype(&pclose)> p2(popen(cmd.c_str(), "r"), pclose);
+#endif
         if (p2)
         {
             while (fgets(buffer.data(), buffer.size(), p2.get()) != nullptr)
@@ -2230,7 +2241,11 @@ std::string get_cached_audio_path(const std::string &video_id)
     std::string cmd = shell_quote(ytdlp_bin()) + " -f bestaudio" + cookie_arg() + " -o \"" + output_template + "\" "
                                                                         "https://www.youtube.com/watch?v=" +
                       video_id + kShellErrRedirect;
+#ifdef P100_WINDOWS
+    int ret = winproc::system_hidden(cmd);
+#else
     int ret = system(cmd.c_str());
+#endif
     if (ret != 0)
     {
         // Cookie-locked profiles can break the signed download; retry
@@ -2238,7 +2253,11 @@ std::string get_cached_audio_path(const std::string &video_id)
         cmd = shell_quote(ytdlp_bin()) + " -f bestaudio -o \"" + output_template + "\" "
                                                                "https://www.youtube.com/watch?v=" +
               video_id + kShellErrRedirect;
+#ifdef P100_WINDOWS
+        ret = winproc::system_hidden(cmd);
+#else
         ret = system(cmd.c_str());
+#endif
     }
     if (ret != 0)
         return "";
@@ -2622,6 +2641,21 @@ std::string backend_script_path()
 std::string backend_python_path()
 {
     return backend_python();
+}
+
+std::string backend_pythonw_path()
+{
+    const std::string py = backend_python();
+    static const std::string exe = "python.exe";
+    if (py.size() > exe.size() &&
+        py.compare(py.size() - exe.size(), exe.size(), exe) == 0)
+    {
+        const std::string pyw = py.substr(0, py.size() - exe.size()) + "pythonw.exe";
+        std::error_code ec;
+        if (std::filesystem::is_regular_file(pyw, ec))
+            return pyw;
+    }
+    return py;
 }
 
 std::string backend_auth_file_path()

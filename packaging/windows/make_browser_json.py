@@ -79,6 +79,7 @@ def clipboard_text():
         r = subprocess.run(
             ["powershell", "-NoProfile", "-Command", "Get-Clipboard"],
             capture_output=True, timeout=15,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
         return r.stdout.decode("utf-8", errors="replace")
     except Exception as e:
@@ -109,8 +110,10 @@ def main():
         print("while signed in, and try again.")
         sys.exit(2)
 
-    config_dir = os.environ.get("APPDATA", os.path.expanduser("~"))
-    config_dir = os.path.join(config_dir, "crossfade")
+    config_dir = os.environ.get("P100_CONFIG_DIR")
+    if not config_dir:
+        base = os.environ.get("APPDATA") or os.path.expanduser("~")
+        config_dir = os.path.join(base, "crossfade")
     os.makedirs(config_dir, exist_ok=True)
     dest = os.path.join(config_dir, "browser.json")
     try:

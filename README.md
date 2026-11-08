@@ -296,6 +296,10 @@ Choose what stays resident in **Settings → System → Warm start**:
 Closing the window hides it while warm start is on. `--new-instance` bypasses
 the single-instance socket and starts a second copy.
 
+On Windows the same commands use a per-session named pipe. The installer asks
+whether crossfade should start hidden when you sign in; the Start Menu shortcut
+then raises the resident instance with no startup cost.
+
 <details>
 <summary><b>Other ways to build and run</b></summary>
 
@@ -332,9 +336,11 @@ No admin rights, no build tools:
 
 1. Grab **`install-crossfade.cmd`** from the [latest release](https://github.com/XBoom31/crossfade/releases/latest)
    and double-click it.
-2. Launch **crossfade** from the Start Menu.
-3. Sign in once: Start Menu → **crossfade-login**, and follow the prompts
-   (it takes the request headers from your clipboard — see [Sign in](#sign-in)).
+2. Launch **crossfade** from the Start Menu. The installer also asks whether it
+   should start hidden when you sign in (warm start).
+3. Sign in once: **Settings → Sign in with browser** inside the app (it opens
+   YouTube Music in your browser and a small window that reads the request
+   headers you copy), or Start Menu → **crossfade-login**. See [Sign in](#sign-in).
 
 The installer sets up everything per-user under `%LOCALAPPDATA%\crossfade`:
 the app with every runtime DLL bundled (SDL2, libmpv + codecs, and Mesa
@@ -374,6 +380,14 @@ To run the exe outside the MSYS2 shell, copy `SDL2.dll`, `libmpv-2.dll`,
 `libstdc++-6.dll`, `libgcc_s_seh-1.dll` and `libwinpthread-1.dll` from
 `/ucrt64/bin` next to `crossfade.exe`. The Python backend needs a Windows Python 3
 with `ytmusicapi` + `yt-dlp`; without it the UI runs but cannot reach YouTube Music.
+A development venv next to the executable or in the repo works:
+
+```powershell
+python -m venv venv
+venv\Scripts\python.exe -m pip install -r requirements.txt
+```
+
+The Windows release installer creates that venv under `%LOCALAPPDATA%`.
 
 ## Sign in
 
@@ -393,8 +407,15 @@ once.
    crossfade-login
    ```
 
-6. Paste the headers when prompted. That writes `browser.json` into
-   `~/.config/crossfade/`.
+   On Windows, use **Settings → Sign in with browser** inside crossfade instead:
+   it opens YouTube Music for you and a small "Sign in to crossfade" window that
+   turns the copied headers into a saved session (no terminal, no `gi`/WebKit
+   dependency).
+
+6. Paste the headers when prompted (on Windows: click **I copied the headers**).
+   That writes `browser.json` into `~/.config/crossfade/`
+   (`%APPDATA%\crossfade\` on Windows). A running crossfade picks up the new
+   session automatically.
 
 Launch crossfade and everything — home feed, likes, playlists, lyrics — is yours.
 
@@ -920,9 +941,12 @@ health.
 | **Windows** | 🚧 In progress — see [`docs/PORTING-WINDOWS.md`](docs/PORTING-WINDOWS.md) |
 | **macOS** | ❌ Not started |
 
-What is Linux-only by design: **MPRIS** media control and **desktop notifications**. The
-Windows port has stubs for both (plus Discord RPC) until the platform replacements land.
-Everything else — playback, crossfade, caching, lyrics, library — is portable C++/Python.
+What is Linux-only by design: **MPRIS** media control and **libnotify** desktop
+notifications. The Windows port implements equivalents with System Media
+Transport Controls and WinRT toasts, plus warm start over a named pipe and a
+GUI-subsystem build with no console window; Discord RPC is still stubbed.
+Everything else — playback, crossfade, caching, lyrics, library — is portable
+C++/Python.
 
 ## Troubleshooting
 

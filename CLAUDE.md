@@ -23,6 +23,8 @@ cmake --build build -j"$(nproc)"
 
 **Dependencies:**
 - SDL2, OpenGL, CMake, mpv, glib-2.0/gio-2.0, libnotify
+- Windows: UCRT64 MSYS2 toolchain, SDL2, mpv; desktop integration links
+  `runtimeobject`, `propsys`, `ole32` and `shell32` (SMTC + toasts)
 - Python 3 with `ytmusicapi` and `yt-dlp` in an isolated venv
 - For browser auth: run `p100-login` (or `./scripts/p100-login`) to create
   `<config>/browser.json`
@@ -81,7 +83,7 @@ The C++ process forks the Python backend at startup, communicating via pipes. Ea
 | `app/app_workers.cpp` | Background search, recommendations, lyrics and cover/download workers |
 | `app/app_internal.h` | Shared app-module globals, types and function declarations |
 | `app/diagnostics.cpp` | Crash logs, watchdog, boot marks and the full diagnostics bundle |
-| `app/warm_start.cpp` | Single-instance UNIX socket, warm start and show/hide/quit IPC |
+| `app/warm_start.cpp` | Single-instance IPC for warm start: UNIX socket on Linux, per-session named pipe on Windows; show/hide/toggle/quit |
 | `app/data_transfer.cpp` | In-app ZIP backup/restore orchestration + detached import helper |
 | `py/cf_backend/transfer.py` | Cross-platform stdlib ZIP export/import with section selection |
 | `ui.h` | `AppState` struct (global state), `Track`/`Playlist`/`Settings`/`SessionState` types, UI function declarations, layout constants |
@@ -103,6 +105,9 @@ The C++ process forks the Python backend at startup, communicating via pipes. Ea
 | `mpvplayer.h` / `mpvplayer.cpp` | mpv wrapper — play/stop/pause/seek/volume, event callback for start/end/error |
 | `texture.h` / `texture.cpp` | Async thumbnail loading pipeline — curl download → STB decode → GPU upload (thread-safe queue) with failed-URL backoff |
 | `mpris.h` / `mpris.cpp` | MPRIS D-Bus integration (org.mpris.MediaPlayer2.p100) via raw GDBus — Play/Pause/Next/Prev/Seek/Stop, metadata updates |
+| `win32/media_session.cpp` | Windows System Media Transport Controls (SMTC) session — media flyout, media keys, lock screen, timeline/seek, cover art |
+| `win32/mpris_windows.cpp` | Windows `MprisPlayer` implementation backed by SMTC (same update surface as the Linux MPRIS class) |
+| `win32/notifications.cpp` | WinRT toast notifications for track changes (worker thread, AppUserModelID registration, cover art) |
 | `paths.h` / `paths.cpp` | Config/share/asset path resolution (`P100_CONFIG_DIR`, XDG, installed vs dev tree) |
 | `accent.h` / `accent.cpp` | Accent colour: `P100_ACCENT`, XDG portal, daily date-seeded fallback |
 | `daily_accent.h` | In-tree deterministic date-seeded RGB helper |
@@ -136,10 +141,13 @@ stats, app state, recent logs and the newest crash log. The detailed history is
 toggleable (`diagnostics_history`); boot marks and live counters stay on.
 
 Warm start (Settings → System → Warm start, `--warm`) keeps one background
-instance and routes later launches over a UNIX socket (`$XDG_RUNTIME_DIR/crossfade.sock`):
-`crossfade` raises it, `--toggle` hides/shows, `--quit` stops it. The window can
-start hidden; `warm_start_mode` controls whether all backends, only the main one,
-or none stay resident while parked. `--new-instance` bypasses the socket.
+instance and routes later launches over a UNIX socket
+(`$XDG_RUNTIME_DIR/crossfade.sock`) on Linux or a per-session named pipe on
+Windows: `crossfade` raises it, `--toggle` hides/shows, `--quit` stops it. The
+window can start hidden; `warm_start_mode` controls whether all backends, only
+the main one, or none stay resident while parked. `--new-instance` bypasses the
+socket/pipe. The Windows installer can add an HKCU Run entry for
+`crossfade.exe --warm`.
 
 The main loop uses `SDL_WaitEventTimeout()` with a per-activity frame budget: 16 ms for animation/input, 100 ms during steady playback, 1 s when fully idle, and a 5 s safety frame. ImGui only renders when a frame is actually due. Low power mode (Settings → System → Power, `--low-power`, or `P100_LOW_POWER=1`) uses 33 ms for interaction, 250 ms during playback and 2 s idle, disables motion, and skips speculative prefetch/downloads.
 

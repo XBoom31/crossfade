@@ -21,6 +21,7 @@
 #else
 #include <fcntl.h>
 #include <io.h>
+#include "win_process.h"
 #endif
 #include <cerrno>
 #include <cstring>
@@ -190,12 +191,17 @@ static bool download_url(const std::string &url, std::vector<uint8_t> &data)
     // instead of an error page that would get cached as "cover"; timeouts so
     // a stalled connection can't hang a loader thread indefinitely.
     std::string cmd = "curl -sL --fail --connect-timeout 8 --max-time 30 \"" + url + "\"";
+#ifdef P100_WINDOWS
+    std::unique_ptr<FILE, decltype(&winproc::pclose_hidden)> pipe(
+        winproc::popen_hidden(cmd, "r"), winproc::pclose_hidden);
+#else
     std::unique_ptr<FILE, decltype(&pclose)> pipe(popen(cmd.c_str(), "r"), pclose);
+#endif
     if (!pipe)
         return false;
 #ifdef P100_WINDOWS
-    // _popen defaults to text mode: CRLF translation on raw image bytes
-    // corrupts every download. Switch the pipe to binary before reading.
+    // popen_hidden opens the pipe in binary mode; keep this as a belt-and-
+    // braces guard against CRLF translation of raw image bytes.
     _setmode(_fileno(pipe.get()), _O_BINARY);
 #endif
     std::array<char, 4096> buffer;

@@ -312,6 +312,9 @@ std::string backend_auth_file_path();
 std::string backend_reauth_command();
 std::string backend_script_path();
 std::string backend_python_path();
+// The same interpreter as pythonw.exe when available (no console window for
+// GUI helpers such as the sign-in window).
+std::string backend_pythonw_path();
 
 // Parse a lyrics JSON payload (from the backend or the on-disk cache) into
 // `out`. Returns false if the payload is an error object. Recognizes the

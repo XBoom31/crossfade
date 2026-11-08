@@ -19,6 +19,7 @@
 
 #ifdef P100_WINDOWS
 #include <process.h>
+#include "win_process.h"
 #else
 #include <sys/types.h>
 #include <sys/wait.h>
@@ -75,22 +76,12 @@ std::string result_file_path() { return p100_config_path("transfer-result.json")
 int run_sync(const std::vector<std::string> &args, std::string &output)
 {
     output.clear();
-    std::vector<const char *> argv;
-    argv.reserve(args.size() + 1);
-    for (const auto &a : args)
-        argv.push_back(a.c_str());
-    argv.push_back(nullptr);
-    return _spawnv(_P_WAIT, argv[0], argv.data());
+    return winproc::run_argv_hidden(args);
 }
 
 bool spawn_detached(const std::vector<std::string> &args)
 {
-    std::vector<const char *> argv;
-    argv.reserve(args.size() + 1);
-    for (const auto &a : args)
-        argv.push_back(a.c_str());
-    argv.push_back(nullptr);
-    return _spawnv(_P_DETACH, argv[0], argv.data()) != -1;
+    return winproc::spawn_argv_hidden(args);
 }
 #else
 int run_sync(const std::vector<std::string> &args, std::string &output)
