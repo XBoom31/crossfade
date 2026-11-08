@@ -31,4 +31,5 @@ int ui_hero(const std::string &eyebrow, const std::string &title,
             UiIcon fallback, const char *art_scope,
             const std::vector<UiHeroChip> &chips,
             const std::vector<UiHeroAction> &actions,
-            const UiPageAnim &anim, bool live_dot = false);
+            const UiPageAnim &anim, bool live_dot = false,
+            int backdrop_style = 0, float backdrop_strength = 0.55f);

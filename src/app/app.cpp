@@ -1677,6 +1677,7 @@ int app_run(int argc, char **argv)
             glViewport(0, 0, (int)io.DisplaySize.x, (int)io.DisplaySize.y);
             glClearColor(ui_c().bg.x, ui_c().bg.y, ui_c().bg.z, 1.0f);
             glClear(GL_COLOR_BUFFER_BIT);
+            ui_hero_blur_process();
             ui_backdrop_render_shader();
             ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
             SDL_GL_SwapWindow(window);

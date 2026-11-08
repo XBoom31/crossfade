@@ -1,6 +1,9 @@
 #include "ui_hero.h"
 
 #include "ui_theme.h"
+#include "ui_backdrop.h"
+#include "texture.h"
+#include "power.h"
 
 #include <algorithm>
 #include <cmath>
@@ -10,7 +13,8 @@ int ui_hero(const std::string &eyebrow, const std::string &title,
             UiIcon fallback, const char *art_scope,
             const std::vector<UiHeroChip> &chips,
             const std::vector<UiHeroAction> &actions,
-            const UiPageAnim &anim, bool live_dot)
+            const UiPageAnim &anim, bool live_dot,
+            int backdrop_style, float backdrop_strength)
 {
     const UiMetrics &m = ui_m();
     const float avail = std::max(1.0f, ImGui::GetContentRegionAvail().x);
@@ -48,8 +52,68 @@ int ui_hero(const std::string &eyebrow, const std::string &title,
 
     const ImVec2 card_min = C(origin);
     const ImVec2 card_max = C(ImVec2(origin.x + avail, origin.y + hero_h));
-    dl->AddRectFilled(card_min, card_max,
-                      ui_with_alpha(ui_col(ui_c().surface_hover), hero_t), m.radius_lg);
+    const float strength = std::max(0.0f, std::min(1.0f, backdrop_strength));
+
+    if (backdrop_style == 1 && !power::low_power())
+    {
+        // Frosted glass: no cover image at all. The page's ambient backdrop
+        // shows through a slightly tinted, lightly darkened pane, so this
+        // reads as "blurred background" without any per-frame shader work.
+        const ImVec4 tint = ui_backdrop_tint();
+        dl->AddRectFilled(card_min, card_max,
+                          IM_COL32(18, 18, 22, (int)((0.16f + 0.10f * strength) * hero_t * 255.0f)),
+                          m.radius_lg);
+        dl->AddRectFilled(card_min, card_max,
+                          ImGui::GetColorU32(ImVec4(tint.x, tint.y, tint.z,
+                                                    0.10f * strength * hero_t)),
+                          m.radius_lg);
+        // A faint top highlight sells the glass edge.
+        const float hl = 1.0f * m.layout_scale;
+        dl->AddRectFilled(ImVec2(card_min.x + m.radius_lg * 0.5f, card_min.y + hl),
+                          ImVec2(card_max.x - m.radius_lg * 0.5f, card_min.y + hl * 2.0f),
+                          IM_COL32(255, 255, 255, (int)(0.035f * hero_t * 255.0f)), hl);
+    }
+    else if (backdrop_style >= 2 && !power::low_power() && !art_url.empty())
+    {
+        // Cover blur: one shader-generated texture per cover, cached and
+        // reused. Per frame this is only a textured quad.
+        ui_hero_blur_request(art_url);
+        const GLuint blur = ui_hero_blur_texture(art_url);
+        int bw = 0, bh = 0;
+        const bool have_size = blur != 0 && ui_hero_blur_size(art_url, bw, bh);
+        if (have_size)
+        {
+            dl->AddRectFilled(card_min, card_max,
+                              ui_with_alpha(ui_col(ui_c().surface_hover), hero_t), m.radius_lg);
+            const float image_a = 0.85f * strength * hero_t;
+            const float scrim_a = 0.20f * strength * hero_t;
+            float u0 = 0.0f, v0 = 0.0f, u1 = 1.0f, v1 = 1.0f;
+            const TextureInfo info{blur, bw, bh};
+            const ImVec2 box(card_max.x - card_min.x, card_max.y - card_min.y);
+            if (!cover_uv(info, box.x, box.y, u0, v0, u1, v1))
+            {
+                u0 = v0 = 0.0f;
+                u1 = v1 = 1.0f;
+            }
+            dl->AddImageRounded((ImTextureID)(intptr_t)blur, card_min, card_max,
+                                ImVec2(u0, v0), ImVec2(u1, v1),
+                                IM_COL32(255, 255, 255, (int)(image_a * 255.0f)),
+                                m.radius_lg);
+            if (scrim_a > 0.002f)
+                dl->AddRectFilled(card_min, card_max,
+                                  IM_COL32(0, 0, 0, (int)(scrim_a * 255.0f)), m.radius_lg);
+        }
+        else
+        {
+            dl->AddRectFilled(card_min, card_max,
+                              ui_with_alpha(ui_col(ui_c().surface_hover), hero_t), m.radius_lg);
+        }
+    }
+    else
+    {
+        dl->AddRectFilled(card_min, card_max,
+                          ui_with_alpha(ui_col(ui_c().surface_hover), hero_t), m.radius_lg);
+    }
     dl->AddRectFilled(card_min, card_max, ui_accent_u32(0.040f * hero_t), m.radius_lg);
     dl->AddRect(card_min, card_max,
                 ui_with_alpha(ui_border_u32(), (0.45f + 0.55f * hero_t) * hero_t),

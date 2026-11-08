@@ -174,6 +174,8 @@ void save_settings(const Settings &settings)
         << "\"accent_color\":\"" << json_escape(settings.accent_color) << "\","
         << "\"album_backdrop\":" << (settings.album_backdrop ? "true" : "false") << ","
         << "\"album_backdrop_strength\":" << settings.album_backdrop_strength << ","
+        << "\"hero_backdrop\":" << settings.hero_backdrop << ","
+        << "\"hero_backdrop_strength\":" << settings.hero_backdrop_strength << ","
         << "\"backdrop_shader\":" << (settings.backdrop_shader ? "true" : "false") << ","
         << "\"safe_mode\":" << (settings.safe_mode ? "true" : "false") << ","
         << "\"low_power\":" << (settings.low_power ? "true" : "false") << ","
@@ -370,6 +372,11 @@ Settings load_settings()
         }
         if (json.find("\"album_backdrop\"") != std::string::npos)
             s.album_backdrop = get_bool("album_backdrop");
+        if (json.find("\"hero_backdrop\"") != std::string::npos)
+            s.hero_backdrop = std::max(0, std::min(2, (int)std::lround(get_float("hero_backdrop"))));
+        if (json.find("\"hero_backdrop_strength\"") != std::string::npos)
+            s.hero_backdrop_strength =
+                std::max(0.10f, std::min(1.0f, get_float("hero_backdrop_strength")));
         if (json.find("\"album_backdrop_strength\"") != std::string::npos)
         {
             const float v = get_float("album_backdrop_strength");
@@ -1297,6 +1304,23 @@ void draw_settings_panel(AppState &state)
                 if (settings_toggle_row("##backdrop_shader", "Smooth backdrop shader",
                                         &state.settings.backdrop_shader,
                                         "One full-screen shader pass with subtle dithering. Removes the colour steps OLED panels expose."))
+                    save = true;
+            }
+            {
+                const char *hero_modes[] = {"Off", "Transparent blur", "Cover blur"};
+                int hero_mode = std::max(0, std::min(2, state.settings.hero_backdrop));
+                settings_row_label("Hero background", hero_modes[hero_mode],
+                                   "Transparent blur frosts the page backdrop; Cover blur uses the cover art, cover-fitted (never stretched). The blur is generated once per cover by a shader and cached, so it costs nothing per frame.");
+                ImGui::SetNextItemWidth(field_w);
+                if (ImGui::Combo("##hero_backdrop", &hero_mode, hero_modes, 3))
+                {
+                    state.settings.hero_backdrop = hero_mode;
+                    save = true;
+                }
+                if (state.settings.hero_backdrop != 0 &&
+                    settings_slider_row("##hero_backdrop_strength", "Hero blur opacity",
+                                        &state.settings.hero_backdrop_strength, 0.10f, 1.0f,
+                                        "%.2f", nullptr))
                     save = true;
             }
             if (settings_toggle_row("##glow_separators", "Glowing separators",

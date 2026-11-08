@@ -643,7 +643,9 @@ void draw_radio_panel(AppState &state)
 
     const int clicked = ui_hero("ENDLESS STATION", station_title, seed_line,
                                 state.radio_seed_thumbnail_url, UiIcon::Radio, "radio",
-                                chips, actions, hero_anim, true);
+                                chips, actions, hero_anim, true,
+                                state.settings.hero_backdrop,
+                                state.settings.hero_backdrop_strength);
     ImDrawList *dl = ImGui::GetWindowDrawList();
     if (clicked == 0 && can_play)
     {

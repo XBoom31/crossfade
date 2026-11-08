@@ -202,6 +202,11 @@ struct Settings
     // tracks. `album_backdrop_strength` scales the glow (0.1 - 1.0).
     bool album_backdrop = false;
     float album_backdrop_strength = 0.65f;
+    // Hero card background: 0 = off (flat card), 1 = transparent blur (frosted
+    // glass), 2 = cover blur (the cover art itself, blurred). The blurred
+    // texture is generated once per cover by a shader and then reused.
+    int hero_backdrop = 2;
+    float hero_backdrop_strength = 0.55f;
     // Render the ambient wash with a single full-screen shader pass and
     // in-shader dithering instead of stacked ImGui ellipses.
     bool backdrop_shader = true;
@@ -285,6 +290,8 @@ struct Settings
                day_mode == o.day_mode && accent_color == o.accent_color &&
                album_backdrop == o.album_backdrop &&
                album_backdrop_strength == o.album_backdrop_strength &&
+               hero_backdrop == o.hero_backdrop &&
+               hero_backdrop_strength == o.hero_backdrop_strength &&
                backdrop_shader == o.backdrop_shader &&
                safe_mode == o.safe_mode &&
                low_power == o.low_power &&

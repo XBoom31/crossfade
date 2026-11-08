@@ -264,7 +264,7 @@ using PodcastAction = UiHeroAction;
 
 // Radio-style hero, shared by the Podcasts library, search results and show
 // pages. Returns the index of the clicked action, or -1.
-static int podcast_hero(const AppState &, const std::string &title,
+static int podcast_hero(const AppState &state, const std::string &title,
                         const std::string &subtitle, const std::string &eyebrow,
                         const std::string &art, UiIcon fallback,
                         const std::vector<std::string> &chips,
@@ -277,7 +277,9 @@ static int podcast_hero(const AppState &, const std::string &title,
         hero_chips.push_back({chips[i], i == 0});
     UiPageAnim anim{now, start};
     return ui_hero(eyebrow, title, subtitle, art, fallback, "podcast_hero",
-                   hero_chips, actions, anim);
+                   hero_chips, actions, anim, false,
+                   state.settings.hero_backdrop,
+                   state.settings.hero_backdrop_strength);
 }
 
 bool podcast_grid(AppState &state, const std::vector<PodcastShow> &shows,

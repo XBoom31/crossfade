@@ -9,8 +9,13 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <cstdio>
+#include <deque>
+#include <map>
+#include <set>
 #include <string>
+#include <vector>
 
 namespace
 {
@@ -508,6 +513,41 @@ typedef void(APIENTRY *PFN_Uniform3fv)(GLint, GLsizei, const GLfloat *);
 typedef void(APIENTRY *PFN_GenVertexArrays)(GLsizei, GLuint *);
 typedef void(APIENTRY *PFN_BindVertexArray)(GLuint);
 typedef void(APIENTRY *PFN_DrawArrays)(GLenum, GLint, GLsizei);
+typedef void(APIENTRY *PFN_Uniform1i)(GLint, GLint);
+typedef void(APIENTRY *PFN_GenFramebuffers)(GLsizei, GLuint *);
+typedef void(APIENTRY *PFN_BindFramebuffer)(GLenum, GLuint);
+typedef void(APIENTRY *PFN_FramebufferTexture2D)(GLenum, GLenum, GLenum, GLuint, GLint);
+typedef GLenum(APIENTRY *PFN_CheckFramebufferStatus)(GLenum);
+typedef void(APIENTRY *PFN_DeleteFramebuffers)(GLsizei, const GLuint *);
+typedef void(APIENTRY *PFN_ActiveTexture)(GLenum);
+
+#ifndef GL_FRAMEBUFFER
+#define GL_FRAMEBUFFER 0x8D40
+#endif
+#ifndef GL_COLOR_ATTACHMENT0
+#define GL_COLOR_ATTACHMENT0 0x8CE0
+#endif
+#ifndef GL_FRAMEBUFFER_COMPLETE
+#define GL_FRAMEBUFFER_COMPLETE 0x8CD5
+#endif
+#ifndef GL_FRAMEBUFFER_BINDING
+#define GL_FRAMEBUFFER_BINDING 0x8CA6
+#endif
+#ifndef GL_TEXTURE0
+#define GL_TEXTURE0 0x84C0
+#endif
+#ifndef GL_ACTIVE_TEXTURE
+#define GL_ACTIVE_TEXTURE 0x84E0
+#endif
+#ifndef GL_TEXTURE_BINDING_2D
+#define GL_TEXTURE_BINDING_2D 0x8069
+#endif
+#ifndef GL_CURRENT_PROGRAM
+#define GL_CURRENT_PROGRAM 0x8B8D
+#endif
+#ifndef GL_VERTEX_ARRAY_BINDING
+#define GL_VERTEX_ARRAY_BINDING 0x85B5
+#endif
 
 PFN_CreateShader p_glCreateShader = nullptr;
 PFN_ShaderSource p_glShaderSource = nullptr;
@@ -533,6 +573,13 @@ PFN_Uniform3fv p_glUniform3fv = nullptr;
 PFN_GenVertexArrays p_glGenVertexArrays = nullptr;
 PFN_BindVertexArray p_glBindVertexArray = nullptr;
 PFN_DrawArrays p_glDrawArrays = nullptr;
+PFN_Uniform1i p_glUniform1i = nullptr;
+PFN_GenFramebuffers p_glGenFramebuffers = nullptr;
+PFN_BindFramebuffer p_glBindFramebuffer = nullptr;
+PFN_FramebufferTexture2D p_glFramebufferTexture2D = nullptr;
+PFN_CheckFramebufferStatus p_glCheckFramebufferStatus = nullptr;
+PFN_DeleteFramebuffers p_glDeleteFramebuffers = nullptr;
+PFN_ActiveTexture p_glActiveTexture = nullptr;
 
 template <typename T>
 bool load_gl_fn(T &fn, const char *name)
@@ -575,6 +622,42 @@ GLuint compile_shader(GLenum type, const char *source)
     return shader;
 }
 
+bool ensure_gl_common()
+{
+    static int state = 0; // 0 = unknown, 1 = ok, -1 = failed
+    if (state != 0)
+        return state > 0;
+    const bool ok =
+        load_gl_fn(p_glCreateShader, "glCreateShader") &&
+        load_gl_fn(p_glShaderSource, "glShaderSource") &&
+        load_gl_fn(p_glCompileShader, "glCompileShader") &&
+        load_gl_fn(p_glGetShaderiv, "glGetShaderiv") &&
+        load_gl_fn(p_glGetShaderInfoLog, "glGetShaderInfoLog") &&
+        load_gl_fn(p_glDeleteShader, "glDeleteShader") &&
+        load_gl_fn(p_glCreateProgram, "glCreateProgram") &&
+        load_gl_fn(p_glAttachShader, "glAttachShader") &&
+        load_gl_fn(p_glLinkProgram, "glLinkProgram") &&
+        load_gl_fn(p_glGetProgramiv, "glGetProgramiv") &&
+        load_gl_fn(p_glGetProgramInfoLog, "glGetProgramInfoLog") &&
+        load_gl_fn(p_glDeleteProgram, "glDeleteProgram") &&
+        load_gl_fn(p_glUseProgram, "glUseProgram") &&
+        load_gl_fn(p_glGetUniformLocation, "glGetUniformLocation") &&
+        load_gl_fn(p_glUniform1f, "glUniform1f") &&
+        load_gl_fn(p_glUniform2f, "glUniform2f") &&
+        load_gl_fn(p_glUniform3f, "glUniform3f") &&
+        load_gl_fn(p_glUniform4f, "glUniform4f") &&
+        load_gl_fn(p_glUniform1fv, "glUniform1fv") &&
+        load_gl_fn(p_glUniform2fv, "glUniform2fv") &&
+        load_gl_fn(p_glUniform3fv, "glUniform3fv") &&
+        load_gl_fn(p_glGenVertexArrays, "glGenVertexArrays") &&
+        load_gl_fn(p_glBindVertexArray, "glBindVertexArray") &&
+        load_gl_fn(p_glDrawArrays, "glDrawArrays");
+    state = ok ? 1 : -1;
+    if (!ok)
+        std::fprintf(stderr, "Backdrop/hero shader requires GL 3 entry points\n");
+    return ok;
+}
+
 bool init_backdrop_shader()
 {
     if (g_shader_program != 0)
@@ -582,32 +665,8 @@ bool init_backdrop_shader()
     if (g_backdrop.shader_failed)
         return false;
 
-    if (!load_gl_fn(p_glCreateShader, "glCreateShader") ||
-        !load_gl_fn(p_glShaderSource, "glShaderSource") ||
-        !load_gl_fn(p_glCompileShader, "glCompileShader") ||
-        !load_gl_fn(p_glGetShaderiv, "glGetShaderiv") ||
-        !load_gl_fn(p_glGetShaderInfoLog, "glGetShaderInfoLog") ||
-        !load_gl_fn(p_glDeleteShader, "glDeleteShader") ||
-        !load_gl_fn(p_glCreateProgram, "glCreateProgram") ||
-        !load_gl_fn(p_glAttachShader, "glAttachShader") ||
-        !load_gl_fn(p_glLinkProgram, "glLinkProgram") ||
-        !load_gl_fn(p_glGetProgramiv, "glGetProgramiv") ||
-        !load_gl_fn(p_glGetProgramInfoLog, "glGetProgramInfoLog") ||
-        !load_gl_fn(p_glDeleteProgram, "glDeleteProgram") ||
-        !load_gl_fn(p_glUseProgram, "glUseProgram") ||
-        !load_gl_fn(p_glGetUniformLocation, "glGetUniformLocation") ||
-        !load_gl_fn(p_glUniform1f, "glUniform1f") ||
-        !load_gl_fn(p_glUniform2f, "glUniform2f") ||
-        !load_gl_fn(p_glUniform3f, "glUniform3f") ||
-        !load_gl_fn(p_glUniform4f, "glUniform4f") ||
-        !load_gl_fn(p_glUniform1fv, "glUniform1fv") ||
-        !load_gl_fn(p_glUniform2fv, "glUniform2fv") ||
-        !load_gl_fn(p_glUniform3fv, "glUniform3fv") ||
-        !load_gl_fn(p_glGenVertexArrays, "glGenVertexArrays") ||
-        !load_gl_fn(p_glBindVertexArray, "glBindVertexArray") ||
-        !load_gl_fn(p_glDrawArrays, "glDrawArrays"))
+    if (!ensure_gl_common())
     {
-        std::fprintf(stderr, "Backdrop shader requires GL 3 entry points\n");
         g_backdrop.shader_failed = true;
         return false;
     }
@@ -731,7 +790,277 @@ void main()
     p_glGenVertexArrays(1, &g_shader_vao);
     return true;
 }
+
+// ----------------------------------------------------------------------
+// Hero cover blur
+//
+// One 2-pass separable blur per cover URL, rendered into a small texture the
+// first time a hero asks for it. The result is cached and reused for every
+// later frame; no per-frame shader work, no per-frame re-blur.
+// ----------------------------------------------------------------------
+constexpr int kHeroBlurSize = 128; // longest side; aspect is preserved
+constexpr size_t kHeroBlurCacheMax = 24;
+
+GLuint g_blur_program = 0;
+GLuint g_blur_vao = 0;
+GLint g_blur_source = -1;
+GLint g_blur_texel = -1;
+GLint g_blur_dir = -1;
+bool g_blur_failed = false;
+struct BlurTexture
+{
+    GLuint id = 0;
+    int w = 0;
+    int h = 0;
+};
+std::map<std::string, BlurTexture> g_blur_ready;
+std::set<std::string> g_blur_pending;
+std::deque<std::string> g_blur_order;
+std::vector<GLuint> g_blur_graveyard; // deleted next frame, after draw data is submitted
+
+bool init_blur_shader()
+{
+    if (g_blur_program != 0)
+        return true;
+    if (g_blur_failed)
+        return false;
+    if (!ensure_gl_common() ||
+        !load_gl_fn(p_glUniform1i, "glUniform1i") ||
+        !load_gl_fn(p_glGenFramebuffers, "glGenFramebuffers") ||
+        !load_gl_fn(p_glBindFramebuffer, "glBindFramebuffer") ||
+        !load_gl_fn(p_glFramebufferTexture2D, "glFramebufferTexture2D") ||
+        !load_gl_fn(p_glCheckFramebufferStatus, "glCheckFramebufferStatus") ||
+        !load_gl_fn(p_glDeleteFramebuffers, "glDeleteFramebuffers") ||
+        !load_gl_fn(p_glActiveTexture, "glActiveTexture"))
+    {
+        g_blur_failed = true;
+        return false;
+    }
+
+    static const char *kVertex = R"GLSL(#version 130
+out vec2 v_uv;
+void main()
+{
+    vec2 p = vec2(gl_VertexID == 1 ? 3.0 : -1.0,
+                  gl_VertexID == 2 ? 3.0 : -1.0);
+    v_uv = (p + 1.0) * 0.5;
+    gl_Position = vec4(p, 0.0, 1.0);
+}
+)GLSL";
+
+    static const char *kFragment = R"GLSL(#version 130
+in vec2 v_uv;
+out vec4 frag_color;
+uniform sampler2D u_source;
+uniform vec2 u_texel;
+uniform vec2 u_dir;
+
+void main()
+{
+    // 5-tap linear-sampling gaussian (the bilinear filter folds each pair).
+    vec2 o1 = u_dir * u_texel * 1.3846153846;
+    vec2 o2 = u_dir * u_texel * 3.2307692308;
+    vec4 c = texture(u_source, v_uv) * 0.2270270270;
+    c += texture(u_source, v_uv + o1) * 0.3162162162;
+    c += texture(u_source, v_uv - o1) * 0.3162162162;
+    c += texture(u_source, v_uv + o2) * 0.0702702703;
+    c += texture(u_source, v_uv - o2) * 0.0702702703;
+    frag_color = c;
+}
+)GLSL";
+
+    const GLuint vs = compile_shader(GL_VERTEX_SHADER, kVertex);
+    const GLuint fs = compile_shader(GL_FRAGMENT_SHADER, kFragment);
+    if (!vs || !fs)
+    {
+        if (vs) p_glDeleteShader(vs);
+        if (fs) p_glDeleteShader(fs);
+        g_blur_failed = true;
+        return false;
+    }
+    g_blur_program = p_glCreateProgram();
+    p_glAttachShader(g_blur_program, vs);
+    p_glAttachShader(g_blur_program, fs);
+    p_glLinkProgram(g_blur_program);
+    p_glDeleteShader(vs);
+    p_glDeleteShader(fs);
+    GLint linked = GL_FALSE;
+    p_glGetProgramiv(g_blur_program, GL_LINK_STATUS, &linked);
+    if (!linked)
+    {
+        char log[1024] = {0};
+        p_glGetProgramInfoLog(g_blur_program, sizeof(log) - 1, nullptr, log);
+        std::fprintf(stderr, "Hero blur shader link failed: %s\n", log);
+        p_glDeleteProgram(g_blur_program);
+        g_blur_program = 0;
+        g_blur_failed = true;
+        return false;
+    }
+    g_blur_source = p_glGetUniformLocation(g_blur_program, "u_source");
+    g_blur_texel = p_glGetUniformLocation(g_blur_program, "u_texel");
+    g_blur_dir = p_glGetUniformLocation(g_blur_program, "u_dir");
+    p_glGenVertexArrays(1, &g_blur_vao);
+    return true;
+}
+
+GLuint create_blur_texture(int w, int h)
+{
+    GLuint tex = 0;
+    glGenTextures(1, &tex);
+    glBindTexture(GL_TEXTURE_2D, tex);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, w, h, 0,
+                 GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+    return tex;
+}
+
+void render_blur_pass(GLuint source, GLuint fbo, GLuint dest, int w, int h, float dx, float dy)
+{
+    p_glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+    p_glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, dest, 0);
+    if (p_glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
+        return;
+    glViewport(0, 0, w, h);
+    p_glUseProgram(g_blur_program);
+    p_glBindVertexArray(g_blur_vao);
+    p_glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, source);
+    p_glUniform1i(g_blur_source, 0);
+    p_glUniform2f(g_blur_texel, 1.0f / (float)w, 1.0f / (float)h);
+    p_glUniform2f(g_blur_dir, dx, dy);
+    p_glDrawArrays(GL_TRIANGLES, 0, 3);
+}
+
+bool generate_hero_blur(const std::string &url)
+{
+    const TextureInfo src = texture_info(url);
+    if (src.id == 0 || !init_blur_shader())
+        return false;
+
+    // Save the GL state ImGui's backend expects to find when it renders.
+    GLint prev_fbo = 0, prev_program = 0, prev_vao = 0, prev_tex = 0, prev_active = 0;
+    GLint prev_viewport[4] = {0, 0, 0, 0};
+    glGetIntegerv(GL_FRAMEBUFFER_BINDING, &prev_fbo);
+    glGetIntegerv(GL_CURRENT_PROGRAM, &prev_program);
+    glGetIntegerv(GL_VERTEX_ARRAY_BINDING, &prev_vao);
+    glGetIntegerv(GL_TEXTURE_BINDING_2D, &prev_tex);
+    glGetIntegerv(GL_ACTIVE_TEXTURE, &prev_active);
+    glGetIntegerv(GL_VIEWPORT, prev_viewport);
+    const GLboolean blend = glIsEnabled(GL_BLEND);
+    const GLboolean depth = glIsEnabled(GL_DEPTH_TEST);
+    glDisable(GL_BLEND);
+    glDisable(GL_DEPTH_TEST);
+
+    // Preserve the cover's aspect ratio: the blur is drawn cover-fitted (and
+    // cropped) into the hero, so it must never be stretched.
+    int bw = kHeroBlurSize;
+    int bh = kHeroBlurSize;
+    if (src.width > 0 && src.height > 0)
+    {
+        const float aspect = (float)src.width / (float)src.height;
+        if (aspect >= 1.0f)
+            bh = std::max(1, (int)std::lround((float)kHeroBlurSize / aspect));
+        else
+            bw = std::max(1, (int)std::lround((float)kHeroBlurSize * aspect));
+    }
+
+    GLuint fbo = 0;
+    p_glGenFramebuffers(1, &fbo);
+    const GLuint mid = create_blur_texture(bw, bh);
+    const GLuint out = create_blur_texture(bw, bh);
+    render_blur_pass(src.id, fbo, mid, bw, bh, 1.0f, 0.0f);
+    render_blur_pass(mid, fbo, out, bw, bh, 0.0f, 1.0f);
+
+    // Restore.
+    p_glBindFramebuffer(GL_FRAMEBUFFER, (GLuint)prev_fbo);
+    glViewport(prev_viewport[0], prev_viewport[1], prev_viewport[2], prev_viewport[3]);
+    p_glUseProgram((GLuint)prev_program);
+    p_glBindVertexArray((GLuint)prev_vao);
+    p_glActiveTexture((GLenum)prev_active);
+    glBindTexture(GL_TEXTURE_2D, (GLuint)prev_tex);
+    if (blend) glEnable(GL_BLEND);
+    if (depth) glEnable(GL_DEPTH_TEST);
+
+    p_glDeleteFramebuffers(1, &fbo);
+    glDeleteTextures(1, &mid);
+
+    if (out == 0)
+        return false;
+    g_blur_ready[url] = BlurTexture{out, bw, bh};
+    g_blur_order.push_back(url);
+    while (g_blur_order.size() > kHeroBlurCacheMax)
+    {
+        const std::string &old = g_blur_order.front();
+        auto it = g_blur_ready.find(old);
+        if (it != g_blur_ready.end() && old != url)
+        {
+            // The current frame's draw data may still reference this texture;
+            // delete it on the next process() call instead.
+            g_blur_graveyard.push_back(it->second.id);
+            g_blur_ready.erase(it);
+        }
+        g_blur_order.pop_front();
+    }
+    return true;
+}
 } // namespace
+
+void ui_hero_blur_request(const std::string &url)
+{
+    if (url.empty() || g_blur_failed || g_blur_ready.count(url))
+        return;
+    g_blur_pending.insert(url);
+}
+
+void ui_hero_blur_process()
+{
+    if (!g_blur_graveyard.empty())
+    {
+        glDeleteTextures((GLsizei)g_blur_graveyard.size(), g_blur_graveyard.data());
+        g_blur_graveyard.clear();
+    }
+    if (g_blur_pending.empty() || g_blur_failed)
+        return;
+    std::vector<std::string> urls(g_blur_pending.begin(), g_blur_pending.end());
+    for (const std::string &url : urls)
+    {
+        if (generate_hero_blur(url))
+            g_blur_pending.erase(url);
+        // On failure (cover not uploaded yet) it stays pending and is retried
+        // next frame; the check is just a map lookup, not a shader pass.
+    }
+}
+
+GLuint ui_hero_blur_texture(const std::string &url)
+{
+    auto it = g_blur_ready.find(url);
+    return it == g_blur_ready.end() ? 0 : it->second.id;
+}
+
+bool ui_hero_blur_size(const std::string &url, int &w, int &h)
+{
+    auto it = g_blur_ready.find(url);
+    if (it == g_blur_ready.end())
+        return false;
+    w = it->second.w;
+    h = it->second.h;
+    return true;
+}
+
+void ui_hero_blur_clear()
+{
+    for (auto &kv : g_blur_ready)
+        glDeleteTextures(1, &kv.second.id);
+    if (!g_blur_graveyard.empty())
+        glDeleteTextures((GLsizei)g_blur_graveyard.size(), g_blur_graveyard.data());
+    g_blur_graveyard.clear();
+    g_blur_ready.clear();
+    g_blur_order.clear();
+    g_blur_pending.clear();
+}
 
 void ui_backdrop_render_shader()
 {

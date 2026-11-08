@@ -570,7 +570,9 @@ static bool draw_list_hero(AppState &state, const std::vector<Track> &tracks,
 
     const char *scope = liked ? "liked" : downloads ? "downloads" : "history";
     const int clicked = ui_hero(eyebrow, title, sub, cover, fallback, scope,
-                                chips, actions, anim);
+                                chips, actions, anim, false,
+                                state.settings.hero_backdrop,
+                                state.settings.hero_backdrop_strength);
 
     // -1 means "nothing clicked"; every index below is -1 when that action
     // was not added, so never compare against the sentinel.

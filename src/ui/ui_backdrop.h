@@ -1,5 +1,7 @@
 #pragma once
 #include "imgui.h"
+#include <GL/gl.h>
+#include <string>
 
 struct AppState;
 
@@ -34,3 +36,13 @@ ImVec4 ui_backdrop_window_bg();
 // nothing is loaded). Independent of whether the full backdrop is enabled, so
 // the glowing separators can follow the album colour on their own. Alpha = 1.
 ImVec4 ui_backdrop_tint();
+
+// Hero card background blur. The shader-generated texture is produced once
+// per cover URL (128x64, two separable passes) and then reused; request it
+// while drawing, then call ui_hero_blur_process() once on the render thread
+// before ImGui_ImplOpenGL3_RenderDrawData(). Returns 0 until it is ready.
+void ui_hero_blur_request(const std::string &url);
+void ui_hero_blur_process();
+GLuint ui_hero_blur_texture(const std::string &url);
+bool ui_hero_blur_size(const std::string &url, int &w, int &h);
+void ui_hero_blur_clear();

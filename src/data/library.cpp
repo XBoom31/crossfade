@@ -140,6 +140,78 @@ bool upsert_track(const Track &t)
     return true;
 }
 
+// Reuses the three track/FTS statements across a bulk save instead of
+// preparing and finalizing them for every row (the difference is seconds on
+// a library with a thousand downloads).
+struct PreparedTrackWriter
+{
+    sqlite3_stmt *track = nullptr;
+    sqlite3_stmt *fts_del = nullptr;
+    sqlite3_stmt *fts_ins = nullptr;
+
+    PreparedTrackWriter()
+    {
+        const char *upsert =
+            "INSERT INTO tracks(video_id,title,artist,artist_id,album,album_id,track_number,"
+            "thumbnail_url,duration_sec,url,requested_by,guest_id,from_party,party_round,updated_at)"
+            " VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,strftime('%s','now'))"
+            " ON CONFLICT(video_id) DO UPDATE SET title=excluded.title,artist=excluded.artist,"
+            "artist_id=excluded.artist_id,album=excluded.album,album_id=excluded.album_id,"
+            "track_number=excluded.track_number,thumbnail_url=excluded.thumbnail_url,"
+            "duration_sec=excluded.duration_sec,url=excluded.url,requested_by=excluded.requested_by,"
+            "guest_id=excluded.guest_id,from_party=excluded.from_party,"
+            "party_round=excluded.party_round,updated_at=excluded.updated_at";
+        sqlite3_prepare_v2(g_db, upsert, -1, &track, nullptr);
+        sqlite3_prepare_v2(g_db, "DELETE FROM tracks_fts WHERE video_id=?", -1, &fts_del, nullptr);
+        sqlite3_prepare_v2(g_db,
+                           "INSERT INTO tracks_fts(video_id,title,artist,album) VALUES(?,?,?,?)",
+                           -1, &fts_ins, nullptr);
+    }
+
+    ~PreparedTrackWriter()
+    {
+        if (track) sqlite3_finalize(track);
+        if (fts_del) sqlite3_finalize(fts_del);
+        if (fts_ins) sqlite3_finalize(fts_ins);
+    }
+
+    bool ok() const { return track && fts_del && fts_ins; }
+
+    bool write(const Track &t)
+    {
+        if (!ok() || t.id.empty())
+            return false;
+        sqlite3_bind_text(track, 1, t.id.c_str(), -1, SQLITE_TRANSIENT);
+        sqlite3_bind_text(track, 2, t.title.c_str(), -1, SQLITE_TRANSIENT);
+        sqlite3_bind_text(track, 3, t.artist.c_str(), -1, SQLITE_TRANSIENT);
+        sqlite3_bind_text(track, 4, t.artist_id.c_str(), -1, SQLITE_TRANSIENT);
+        sqlite3_bind_text(track, 5, t.album.c_str(), -1, SQLITE_TRANSIENT);
+        sqlite3_bind_text(track, 6, t.album_id.c_str(), -1, SQLITE_TRANSIENT);
+        sqlite3_bind_int(track, 7, t.track_number);
+        sqlite3_bind_text(track, 8, t.thumbnail_url.c_str(), -1, SQLITE_TRANSIENT);
+        sqlite3_bind_int(track, 9, t.duration_sec);
+        sqlite3_bind_text(track, 10, t.url.c_str(), -1, SQLITE_TRANSIENT);
+        sqlite3_bind_text(track, 11, t.requested_by.c_str(), -1, SQLITE_TRANSIENT);
+        sqlite3_bind_text(track, 12, t.guest_id.c_str(), -1, SQLITE_TRANSIENT);
+        sqlite3_bind_int(track, 13, t.from_party ? 1 : 0);
+        sqlite3_bind_int(track, 14, t.party_round);
+        const bool ok_track = sqlite3_step(track) == SQLITE_DONE;
+        sqlite3_reset(track);
+
+        sqlite3_bind_text(fts_del, 1, t.id.c_str(), -1, SQLITE_TRANSIENT);
+        sqlite3_step(fts_del);
+        sqlite3_reset(fts_del);
+
+        sqlite3_bind_text(fts_ins, 1, t.id.c_str(), -1, SQLITE_TRANSIENT);
+        sqlite3_bind_text(fts_ins, 2, t.title.c_str(), -1, SQLITE_TRANSIENT);
+        sqlite3_bind_text(fts_ins, 3, t.artist.c_str(), -1, SQLITE_TRANSIENT);
+        sqlite3_bind_text(fts_ins, 4, t.album.c_str(), -1, SQLITE_TRANSIENT);
+        sqlite3_step(fts_ins);
+        sqlite3_reset(fts_ins);
+        return ok_track;
+    }
+};
+
 bool ensure_playlist_row(const std::string &name, sqlite3_int64 &id)
 {
     sqlite3_stmt *st = nullptr;
@@ -1090,20 +1162,78 @@ void save_downloads(const std::vector<Track> &tracks)
     std::lock_guard<std::recursive_mutex> lock(g_mu);
     if (!g_db || !begin_tx())
         return;
-    exec_locked("DELETE FROM downloads");
+    // Incremental update: only new downloads need a track/FTS upsert. Existing
+    // rows just have their position refreshed, so a library with a thousand
+    // cached songs no longer pays the full FTS rebuild on every refresh.
+    std::unordered_set<std::string> existing;
+    {
+        sqlite3_stmt *st = nullptr;
+        if (sqlite3_prepare_v2(g_db, "SELECT video_id FROM downloads", -1, &st, nullptr) ==
+            SQLITE_OK)
+        {
+            while (sqlite3_step(st) == SQLITE_ROW)
+            {
+                const unsigned char *id = sqlite3_column_text(st, 0);
+                if (id)
+                    existing.insert(reinterpret_cast<const char *>(id));
+            }
+            sqlite3_finalize(st);
+        }
+    }
+
+    PreparedTrackWriter writer;
+    sqlite3_stmt *ins = nullptr;
+    sqlite3_prepare_v2(g_db, "INSERT OR REPLACE INTO downloads(video_id,position) VALUES(?,?)",
+                       -1, &ins, nullptr);
+    std::unordered_set<std::string> seen;
+    seen.reserve(tracks.size());
     for (size_t i = 0; i < tracks.size(); ++i)
     {
-        if (!upsert_track(tracks[i]))
+        const std::string &id = tracks[i].id;
+        if (id.empty() || !seen.insert(id).second)
             continue;
-        sqlite3_stmt *st = nullptr;
-        if (sqlite3_prepare_v2(g_db,
-                               "INSERT OR REPLACE INTO downloads(video_id,position) VALUES(?,?)",
-                               -1, &st, nullptr) == SQLITE_OK)
+        if (!existing.count(id))
+            writer.write(tracks[i]);
+        if (ins)
         {
-            sqlite3_bind_text(st, 1, tracks[i].id.c_str(), -1, SQLITE_TRANSIENT);
-            sqlite3_bind_int(st, 2, (int)i);
-            sqlite3_step(st);
-            sqlite3_finalize(st);
+            sqlite3_bind_text(ins, 1, id.c_str(), -1, SQLITE_TRANSIENT);
+            sqlite3_bind_int(ins, 2, (int)i);
+            sqlite3_step(ins);
+            sqlite3_reset(ins);
+        }
+    }
+    if (ins)
+        sqlite3_finalize(ins);
+
+    // Drop rows for files that are gone.
+    {
+        sqlite3_stmt *del = nullptr;
+        if (sqlite3_prepare_v2(g_db, "SELECT video_id FROM downloads", -1, &del, nullptr) ==
+            SQLITE_OK)
+        {
+            std::vector<std::string> stale;
+            while (sqlite3_step(del) == SQLITE_ROW)
+            {
+                const unsigned char *id = sqlite3_column_text(del, 0);
+                if (id && !seen.count(reinterpret_cast<const char *>(id)))
+                    stale.emplace_back(reinterpret_cast<const char *>(id));
+            }
+            sqlite3_finalize(del);
+            if (!stale.empty())
+            {
+                sqlite3_stmt *rm = nullptr;
+                if (sqlite3_prepare_v2(g_db, "DELETE FROM downloads WHERE video_id=?", -1, &rm,
+                                       nullptr) == SQLITE_OK)
+                {
+                    for (const std::string &id : stale)
+                    {
+                        sqlite3_bind_text(rm, 1, id.c_str(), -1, SQLITE_TRANSIENT);
+                        sqlite3_step(rm);
+                        sqlite3_reset(rm);
+                    }
+                    sqlite3_finalize(rm);
+                }
+            }
         }
     }
     // Drop metadata for tracks that are no longer referenced anywhere. This
