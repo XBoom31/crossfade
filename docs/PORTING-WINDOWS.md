@@ -18,6 +18,7 @@ port is still awaiting broader real-machine testing.
 | Notifications | WinRT toasts from a dedicated worker thread; the AUMID display name/icon is registered under `HKCU\Software\Classes\AppUserModelId`, so no Start-menu shortcut is required |
 | MPRIS | `win32/mpris_windows.cpp` maps the same surface onto System Media Transport Controls (`win32/media_session.cpp`): media keys, media flyout, lock screen, timeline seek |
 | Warm start | Per-user, per-session named pipe (`\\.\pipe\crossfade-warm-<user>-<session>`): `show`/`hide`/`toggle`/`quit` from a second launch, no console |
+| Downloads | `yt-dlp[default]` (EJS) plus a bundled `deno.exe`; yt-dlp is launched directly (no `cmd.exe`), falls back to the cookie-free `visionos` client, and logs failures to `<config>/downloads.log` |
 | Console window | The app links as a GUI subsystem binary; helper processes (Python backend, yt-dlp, curl, login) are launched with `CREATE_NO_WINDOW` (`src/core/win_process.cpp`) |
 | Discord RPC | `win32/discord_rpc_stub.cpp` — silent no-op (named-pipe transport `\\.\pipe\discord-ipc-N` = future work) |
 | Accent colour | XDG portal compiled out; daily-accent fallback and `P100_ACCENT` still work |

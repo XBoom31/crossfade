@@ -89,14 +89,32 @@ $venv = "$Root\share\crossfade\venv"
 if (-not (Test-Path "$venv\Scripts\python.exe")) {
     Write-Host "[3/4] Setting up the YouTube Music backend (downloads ~30 MB) ..."
     & $PyExe -m venv $venv
-    & "$venv\Scripts\python.exe" -m pip install --quiet --upgrade pip
-    & "$venv\Scripts\python.exe" -m pip install --quiet -r "$Root\share\crossfade\requirements.txt"
-    if ($LASTEXITCODE -ne 0) {
-        Write-Host "Backend setup failed. Re-run this installer." -ForegroundColor Red
-        exit 1
-    }
 } else {
-    Write-Host "[3/4] Backend environment already set up - skipping."
+    Write-Host "[3/4] Updating the backend environment ..."
+}
+# Always run the requirements pass: upgrades need new extras such as
+# yt-dlp[default] (the EJS challenge solver), even when the venv exists.
+& "$venv\Scripts\python.exe" -m pip install --quiet --upgrade pip
+& "$venv\Scripts\python.exe" -m pip install --quiet -r "$Root\share\crossfade\requirements.txt"
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "Backend setup failed. Re-run this installer." -ForegroundColor Red
+    exit 1
+}
+
+# yt-dlp needs Deno plus the yt-dlp-ejs solver to pass YouTube's JavaScript
+# challenges for audio downloads. Keep deno.exe next to yt-dlp.exe so it works
+# without touching the system PATH.
+$DenoExe = "$venv\Scripts\deno.exe"
+if (-not (Test-Path $DenoExe)) {
+    Write-Host "[3/4] Installing Deno (YouTube download runtime) ..."
+    $denoZip = "$Tmp\deno.zip"
+    try {
+        Invoke-WebRequest -Uri "https://github.com/denoland/deno/releases/latest/download/deno-x86_64-pc-windows-msvc.zip" -OutFile $denoZip
+        Expand-Archive $denoZip -DestinationPath "$Tmp\deno" -Force
+        Copy-Item "$Tmp\deno\deno.exe" $DenoExe -Force
+    } catch {
+        Write-Host "Deno download failed; downloads may fail until it is installed." -ForegroundColor Yellow
+    }
 }
 
 # ---- 4. Start Menu shortcuts ----------------------------------------------

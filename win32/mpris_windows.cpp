@@ -67,14 +67,14 @@ struct MprisPlayer::Impl
 
         std::lock_guard<std::mutex> lock(m_mutex);
         m_current.position_sec = position_sec;
-        if (m_current.duration_sec <= 0.0)
+        if (MpvPlayer *player = m_player)
         {
-            if (MpvPlayer *player = m_player)
-            {
-                const double cached = player->cached_duration();
-                if (cached > 0.0)
-                    m_current.duration_sec = cached;
-            }
+            // mpv reports the new duration shortly after a track change; the
+            // value captured at the "start" event can still be the previous
+            // track's. Refresh it so the media flyout's timeline is correct.
+            const double cached = player->cached_duration();
+            if (cached > 0.0 && std::abs(cached - m_current.duration_sec) > 0.5)
+                m_current.duration_sec = cached;
         }
         // Refresh the mode flags here as well: settings changes do not emit a
         // new track event, and the media flyout should mirror the app.

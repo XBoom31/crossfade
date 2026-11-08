@@ -20,6 +20,13 @@ namespace winproc
 // (or -1 when it could not be started).
 int system_hidden(const std::string &command);
 
+// Same, but captures combined stdout/stderr (capped at 64 KB) for logs.
+int system_hidden_capture(const std::string &command, std::string &output);
+
+// Run a command line directly (no cmd.exe) with no console and capture its
+// combined output. Used for yt-dlp, where shell quote parsing is a liability.
+int direct_capture(const std::string &command_line, std::string &output);
+
 // argv variants for code that already has an argument vector. Hidden and
 // waited-for, or hidden and detached (for the import helper that has to
 // outlive the app).

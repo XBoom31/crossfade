@@ -18,6 +18,8 @@
 
 namespace winproc
 {
+static FILE *spawn_pipe(const std::string &cmdline, const char *mode);
+
 namespace
 {
 
@@ -104,6 +106,23 @@ int run_argv_hidden(const std::vector<std::string> &args)
     return system_hidden(join_argv(args));
 }
 
+int system_hidden_capture(const std::string &command, std::string &output)
+{
+    output.clear();
+    FILE *pipe = popen_hidden(command, "r");
+    if (!pipe)
+        return -1;
+
+    char buffer[1024];
+    size_t n = 0;
+    while ((n = fread(buffer, 1, sizeof(buffer), pipe)) > 0)
+    {
+        if (output.size() < 65536)
+            output.append(buffer, n);
+    }
+    return pclose_hidden(pipe);
+}
+
 bool spawn_argv_hidden(const std::vector<std::string> &args)
 {
     if (args.empty())
@@ -140,6 +159,33 @@ bool spawn_argv_hidden(const std::vector<std::string> &args)
 
 FILE *popen_hidden(const std::string &command, const char *mode)
 {
+    return spawn_pipe(shell_command(command), mode);
+}
+
+FILE *popen_direct_hidden(const std::string &command_line, const char *mode)
+{
+    return spawn_pipe(command_line, mode);
+}
+
+int direct_capture(const std::string &command_line, std::string &output)
+{
+    output.clear();
+    FILE *pipe = popen_direct_hidden(command_line, "r");
+    if (!pipe)
+        return -1;
+
+    char buffer[1024];
+    size_t n = 0;
+    while ((n = fread(buffer, 1, sizeof(buffer), pipe)) > 0)
+    {
+        if (output.size() < 65536)
+            output.append(buffer, n);
+    }
+    return pclose_hidden(pipe);
+}
+
+static FILE *spawn_pipe(const std::string &cmdline, const char *mode)
+{
     if (!mode || mode[0] != 'r')
         return nullptr;
 
@@ -160,9 +206,9 @@ FILE *popen_hidden(const std::string &command, const char *mode)
     si.hStdOutput = write_end;
     si.hStdError = write_end;
 
-    std::string cmdline = shell_command(command);
     PROCESS_INFORMATION pi{};
-    BOOL ok = CreateProcessA(nullptr, cmdline.data(), nullptr, nullptr, TRUE,
+    std::string command_line = cmdline; // CreateProcess may modify the buffer
+    BOOL ok = CreateProcessA(nullptr, command_line.data(), nullptr, nullptr, TRUE,
                              CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi);
     if (nul)
         CloseHandle(nul);

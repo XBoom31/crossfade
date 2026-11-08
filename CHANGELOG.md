@@ -19,11 +19,19 @@ All notable changes to crossfade are documented here.
   Menu is instant.
 - **No console window on Windows.** The app links as a GUI application; helper
   processes (backend, yt-dlp, curl, login) are started without console windows.
+- **Reliable predownloading.** The installer now provides Deno and
+  `yt-dlp[default]` (the EJS challenge solver), which current yt-dlp releases
+  require to download YouTube audio. Downloads are launched directly (no
+  `cmd.exe` quoting), fall back to the cookie-free `visionos` client, and
+  failures are recorded in `<config>/downloads.log` instead of being silent.
 
 ### Fixed
 
 - Windows sign-in no longer fails with `No module named 'gi'`, and the backend
   is found through a dev-tree or installed venv.
+- Seeking on Windows no longer occasionally jumps to the next song: a natural
+  crossfade is suppressed for a settling window after any seek, and the media
+  flyout's duration refreshes when mpv reports the new track.
 
 ## 0.3.0 - 2026-11-08
 

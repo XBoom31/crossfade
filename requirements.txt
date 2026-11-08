@@ -1,2 +1,2 @@
 ytmusicapi>=1.11
-yt-dlp>=2025.1.1
+yt-dlp[default]>=2025.1.1

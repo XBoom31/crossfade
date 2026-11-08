@@ -947,6 +947,29 @@ void maybe_start_crossfade()
     const double cf = std::min((double)g_state.settings.crossfade_duration, dur * 0.5);
     if (cf <= 0.0)
         return;
+
+    // Seeking is asynchronous: cached_time_pos can still report the pre-seek
+    // position for a frame or two (more visibly on Windows, where mpv's
+    // property observer and the render loop race). Starting a natural
+    // crossfade from that stale position made a backward seek near the end
+    // jump to the next song. The hold also avoids fading away a track the
+    // user deliberately seeked into the final seconds: let it play out.
+    {
+        static std::uint64_t last_seek_gen = 0;
+        static std::chrono::steady_clock::time_point last_seek_at{};
+        const std::uint64_t gen = g_player->seek_generation();
+        const auto now = std::chrono::steady_clock::now();
+        if (gen != last_seek_gen)
+        {
+            last_seek_gen = gen;
+            last_seek_at = now;
+        }
+        const auto hold = std::chrono::milliseconds(
+            (long long)(std::max(1.5, cf + 0.5) * 1000.0));
+        if (now - last_seek_at < hold)
+            return;
+    }
+
     const double pos = g_player->cached_time_pos();
     if (pos <= 0.0 || dur - pos > cf)
         return;

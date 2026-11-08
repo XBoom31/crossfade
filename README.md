@@ -387,6 +387,10 @@ python -m venv venv
 venv\Scripts\python.exe -m pip install -r requirements.txt
 ```
 
+`requirements.txt` installs `yt-dlp[default]`, which includes the EJS challenge
+solver. Current yt-dlp also needs a JavaScript runtime; put `deno.exe` next to
+`venv\Scripts\yt-dlp.exe` (the Windows installer does this automatically).
+
 The Windows release installer creates that venv under `%LOCALAPPDATA%`.
 
 ## Sign in

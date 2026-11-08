@@ -352,13 +352,6 @@ static std::string ytdlp_bin()
     return "yt-dlp";
 }
 
-// stderr redirect for popen/system command strings (POSIX vs cmd.exe).
-#ifdef P100_WINDOWS
-static const char kShellErrRedirect[] = " 2>NUL";
-#else
-static const char kShellErrRedirect[] = " 2>/dev/null";
-#endif
-
 static std::string shell_quote(const std::string &value)
 {
 #ifdef P100_WINDOWS
@@ -1298,47 +1291,100 @@ static std::string cookie_arg()
     return " --cookies-from-browser " + g_ytdl_browser;
 }
 
+// yt-dlp now needs a JavaScript runtime plus the yt-dlp-ejs solver to pass
+// YouTube's signature/challenge checks. Deno is installed next to yt-dlp.exe
+// by the Windows installer; pass it explicitly so downloads work even when
+// the venv's Scripts directory is not on PATH.
+static std::string js_runtime_arg()
+{
+#ifdef P100_WINDOWS
+    const std::string bin = ytdlp_bin();
+    const size_t slash = bin.find_last_of("/\\");
+    if (slash != std::string::npos)
+    {
+        const std::string deno = bin.substr(0, slash + 1) + "deno.exe";
+        if (is_executable(deno))
+            return " --js-runtimes \"deno:" + deno + "\"";
+    }
+#endif
+    return "";
+}
+
+// Run a shell command and capture combined stdout/stderr so a yt-dlp failure
+// can be reported instead of disappearing into 2>NUL.
+static int run_capture(const std::string &cmd, std::string &out)
+{
+    out.clear();
+#ifdef P100_WINDOWS
+    return winproc::direct_capture(cmd, out);
+#else
+    FILE *pipe = popen((cmd + " 2>&1").c_str(), "r");
+    if (!pipe)
+        return -1;
+    char buffer[1024];
+    size_t n = 0;
+    while ((n = fread(buffer, 1, sizeof(buffer), pipe)) > 0)
+    {
+        if (out.size() < 65536)
+            out.append(buffer, n);
+    }
+    const int status = pclose(pipe);
+    return (status >= 0 && WIFEXITED(status)) ? WEXITSTATUS(status) : -1;
+#endif
+}
+
+static void log_download_failure(const std::string &video_id, const char *attempt,
+                                 int rc, const std::string &output,
+                                 const std::string &command)
+{
+    std::string tail = output;
+    if (tail.size() > 2000)
+        tail = tail.substr(tail.size() - 2000);
+    const std::string path = p100_config_path("downloads.log");
+    std::error_code ec;
+    if (std::filesystem::exists(path, ec) &&
+        std::filesystem::file_size(path, ec) > 1024 * 1024)
+        std::filesystem::remove(path, ec);
+    std::ofstream log(path, std::ios::app);
+    if (log)
+    {
+        log << "[" << std::time(nullptr) << "] " << video_id
+            << " attempt=" << attempt << " rc=" << rc << "\n"
+            << "cmd: " << command << "\n"
+            << tail << "\n\n";
+    }
+    fprintf(stderr, "[yt-dlp] %s attempt %s failed (rc=%d): %s\n",
+            video_id.c_str(), attempt, rc, tail.c_str());
+}
+
 static Track fetch_track_metadata(const std::string &video_id)
 {
     Track t;
     t.id = video_id;
     t.url = "https://www.youtube.com/watch?v=" + video_id;
 
-    std::string cmd = shell_quote(ytdlp_bin()) + " -j --skip-download " + cookie_arg() + " " + t.url + kShellErrRedirect;
-    std::array<char, 128> buffer;
-    std::string result;
-#ifdef P100_WINDOWS
-    std::unique_ptr<FILE, decltype(&winproc::pclose_hidden)> pipe(
-        winproc::popen_hidden(cmd, "r"), winproc::pclose_hidden);
-#else
-    std::unique_ptr<FILE, decltype(&pclose)> pipe(popen(cmd.c_str(), "r"), pclose);
-#endif
+    const std::string base =
+        shell_quote(ytdlp_bin()) + " -j --skip-download" + js_runtime_arg();
+    const std::string url = "https://www.youtube.com/watch?v=" + video_id;
+    const std::string attempts[] = {
+        base + cookie_arg() + " " + url,
+        base + " " + url,
+        base + " --extractor-args \"youtube:player_client=visionos\" " + url,
+    };
 
-    if (pipe)
+    std::string result;
+    for (size_t i = 0; i < sizeof(attempts) / sizeof(attempts[0]); ++i)
     {
-        while (fgets(buffer.data(), buffer.size(), pipe.get()) != nullptr)
+        std::string output;
+        const int rc = run_capture(attempts[i], output);
+        const size_t brace = output.find('{');
+        if (rc == 0 && brace != std::string::npos)
         {
-            result += buffer.data();
+            result = output.substr(brace);
+            break;
         }
-    }
-    if (result.empty())
-    {
-        // Some tracks are only fetchable without cookie access (public
-        // content); don't fail the whole cache write because of that.
-        cmd = shell_quote(ytdlp_bin()) + " -j --skip-download " + t.url + kShellErrRedirect;
-#ifdef P100_WINDOWS
-        std::unique_ptr<FILE, decltype(&winproc::pclose_hidden)> p2(
-            winproc::popen_hidden(cmd, "r"), winproc::pclose_hidden);
-#else
-        std::unique_ptr<FILE, decltype(&pclose)> p2(popen(cmd.c_str(), "r"), pclose);
-#endif
-        if (p2)
-        {
-            while (fgets(buffer.data(), buffer.size(), p2.get()) != nullptr)
-            {
-                result += buffer.data();
-            }
-        }
+        if (i + 1 == sizeof(attempts) / sizeof(attempts[0]))
+            log_download_failure(video_id, "metadata", rc, output, attempts[i]);
     }
 
     t.title = json_get_string(result, "title");
@@ -2237,42 +2283,44 @@ std::string get_cached_audio_path(const std::string &video_id)
     if (!cached.empty())
         return cached;
 
-    std::string output_template = dir + "/" + video_id + ".%(ext)s";
-    std::string cmd = shell_quote(ytdlp_bin()) + " -f bestaudio" + cookie_arg() + " -o \"" + output_template + "\" "
-                                                                        "https://www.youtube.com/watch?v=" +
-                      video_id + kShellErrRedirect;
-#ifdef P100_WINDOWS
-    int ret = winproc::system_hidden(cmd);
-#else
-    int ret = system(cmd.c_str());
-#endif
-    if (ret != 0)
-    {
-        // Cookie-locked profiles can break the signed download; retry
-        // without explicit cookies (works for public tracks).
-        cmd = shell_quote(ytdlp_bin()) + " -f bestaudio -o \"" + output_template + "\" "
-                                                               "https://www.youtube.com/watch?v=" +
-              video_id + kShellErrRedirect;
-#ifdef P100_WINDOWS
-        ret = winproc::system_hidden(cmd);
-#else
-        ret = system(cmd.c_str());
-#endif
-    }
-    if (ret != 0)
-        return "";
+    const std::string url = "https://www.youtube.com/watch?v=" + video_id;
+    const std::string output = " -o \"" + dir + "/" + video_id + ".%(ext)s\" ";
+    const std::string base = shell_quote(ytdlp_bin()) +
+                             " -f bestaudio --no-progress --socket-timeout 15 --retries 2" +
+                             js_runtime_arg();
 
-    std::string full_path = find_audio_in(dir, video_id);
-    if (!full_path.empty())
+    // Try authenticated first (private/age-restricted tracks), then public,
+    // then the visionos client which currently needs no JS challenge or
+    // cookies. All failures are logged: predownload used to fail silently.
+    struct Attempt
     {
-        // Only write a sidecar when the fetch produced a title: an empty
-        // one would hide the song from the Downloads list (which skips
-        // empty-title entries) while find_audio_in still plays it.
-        Track t = fetch_track_metadata(video_id);
-        if (!t.title.empty())
-            save_metadata(t, full_path);
+        const char *name;
+        std::string command;
+    };
+    const Attempt attempts[] = {
+        {"cookies", base + cookie_arg() + output + url},
+        {"public", base + output + url},
+        {"visionos", base + " --extractor-args \"youtube:player_client=visionos\"" + output + url},
+    };
+
+    for (const Attempt &attempt : attempts)
+    {
+        std::string output_text;
+        const int rc = run_capture(attempt.command, output_text);
+        std::string full_path = find_audio_in(dir, video_id);
+        if (rc == 0 && !full_path.empty())
+        {
+            // Only write a sidecar when the fetch produced a title: an empty
+            // one would hide the song from the Downloads list (which skips
+            // empty-title entries) while find_audio_in still plays it.
+            Track t = fetch_track_metadata(video_id);
+            if (!t.title.empty())
+                save_metadata(t, full_path);
+            return full_path;
+        }
+        log_download_failure(video_id, attempt.name, rc, output_text, attempt.command);
     }
-    return full_path;
+    return "";
 }
 
 // Resolve a direct streaming URL (yt-dlp -g) so playback can start
