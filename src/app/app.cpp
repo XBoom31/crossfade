@@ -418,6 +418,14 @@ int app_run(int argc, char **argv)
     writeback_set_enabled(g_state.settings.server_sync);
     discord_apply_client_id();
 
+    // Bootstrap the Python backend in parallel with the rest of startup. It
+    // takes ~1 s of Python imports; waiting for it here used to dominate boot.
+    set_ytdl_browser(g_state.settings.ytdl_browser);
+    set_auth_mode(g_state.settings.auth_mode);
+    set_warm_stream_resolver(g_state.settings.warm_stream_resolver);
+    bool backend_started = false;
+    std::thread backend_boot_thread([&backend_started]() { backend_started = start_backend(); });
+
     // ---- Local library database ----
     {
         std::string library_error;
@@ -542,11 +550,6 @@ int app_run(int argc, char **argv)
     }
 
     // ---- Mpv ----
-    // Single cookie source everywhere: mpv, local yt-dlp calls and the
-    // Python backend all use the browser chosen in Settings.
-    set_ytdl_browser(g_state.settings.ytdl_browser);
-    set_auth_mode(g_state.settings.auth_mode);
-    set_warm_stream_resolver(g_state.settings.warm_stream_resolver);
     // Download cache cap (0 = unlimited). Re-applied live when the user
     // changes the combo in Settings.
     set_audio_cache_cap((double)g_state.settings.download_cap_gb * 1024.0 * 1024.0 * 1024.0);
@@ -578,7 +581,9 @@ int app_run(int argc, char **argv)
 
     start_writeback_worker();
 
-    if (!start_backend())
+    if (backend_boot_thread.joinable())
+        backend_boot_thread.join();
+    if (!backend_started)
     {
         fprintf(stderr, "Failed to start backend.\n");
         // Don't hard-exit: keep the UI up so the auth-failure banner

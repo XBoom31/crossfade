@@ -1,6 +1,7 @@
 #include "ytdlp.h"
 #include "json_util.h"
 #include "paths.h"
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <memory>
@@ -70,6 +71,7 @@ static std::vector<std::string> list_dir_names(const std::string &dir)
 
 struct BackendChannel
 {
+    std::atomic<bool> ready{false}; // set once the {"status":"ready"} line arrives
 #ifndef P100_WINDOWS
     FILE *in = nullptr;
     FILE *out = nullptr;
@@ -92,6 +94,7 @@ struct BackendChannel
 static BackendChannel g_backend;
 static BackendChannel g_play_backend;
 static BackendChannel g_prefetch_backend;
+static std::atomic<bool> g_backend_stopping{false};
 
 static std::string g_warm_extractor = "1"; // P100_WARM_EXTRACTOR for children
 
@@ -422,6 +425,8 @@ static std::string backend_read_line(BackendChannel &ch)
     {
         if (ch.dead.load())
             return "{\"error\":\"Backend not running\",\"kind\":\"backend\"}";
+        if (g_backend_stopping.load(std::memory_order_relaxed))
+            return "{\"error\":\"Backend stopping\",\"kind\":\"backend\"}";
         int remaining = (int)(deadline - time(nullptr));
         if (remaining <= 0)
         {
@@ -480,6 +485,8 @@ static std::string backend_read_line(BackendChannel &ch)
     {
         if (ch.dead.load())
             return "{\"error\":\"Backend not running\",\"kind\":\"backend\"}";
+        if (g_backend_stopping.load(std::memory_order_relaxed))
+            return "{\"error\":\"Backend stopping\",\"kind\":\"backend\"}";
 
         int remaining = (int)(deadline - time(nullptr));
         if (remaining <= 0)
@@ -489,7 +496,8 @@ static std::string backend_read_line(BackendChannel &ch)
         }
 
         struct pollfd pfd = {fd, POLLIN, 0};
-        int pr = poll(&pfd, 1, remaining * 1000);
+        const int wait_ms = std::min(remaining * 1000, 200);
+        int pr = poll(&pfd, 1, wait_ms);
         if (pr < 0)
         {
             if (errno == EINTR)
@@ -624,6 +632,7 @@ static bool spawn_backend(BackendChannel &ch)
             record_backend_error(ready);
         return false;
     }
+    ch.ready.store(true, std::memory_order_release);
     return true;
 #else
     int to_child[2], from_child[2];
@@ -709,23 +718,39 @@ static bool spawn_backend(BackendChannel &ch)
 #endif // !P100_WINDOWS
 }
 
+static std::thread g_optional_backend_thread;
+
 bool start_backend()
 {
-    // The play and prefetch channels are optimizations: failing to start
-    // either only means their work shares the main channel again, so they are
-    // not fatal.
+    g_backend_stopping.store(false, std::memory_order_relaxed);
+    // Only the main channel blocks startup. The play/prefetch workers are
+    // optimizations: spawning them takes ~2.5 s of Python startup, so they
+    // come up in the background and stay on the main channel until ready.
     bool main_ok = spawn_backend(g_backend);
-    if (!spawn_backend(g_play_backend))
-        fprintf(stderr, "Play backend worker unavailable; stream resolves "
-                        "share the main backend channel.\n");
-    if (!spawn_backend(g_prefetch_backend))
-        fprintf(stderr, "Prefetch backend worker unavailable; speculative "
-                        "warmups share the main backend channel.\n");
+
+    // A backend restart during the session must not assign over a still
+    // joinable thread (std::terminate).
+    if (g_optional_backend_thread.joinable())
+        g_optional_backend_thread.join();
+    g_optional_backend_thread = std::thread([]() {
+        if (!spawn_backend(g_play_backend))
+            fprintf(stderr, "Play backend worker unavailable; stream resolves "
+                            "share the main backend channel.\n");
+        if (!spawn_backend(g_prefetch_backend))
+            fprintf(stderr, "Prefetch backend worker unavailable; speculative "
+                            "warmups share the main backend channel.\n");
+    });
     return main_ok;
 }
 
 void stop_backend()
 {
+    // Cancel an in-flight optional-channel ready wait, then join before we
+    // close its pipes. Without this a backend spawned while quitting could
+    // delay shutdown by the full read timeout.
+    g_backend_stopping.store(true, std::memory_order_relaxed);
+    if (g_optional_backend_thread.joinable())
+        g_optional_backend_thread.join();
     for (BackendChannel *ch : {&g_backend, &g_play_backend, &g_prefetch_backend})
     {
         backend_write_line(*ch, "quit");
@@ -1137,11 +1162,7 @@ static std::string send_command(const std::string &cmd)
 // the main channel if their worker is down.
 static std::string send_play_command(const std::string &cmd)
 {
-#ifdef P100_WINDOWS
-    if (g_play_backend.h_in_write != NULL)
-#else
-    if (g_play_backend.in)
-#endif
+    if (g_play_backend.ready.load(std::memory_order_acquire))
         return send_command_on(g_play_backend, cmd);
     return send_command_on(g_backend, cmd);
 }
@@ -1151,11 +1172,7 @@ static std::string send_play_command(const std::string &cmd)
 // metadata lookups; sharing the play channel would make a click wait instead.
 static std::string send_prefetch_command(const std::string &cmd)
 {
-#ifdef P100_WINDOWS
-    if (g_prefetch_backend.h_in_write != NULL)
-#else
-    if (g_prefetch_backend.in)
-#endif
+    if (g_prefetch_backend.ready.load(std::memory_order_acquire))
         return send_command_on(g_prefetch_backend, cmd);
     return send_command_on(g_backend, cmd);
 }
