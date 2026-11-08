@@ -97,6 +97,8 @@ static BackendChannel g_backend;
 static BackendChannel g_play_backend;
 static BackendChannel g_prefetch_backend;
 static std::atomic<bool> g_backend_stopping{false};
+static std::atomic<bool> g_optional_backends_enabled{true};
+static std::atomic<bool> g_backend_deferred{false};
 
 static std::string g_warm_extractor = "1"; // P100_WARM_EXTRACTOR for children
 
@@ -732,6 +734,16 @@ static bool spawn_backend(BackendChannel &ch)
 
 static std::thread g_optional_backend_thread;
 
+void set_optional_backends_enabled(bool enabled)
+{
+    g_optional_backends_enabled.store(enabled, std::memory_order_relaxed);
+}
+
+void set_backend_deferred(bool deferred)
+{
+    g_backend_deferred.store(deferred, std::memory_order_relaxed);
+}
+
 bool start_backend()
 {
     g_backend_stopping.store(false, std::memory_order_relaxed);
@@ -749,6 +761,8 @@ bool start_backend()
     // joinable thread (std::terminate).
     if (g_optional_backend_thread.joinable())
         g_optional_backend_thread.join();
+    if (!g_optional_backends_enabled.load(std::memory_order_relaxed))
+        return main_ok;
     g_optional_backend_thread = std::thread([]() {
         if (!spawn_backend(g_play_backend) &&
             !g_backend_stopping.load(std::memory_order_relaxed))
@@ -1149,6 +1163,8 @@ static std::string send_command_on(BackendChannel &ch, const std::string &cmd)
     // selected once ready, so this normally only affects the main channel.
     if (!ch.ready.load(std::memory_order_acquire))
     {
+        if (g_backend_deferred.load(std::memory_order_relaxed))
+            return "{\"error\":\"Backend parked\",\"kind\":\"backend\"}";
         std::unique_lock<std::mutex> rl(ch.ready_mutex);
         ch.ready_cv.wait_for(rl, std::chrono::milliseconds(15000), [&] {
             return ch.ready.load(std::memory_order_acquire) || ch.dead.load() ||

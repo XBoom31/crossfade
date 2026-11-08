@@ -177,6 +177,9 @@ void save_settings(const Settings &settings)
         << "\"hero_backdrop\":" << settings.hero_backdrop << ","
         << "\"hero_backdrop_strength\":" << settings.hero_backdrop_strength << ","
         << "\"backdrop_shader\":" << (settings.backdrop_shader ? "true" : "false") << ","
+        << "\"warm_start\":" << (settings.warm_start ? "true" : "false") << ","
+        << "\"warm_start_mode\":" << settings.warm_start_mode << ","
+        << "\"warm_close_hides\":" << (settings.warm_close_hides ? "true" : "false") << ","
         << "\"safe_mode\":" << (settings.safe_mode ? "true" : "false") << ","
         << "\"low_power\":" << (settings.low_power ? "true" : "false") << ","
         << "\"low_power_on_battery\":" << (settings.low_power_on_battery ? "true" : "false") << ","
@@ -385,6 +388,13 @@ Settings load_settings()
         }
         if (json.find("\"backdrop_shader\"") != std::string::npos)
             s.backdrop_shader = get_bool("backdrop_shader");
+        if (json.find("\"warm_start\"") != std::string::npos)
+            s.warm_start = get_bool("warm_start");
+        if (json.find("\"warm_start_mode\"") != std::string::npos)
+            s.warm_start_mode =
+                std::max(0, std::min(2, (int)std::lround(get_float("warm_start_mode"))));
+        if (json.find("\"warm_close_hides\"") != std::string::npos)
+            s.warm_close_hides = get_bool("warm_close_hides");
         if (json.find("\"safe_mode\"") != std::string::npos)
             s.safe_mode = get_bool("safe_mode");
         if (json.find("\"low_power\"") != std::string::npos)
@@ -572,6 +582,7 @@ enum SettingsCategory
     SC_SHORTCUTS,
     SC_LIBRARY,
     SC_POWER,
+    SC_WARMSTART,
     SC_DIAGNOSTICS,
     SC_NOTES,
     SC_DANGER,
@@ -613,6 +624,7 @@ static const SettingsNavEntry kSettingsNav[] = {
     {SC_LIBRARY, UiIcon::Download, "Library", "SYSTEM"},
     {SC_SHORTCUTS, UiIcon::More, "Shortcuts", nullptr},
     {SC_POWER, UiIcon::Moon, "Power", nullptr},
+    {SC_WARMSTART, UiIcon::Repeat, "Warm start", nullptr},
     {SC_DIAGNOSTICS, UiIcon::Stats, "Diagnostics", nullptr},
     {SC_NOTES, UiIcon::Settings, "Notes", nullptr},
     {SC_DANGER, UiIcon::Close, "Danger Zone", nullptr},
@@ -1831,6 +1843,37 @@ void draw_settings_panel(AppState &state)
                            power::env_forced()
                                ? "P100_LOW_POWER is set, so low power mode is forced on."
                                : nullptr);
+    }
+    if (s_settings_category == SC_WARMSTART)
+    {
+        SettingsCard card("Warm start", "Keep a background instance so relaunching is instant.",
+                          UiIcon::Repeat);
+
+        if (settings_toggle_row("##warm_start", "Warm start",
+                                &state.settings.warm_start,
+                                "Reuse one background instance instead of booting a new process. Start it at login with `crossfade --warm`; running `crossfade` later just shows the existing window."))
+            save = true;
+
+        if (state.settings.warm_start)
+        {
+            const char *modes[] = {"Everything (UI + all backends)",
+                                   "Main backend only",
+                                   "UI only (backends start when shown)"};
+            int mode = std::max(0, std::min(2, state.settings.warm_start_mode));
+            settings_row_label("Keep warm", modes[mode],
+                               "What stays resident while the window is hidden. Everything uses the most memory; UI only parks the Python backends.");
+            ImGui::SetNextItemWidth(field_w);
+            if (ImGui::Combo("##warm_mode", &mode, modes, 3))
+            {
+                state.settings.warm_start_mode = mode;
+                save = true;
+            }
+            if (settings_toggle_row("##warm_close", "Closing the window keeps running",
+                                    &state.settings.warm_close_hides,
+                                    "Hide instead of quitting when the window is closed. Use `crossfade --quit` to stop the background instance."))
+                save = true;
+            settings_help("xinitrc: `crossfade --warm &`. Later: `crossfade` shows it, `crossfade --toggle` hides/shows, `crossfade --quit` exits.");
+        }
     }
     if (s_settings_category == SC_DIAGNOSTICS)
     {

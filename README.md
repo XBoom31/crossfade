@@ -246,6 +246,23 @@ One time — see [Sign in](#sign-in).
 
 Launch **crossfade** from your application menu, or run `crossfade` in a terminal.
 
+#### Warm start (instant relaunch)
+
+Keep one background instance resident and make later launches instant:
+
+```bash
+crossfade --warm &   # from ~/.xinitrc or your desktop autostart
+crossfade            # shows/raises the resident window in ~100 ms
+crossfade --toggle   # hide/show
+crossfade --quit     # stop the background instance
+```
+
+Choose what stays resident in **Settings → System → Warm start**:
+*Everything* keeps the UI and all three Python backends warm (~150–260 MB PSS);
+*Main backend only* and *UI only* park the optional backends to save RAM.
+Closing the window hides it while warm start is on. `--new-instance` bypasses
+the single-instance socket and starts a second copy.
+
 <details>
 <summary><b>Other ways to build and run</b></summary>
 

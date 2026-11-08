@@ -44,6 +44,7 @@
 #include "discord_rpc.h"
 #include "power.h"
 #include "app_internal.h"
+#include "warm_start.h"
 #include "session.h"
 
 // ---- libnotify (Linux desktop notifications; no-op on Windows) ----
@@ -75,6 +76,10 @@ std::mutex g_data_mutex;
 // SIGTERM/SIGINT request a clean shutdown (save session, stop workers, tear
 // down GL) instead of leaving the process to be killed mid-write.
 static volatile std::sig_atomic_t g_quit_requested = 0;
+// Single-instance commands delivered by the warm-start accept thread. Main
+// loop values: 0 none, 1 show, 2 hide, 3 toggle, 4 quit.
+static std::atomic<int> g_warm_command{0};
+static std::atomic<bool> g_sdl_ready{false};
 static void handle_quit_signal(int)
 {
     g_quit_requested = 1;
@@ -383,6 +388,10 @@ int app_run(int argc, char **argv)
 {
     bool autoplay_last = false;
     bool cli_low_power = false;
+    bool warm_flag = false;
+    bool new_instance = false;
+    bool quit_flag = false;
+    bool toggle_flag = false;
     for (int i = 1; i < argc; ++i)
     {
         const std::string arg = argv[i] ? argv[i] : "";
@@ -395,12 +404,40 @@ int app_run(int argc, char **argv)
             autoplay_last = true;
         if (arg == "--low-power")
             cli_low_power = true;
+        if (arg == "--warm")
+            warm_flag = true;
+        if (arg == "--new-instance")
+            new_instance = true;
+        if (arg == "--quit")
+            quit_flag = true;
+        if (arg == "--toggle")
+            toggle_flag = true;
     }
+
+    // ---- Load settings (needed to know whether single-instance is enabled) ----
+    g_state.settings = load_settings();
+
+    // Warm start: hand the command to a resident instance and exit without
+    // touching SDL/GL/the backend or creating cache directories.
+    if (quit_flag)
+    {
+        warm_start::send(warm_start::Command::Quit);
+        return 0;
+    }
+    if (!new_instance)
+    {
+        if (toggle_flag)
+        {
+            if (warm_start::send(warm_start::Command::Toggle))
+                return 0;
+        }
+        else if ((warm_flag || g_state.settings.warm_start) &&
+                 warm_start::send(warm_start::Command::Show))
+            return 0;
+    }
+
     DLOG("boot: app_run at %lld", DNOW());
     ensure_cache_dir();
-
-    // ---- Load settings ----
-    g_state.settings = load_settings();
     if (cli_low_power)
         power::set_cli_override(true);
     power::configure(g_state.settings.low_power, g_state.settings.low_power_on_battery);
@@ -418,15 +455,53 @@ int app_run(int argc, char **argv)
     writeback_set_enabled(g_state.settings.server_sync);
     discord_apply_client_id();
 
+    const bool start_hidden = warm_flag;
+    const bool serve_warm = !new_instance && (warm_flag || g_state.settings.warm_start);
+    if (serve_warm)
+    {
+        std::string warm_error;
+        if (!warm_start::start_server([](warm_start::Command cmd) {
+                int value = 1;
+                switch (cmd)
+                {
+                case warm_start::Command::Show: value = 1; break;
+                case warm_start::Command::Hide: value = 2; break;
+                case warm_start::Command::Toggle: value = 3; break;
+                case warm_start::Command::Quit: value = 4; break;
+                }
+                g_warm_command.store(value, std::memory_order_release);
+                if (g_sdl_ready.load(std::memory_order_relaxed))
+                {
+                    SDL_Event ev{};
+                    ev.type = SDL_USEREVENT;
+                    SDL_PushEvent(&ev);
+                }
+            }, warm_error))
+            DLOG("warm start unavailable: %s", warm_error.c_str());
+    }
+
     // Bootstrap the Python backend in parallel with the rest of startup. It
     // takes ~1 s of Python imports; waiting for it here used to dominate boot.
     set_ytdl_browser(g_state.settings.ytdl_browser);
     set_auth_mode(g_state.settings.auth_mode);
     set_warm_stream_resolver(g_state.settings.warm_stream_resolver);
+    const int warm_keep = std::max(0, std::min(2, g_state.settings.warm_start_mode));
+    const bool defer_backend = start_hidden && warm_keep == 2;
+    set_backend_deferred(defer_backend);
+
     std::atomic<int> backend_boot_state{0}; // 0 starting, 1 ready, -1 failed
-    std::thread backend_boot_thread([&backend_boot_state]() {
-        backend_boot_state.store(start_backend() ? 1 : -1, std::memory_order_release);
-    });
+    std::thread backend_boot_thread;
+    auto start_backend_async = [&](bool main_only) {
+        if (backend_boot_thread.joinable())
+            backend_boot_thread.join();
+        set_optional_backends_enabled(!main_only);
+        backend_boot_state.store(0, std::memory_order_release);
+        backend_boot_thread = std::thread([&backend_boot_state]() {
+            backend_boot_state.store(start_backend() ? 1 : -1, std::memory_order_release);
+        });
+    };
+    if (!defer_backend)
+        start_backend_async(start_hidden && warm_keep == 1);
 
     // SQLite + saved-data loading runs in parallel with SDL/GL window setup.
     // It costs ~160 ms and does not touch UI or graphics state.
@@ -469,6 +544,7 @@ int app_run(int argc, char **argv)
         if (data_boot_thread.joinable())
             data_boot_thread.join();
         stop_backend();
+        warm_start::stop_server();
         return code;
     };
 
@@ -486,6 +562,7 @@ int app_run(int argc, char **argv)
     // so suppress SDL's synthetic touch-to-mouse events.
     SDL_SetHint(SDL_HINT_TOUCH_MOUSE_EVENTS, "0");
     SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER);
+    g_sdl_ready.store(true, std::memory_order_relaxed);
     party_init();
     party_set_wake(party_wake_event);
     if (!safe_mode)
@@ -496,15 +573,20 @@ int app_run(int argc, char **argv)
     SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
     SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 0);
 
+    SDL_WindowFlags window_flags = (SDL_WindowFlags)(
+        SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI);
+    if (start_hidden)
+        window_flags = (SDL_WindowFlags)(window_flags | SDL_WINDOW_HIDDEN);
     SDL_Window *window = SDL_CreateWindow("crossfade",
                                           SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, 1280, 820,
-                                          SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI);
+                                          window_flags);
     if (!window)
     {
         fprintf(stderr, "SDL_CreateWindow failed: %s\n", SDL_GetError());
         return fatal_exit(1);
     }
     SDL_SetWindowMinimumSize(window, 860, 600);
+    g_window_hidden = start_hidden;
     SDL_GLContext gl_context = SDL_GL_CreateContext(window);
     if (!gl_context)
     {
@@ -650,8 +732,9 @@ int app_run(int argc, char **argv)
         g_state.pending_video_url = r.track_url;
     }
 
-    g_state.home_refreshing = true;
-    tasks::spawn([]() { load_recommendations(false); });
+    g_state.home_refreshing = !defer_backend;
+    if (!defer_backend)
+        tasks::spawn([]() { load_recommendations(false); });
 
 #ifndef P100_WINDOWS
     std::signal(SIGTERM, handle_quit_signal);
@@ -683,6 +766,38 @@ int app_run(int argc, char **argv)
     bool running = true;
     bool show_demo = false;
     bool backend_boot_reported = false;
+    bool defer_play = start_hidden && !autoplay_last;
+
+    auto hide_window = [&]() {
+        SDL_HideWindow(window);
+        g_window_hidden = true;
+        if (warm_keep == 2)
+        {
+            cancel_backend_startup();
+            if (backend_boot_thread.joinable())
+                backend_boot_thread.join();
+            stop_backend();
+            set_backend_deferred(true);
+            backend_boot_state.store(0, std::memory_order_release);
+            g_state.home_refreshing = false;
+        }
+    };
+    auto show_window = [&]() {
+        SDL_ShowWindow(window);
+        SDL_RestoreWindow(window);
+        SDL_RaiseWindow(window);
+        g_window_hidden = false;
+        defer_play = false;
+        if (warm_keep == 2 && backend_boot_state.load(std::memory_order_acquire) == 0)
+        {
+            set_backend_deferred(false);
+            start_backend_async(false);
+            g_state.home_refreshing = true;
+            tasks::spawn([]() { load_recommendations(false); });
+        }
+        g_state.repaint_requested = true;
+    };
+
     auto last_save_time = std::chrono::steady_clock::now();
     auto last_frame_time = last_save_time;
     auto next_frame = last_save_time;
@@ -696,6 +811,18 @@ int app_run(int argc, char **argv)
         // advancing (deadlock or a synchronous backend call on the UI thread),
         // the watchdog dumps the stuck stack after a minute.
         diagnostics::heartbeat();
+        // Single-instance commands from the warm-start socket.
+        if (int warm_cmd = g_warm_command.exchange(0, std::memory_order_acquire))
+        {
+            if (warm_cmd == 4)
+                break; // quit
+            const bool want_show = warm_cmd == 1 || (warm_cmd == 3 && g_window_hidden);
+            if (want_show)
+                show_window();
+            else
+                hide_window();
+            continue;
+        }
         // Report a backend startup failure once we know it; the UI is already
         // up at this point, so this only updates the banner/toast.
         if (!backend_boot_reported && backend_boot_state.load(std::memory_order_acquire) != 0)
@@ -805,7 +932,12 @@ int app_run(int argc, char **argv)
                 {
                     if (event.window.event == SDL_WINDOWEVENT_CLOSE &&
                         event.window.windowID == SDL_GetWindowID(window))
-                        running = false;
+                    {
+                        if (serve_warm && g_state.settings.warm_close_hides)
+                            hide_window();
+                        else
+                            running = false;
+                    }
                     // Track visibility so an invisible window never burns GPU
                     // on frames nobody can see.
                     switch (event.window.event)
@@ -1138,7 +1270,7 @@ int app_run(int argc, char **argv)
             // Handle pending manual play
             {
                 std::lock_guard<std::mutex> lock(g_data_mutex);
-                if (!g_state.pending_play_url.empty())
+                if (!defer_play && !g_state.pending_play_url.empty())
                 {
                     // A click/next/queue pick can land mid-crossfade. Settle
                     // that fade before resolving the new track so the helper
@@ -1730,6 +1862,7 @@ int app_run(int argc, char **argv)
 
     // ---- Cleanup ----
     DLOG("shutdown: party stop");
+    warm_start::stop_server();
     party_stop();
     DLOG("shutdown: backend stop");
     cancel_backend_startup();

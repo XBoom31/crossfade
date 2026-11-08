@@ -219,6 +219,12 @@ struct Settings
     // system reports it is running on battery. P100_LOW_POWER overrides both.
     bool low_power = false;
     bool low_power_on_battery = true;
+    // Warm start: keep a background instance for instant relaunches. The
+    // window may be hidden while the GL context and (per warm_start_mode)
+    // backends stay warm. 0 = everything, 1 = main backend only, 2 = UI only.
+    bool warm_start = true;
+    int warm_start_mode = 0;
+    bool warm_close_hides = true;
     // Glowing separators: a soft album-coloured light streak under each
     // section header, plus album-tinted structural hairlines. Uses the same
     // dominant-colour tint as the backdrop, but works with the backdrop off.
@@ -296,6 +302,9 @@ struct Settings
                safe_mode == o.safe_mode &&
                low_power == o.low_power &&
                low_power_on_battery == o.low_power_on_battery &&
+               warm_start == o.warm_start &&
+               warm_start_mode == o.warm_start_mode &&
+               warm_close_hides == o.warm_close_hides &&
                glow_separators == o.glow_separators &&
                glow_separator_strength == o.glow_separator_strength &&
                backdrop_drift == o.backdrop_drift &&

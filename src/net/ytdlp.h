@@ -44,6 +44,11 @@ struct Lyrics
 };
 
 bool start_backend();
+// Whether start_backend() also launches the play/prefetch workers.
+void set_optional_backends_enabled(bool enabled);
+// While parked, commands fail fast instead of waiting for a backend that is
+// intentionally not running yet.
+void set_backend_deferred(bool deferred);
 // Cancel an in-flight startup wait (called before joining the boot thread
 // during shutdown).
 void cancel_backend_startup();

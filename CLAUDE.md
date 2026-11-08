@@ -80,6 +80,7 @@ The C++ process forks the Python backend at startup, communicating via pipes. Ea
 | `app/app_playback.cpp` | Queue building, stream resolution, recording, crossfade and player events |
 | `app/app_workers.cpp` | Background search, recommendations, lyrics and cover/download workers |
 | `app/app_internal.h` | Shared app-module globals, types and function declarations |
+| `app/warm_start.cpp` | Single-instance UNIX socket, warm start and show/hide/quit IPC |
 | `ui.h` | `AppState` struct (global state), `Track`/`Playlist`/`Settings`/`SessionState` types, UI function declarations, layout constants |
 | `ui_helpers.cpp` | Shared UI helpers, playlist source resolution, scroll/content fades |
 | `data/store.cpp` | JSON persistence fallbacks (`liked.json`, `history.json`, counts, log, queue) when SQLite is unavailable |
@@ -119,6 +120,12 @@ The C++ process forks the Python backend at startup, communicating via pipes. Ea
 - **Playlist source tracking:** `current_playlist_source` (Home/Search/Downloads/Radio/Liked/Playlist/Album/Artist) determines which vector drives the current view
 
 ### Main loop power management
+
+Warm start (Settings → System → Warm start, `--warm`) keeps one background
+instance and routes later launches over a UNIX socket (`$XDG_RUNTIME_DIR/crossfade.sock`):
+`crossfade` raises it, `--toggle` hides/shows, `--quit` stops it. The window can
+start hidden; `warm_start_mode` controls whether all backends, only the main one,
+or none stay resident while parked. `--new-instance` bypasses the socket.
 
 The main loop uses `SDL_WaitEventTimeout()` with a per-activity frame budget: 16 ms for animation/input, 100 ms during steady playback, 1 s when fully idle, and a 5 s safety frame. ImGui only renders when a frame is actually due. Low power mode (Settings → System → Power, `--low-power`, or `P100_LOW_POWER=1`) uses 33 ms for interaction, 250 ms during playback and 2 s idle, disables motion, and skips speculative prefetch/downloads.
 
