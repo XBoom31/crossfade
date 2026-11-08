@@ -2121,20 +2121,17 @@ static std::string find_audio_in(const std::string &dir, const std::string &vide
 {
     if (video_id.empty())
         return "";
-    const std::string prefix = video_id + ".";
-    for (const std::string &name : list_dir_names(dir))
+    // Cached songs are always "<id>.<ext>". Probe the known extensions
+    // directly instead of listing the whole directory: the audio cache can
+    // hold thousands of files, and this is also called per visible row.
+    static const char *const exts[] = {"opus", "m4a", "mp3", "webm",
+                                       "flac", "aac", "ogg"};
+    for (const char *ext : exts)
     {
-        // Exact "<id>.<ext>" match. A plain prefix match would also hit ids
-        // that extend another id and yt-dlp fragments like "<id>.f140.webm"
-        // (the extra dot check rejects those).
-        if (name.rfind(prefix, 0) != 0)
-            continue;
-        if (name.find('.', prefix.size()) != std::string::npos)
-            continue;
-        std::string ext = name.substr(prefix.size());
-        if (ext == "opus" || ext == "m4a" || ext == "mp3" || ext == "webm" ||
-            ext == "flac" || ext == "aac" || ext == "ogg")
-            return dir + "/" + name;
+        const std::string path = dir + "/" + video_id + "." + ext;
+        struct stat st;
+        if (stat(path.c_str(), &st) == 0 && S_ISREG(st.st_mode))
+            return path;
     }
     return "";
 }
