@@ -99,7 +99,7 @@ jobs:
           cmake -S . -B build-asan -DCMAKE_BUILD_TYPE=Debug -DCROSSFADE_BUILD_TESTS=ON \
             -DCMAKE_C_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer" \
             -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer"
-          cmake --build build-asan -j2 --target test_party_link test_party_queue test_party_util test_library test_crossfade test_cache test_json test_session test_playlists test_settings
+          cmake --build build-asan -j2 --target test_party_link test_party_queue test_party_util test_library test_crossfade test_cache test_json test_session test_playlists test_settings test_tasks
           ctest --test-dir build-asan --output-on-failure
       - name: Verify binary exists
         run: test -x ./build/crossfade
@@ -229,7 +229,7 @@ jobs:
           cmake -S . -B build-tsan -DCMAKE_BUILD_TYPE=Debug \
             -DCMAKE_C_FLAGS="-fsanitize=thread -fno-omit-frame-pointer" \
             -DCMAKE_CXX_FLAGS="-fsanitize=thread -fno-omit-frame-pointer"
-          cmake --build build-tsan -j2 --target test_party_link test_party_queue test_party_util test_library test_crossfade test_cache test_json test_session test_playlists test_settings
+          cmake --build build-tsan -j2 --target test_party_link test_party_queue test_party_util test_library test_crossfade test_cache test_json test_session test_playlists test_settings test_tasks
           TSAN_OPTIONS=halt_on_error=1 ctest --test-dir build-tsan --output-on-failure
 
   python:
