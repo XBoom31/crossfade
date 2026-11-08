@@ -2034,8 +2034,17 @@ int app_run(int argc, char **argv)
             last_render_time = std::chrono::steady_clock::now();
             }
 
-            // Don't spin: schedule the next frame at a whole interval out.
-            next_frame = std::chrono::steady_clock::now() + std::chrono::milliseconds(interval_ms);
+            // Don't spin: schedule the next frame at a whole interval out --
+            // but anchor the deadline to the START of this frame, not to the
+            // moment the GL swap returned. With vsync on, SDL_GL_SwapWindow()
+            // already parks the thread until the next vblank (~16.7 ms on a
+            // 60 Hz display). Timing the interval from after the swap stacked
+            // a full 16 ms sleep on top of that block: a 33 ms cycle, i.e. a
+            // hard ~30 FPS cap (and worse once a frame takes >1 ms to build).
+            // Mesa/compositing WMs on Linux return from the swap immediately,
+            // which is why the old code looked fine there and only Windows
+            // (WGL honours swap interval 1) appeared to drop frames.
+            next_frame = now + std::chrono::milliseconds(interval_ms);
         }
     }
 
