@@ -94,6 +94,11 @@ std::string session_json(const AppState &state, double position, int volume)
 
 void save_session(const AppState &state, const MpvPlayer &player, int volume_override)
 {
+    // Quitting before a track was ever loaded (e.g. immediately after launch,
+    // or during a slow restore) must not erase the previous saved session.
+    if (state.current_track_id.empty())
+        return;
+
     std::string path = session_file_path();
     std::string dir = path.substr(0, path.rfind('/'));
     mkdir(dir.c_str(), 0755);

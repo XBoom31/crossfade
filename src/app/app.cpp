@@ -514,6 +514,23 @@ int app_run(int argc, char **argv)
     SDL_GL_MakeCurrent(window, gl_context);
     SDL_GL_SetSwapInterval(1);
 
+    // Saved data is ready now (the loader ran in parallel with window/GL
+    // setup); main-thread consumers can use it safely.
+    if (data_boot_thread.joinable())
+        data_boot_thread.join();
+
+    // ---- Load up-next queue and recent searches ----
+    g_state.play_queue = load_play_queue();
+    // Persisted rows came from the single global queue; keep guest requests
+    // ahead of them instead of treating the whole restored list as "Play
+    // next" pins.
+    for (Track &t : g_state.play_queue)
+        t.from_queue_source = true;
+    g_state.search_recent = load_search_recent();
+
+    // ---- Load session ----
+    load_session(g_state);
+
     // ---- ImGui init ----
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();

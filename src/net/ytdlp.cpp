@@ -713,10 +713,13 @@ static bool spawn_backend(BackendChannel &ch)
                     ready.find("\"ready\"") != std::string::npos;
     if (!ready_ok)
     {
-        fprintf(stderr, "Backend not ready: %s\n", ready.c_str());
-        // Surface the backend's own error (usually missing auth file).
-        if (ready.find("\"error\"") != std::string::npos)
-            record_backend_error(ready);
+        if (!g_backend_stopping.load(std::memory_order_relaxed))
+        {
+            fprintf(stderr, "Backend not ready: %s\n", ready.c_str());
+            // Surface the backend's own error (usually missing auth file).
+            if (ready.find("\"error\"") != std::string::npos)
+                record_backend_error(ready);
+        }
         ch.dead = true;
         ch.ready_cv.notify_all();
         return false;
@@ -747,10 +750,12 @@ bool start_backend()
     if (g_optional_backend_thread.joinable())
         g_optional_backend_thread.join();
     g_optional_backend_thread = std::thread([]() {
-        if (!spawn_backend(g_play_backend))
+        if (!spawn_backend(g_play_backend) &&
+            !g_backend_stopping.load(std::memory_order_relaxed))
             fprintf(stderr, "Play backend worker unavailable; stream resolves "
                             "share the main backend channel.\n");
-        if (!spawn_backend(g_prefetch_backend))
+        if (!spawn_backend(g_prefetch_backend) &&
+            !g_backend_stopping.load(std::memory_order_relaxed))
             fprintf(stderr, "Prefetch backend worker unavailable; speculative "
                             "warmups share the main backend channel.\n");
     });
