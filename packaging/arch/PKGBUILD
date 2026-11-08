@@ -2,7 +2,7 @@
 # Arch package: build with `makepkg -si`. Requires python3 for the backend
 # venv (created by the post-install step, needs network once).
 pkgname=crossfade
-pkgver=0.3.2
+pkgver=0.3.3
 pkgrel=1
 pkgdesc="A native YouTube Music desktop player with real crossfade"
 arch=('x86_64')

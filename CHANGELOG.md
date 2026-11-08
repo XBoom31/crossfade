@@ -2,6 +2,18 @@
 
 All notable changes to crossfade are documented here.
 
+## 0.3.3 - 2026-11-08
+
+### Fixed
+
+- **Smooth 60 FPS on Windows.** The main loop timed the next frame from the
+  moment `SDL_GL_SwapWindow()` returned, so its 16 ms sleep stacked on top of
+  vsync's own block and animated frames landed ~33 ms apart — a hard ~30 FPS
+  cap, and lower once a frame took a few milliseconds to build. The deadline is
+  now anchored to the start of the frame, so vsync alone paces 60 FPS and the
+  sleep only fills whatever time is left. Linux looked fine because Mesa and
+  compositing window managers return from the swap immediately.
+
 ## 0.3.2 - 2026-11-08
 
 ### Added
