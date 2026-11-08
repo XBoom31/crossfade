@@ -72,6 +72,8 @@ static std::vector<std::string> list_dir_names(const std::string &dir)
 struct BackendChannel
 {
     std::atomic<bool> ready{false}; // set once the {"status":"ready"} line arrives
+    std::mutex ready_mutex;
+    std::condition_variable ready_cv;
 #ifndef P100_WINDOWS
     FILE *in = nullptr;
     FILE *out = nullptr;
@@ -630,9 +632,12 @@ static bool spawn_backend(BackendChannel &ch)
         fprintf(stderr, "Backend not ready: %s\n", ready.c_str());
         if (ready.find("\"error\"") != std::string::npos)
             record_backend_error(ready);
+        ch.dead = true;
+        ch.ready_cv.notify_all();
         return false;
     }
     ch.ready.store(true, std::memory_order_release);
+    ch.ready_cv.notify_all();
     return true;
 #else
     int to_child[2], from_child[2];
@@ -712,8 +717,12 @@ static bool spawn_backend(BackendChannel &ch)
         // Surface the backend's own error (usually missing auth file).
         if (ready.find("\"error\"") != std::string::npos)
             record_backend_error(ready);
+        ch.dead = true;
+        ch.ready_cv.notify_all();
         return false;
     }
+    ch.ready.store(true, std::memory_order_release);
+    ch.ready_cv.notify_all();
     return true;
 #endif // !P100_WINDOWS
 }
@@ -723,6 +732,11 @@ static std::thread g_optional_backend_thread;
 bool start_backend()
 {
     g_backend_stopping.store(false, std::memory_order_relaxed);
+    for (BackendChannel *ch : {&g_backend, &g_play_backend, &g_prefetch_backend})
+    {
+        ch->ready.store(false, std::memory_order_relaxed);
+        ch->dead.store(false, std::memory_order_relaxed);
+    }
     // Only the main channel blocks startup. The play/prefetch workers are
     // optimizations: spawning them takes ~2.5 s of Python startup, so they
     // come up in the background and stay on the main channel until ready.
@@ -741,6 +755,13 @@ bool start_backend()
                             "warmups share the main backend channel.\n");
     });
     return main_ok;
+}
+
+void cancel_backend_startup()
+{
+    g_backend_stopping.store(true, std::memory_order_relaxed);
+    for (BackendChannel *ch : {&g_backend, &g_play_backend, &g_prefetch_backend})
+        ch->ready_cv.notify_all();
 }
 
 void stop_backend()
@@ -1117,6 +1138,20 @@ bool parse_lyrics_json(const std::string &json, Lyrics &out)
 // ------------------ High‑level commands ------------------
 static std::string send_command_on(BackendChannel &ch, const std::string &cmd)
 {
+    // A command can arrive while the main worker is still importing Python
+    // (session restore does exactly this). Wait on the caller's thread rather
+    // than making the UI wait during startup. Optional channels are only
+    // selected once ready, so this normally only affects the main channel.
+    if (!ch.ready.load(std::memory_order_acquire))
+    {
+        std::unique_lock<std::mutex> rl(ch.ready_mutex);
+        ch.ready_cv.wait_for(rl, std::chrono::milliseconds(15000), [&] {
+            return ch.ready.load(std::memory_order_acquire) || ch.dead.load() ||
+                   g_backend_stopping.load(std::memory_order_relaxed);
+        });
+        if (!ch.ready.load(std::memory_order_acquire))
+            return "{\"error\":\"Backend not running\",\"kind\":\"backend\"}";
+    }
     std::lock_guard<std::mutex> lock(ch.mutex);
 #ifndef P100_WINDOWS
     if (!ch.in)

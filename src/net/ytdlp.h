@@ -44,6 +44,9 @@ struct Lyrics
 };
 
 bool start_backend();
+// Cancel an in-flight startup wait (called before joining the boot thread
+// during shutdown).
+void cancel_backend_startup();
 void stop_backend();
 
 // What went wrong, classified at the source (Python stamps {"kind": ...} on

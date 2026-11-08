@@ -423,8 +423,10 @@ int app_run(int argc, char **argv)
     set_ytdl_browser(g_state.settings.ytdl_browser);
     set_auth_mode(g_state.settings.auth_mode);
     set_warm_stream_resolver(g_state.settings.warm_stream_resolver);
-    bool backend_started = false;
-    std::thread backend_boot_thread([&backend_started]() { backend_started = start_backend(); });
+    std::atomic<int> backend_boot_state{0}; // 0 starting, 1 ready, -1 failed
+    std::thread backend_boot_thread([&backend_boot_state]() {
+        backend_boot_state.store(start_backend() ? 1 : -1, std::memory_order_release);
+    });
 
     // ---- Local library database ----
     {
@@ -581,27 +583,8 @@ int app_run(int argc, char **argv)
 
     start_writeback_worker();
 
-    if (backend_boot_thread.joinable())
-        backend_boot_thread.join();
-    if (!backend_started)
-    {
-        fprintf(stderr, "Failed to start backend.\n");
-        // Don't hard-exit: keep the UI up so the auth-failure banner
-        // can tell the user to re-run `ytmusicapi browser`.
-        BackendError err = take_backend_error();
-        if (!err)
-        {
-            err.kind = BackendErrKind::Backend;
-            err.message =
-                "The YouTube Music backend failed to start. Check the auth file in Settings.";
-        }
-        ui_notify_backend_error(err);
-        {
-            std::lock_guard<std::mutex> lock(g_data_mutex);
-            g_state.backend_status = err;
-        }
-        g_state.repaint_requested = true;
-    }
+    // The backend keeps booting in the background: the UI comes up now and
+    // the session-restore resolve waits for readiness on its worker thread.
 
     // Recordings interrupted by a crash/quit are dead weight in .tmp.
     cleanup_incomplete_recordings();
@@ -691,6 +674,7 @@ int app_run(int argc, char **argv)
     // on every wakeup.
     bool running = true;
     bool show_demo = false;
+    bool backend_boot_reported = false;
     auto last_save_time = std::chrono::steady_clock::now();
     auto last_frame_time = last_save_time;
     auto next_frame = last_save_time;
@@ -704,6 +688,29 @@ int app_run(int argc, char **argv)
         // advancing (deadlock or a synchronous backend call on the UI thread),
         // the watchdog dumps the stuck stack after a minute.
         diagnostics::heartbeat();
+        // Report a backend startup failure once we know it; the UI is already
+        // up at this point, so this only updates the banner/toast.
+        if (!backend_boot_reported && backend_boot_state.load(std::memory_order_acquire) != 0)
+        {
+            backend_boot_reported = true;
+            if (backend_boot_state.load(std::memory_order_acquire) < 0)
+            {
+                fprintf(stderr, "Failed to start backend.\n");
+                BackendError err = take_backend_error();
+                if (!err)
+                {
+                    err.kind = BackendErrKind::Backend;
+                    err.message = "The YouTube Music backend failed to start. "
+                                  "Check the auth file in Settings.";
+                }
+                ui_notify_backend_error(err);
+                {
+                    std::lock_guard<std::mutex> lock(g_data_mutex);
+                    g_state.backend_status = err;
+                }
+                g_state.repaint_requested = true;
+            }
+        }
 #ifndef P100_WINDOWS
         while (g_main_context_iteration(g_main_context_default(), FALSE))
         {
@@ -1363,8 +1370,13 @@ int app_run(int argc, char **argv)
             if (g_state.auth_refresh_requested)
             {
                 g_state.auth_refresh_requested = false;
+                cancel_backend_startup();
+                if (backend_boot_thread.joinable())
+                    backend_boot_thread.join();
                 stop_backend();
-                start_backend();
+                backend_boot_state.store(start_backend() ? 1 : -1,
+                                         std::memory_order_release);
+                backend_boot_reported = false;
                 g_state.repaint_requested = true;
             }
             if (g_state.podcast_search_dirty)
@@ -1712,6 +1724,9 @@ int app_run(int argc, char **argv)
     DLOG("shutdown: party stop");
     party_stop();
     DLOG("shutdown: backend stop");
+    cancel_backend_startup();
+    if (backend_boot_thread.joinable())
+        backend_boot_thread.join();
     stop_backend();
     DLOG("shutdown: writeback");
     stop_writeback_worker();
