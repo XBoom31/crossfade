@@ -2,34 +2,55 @@
 
 All notable changes to crossfade are documented here.
 
-## Unreleased
-
-## 0.3.0 - 2026-11-05
+## 0.3.0 - 2026-11-08
 
 ### Added
 
-- **Podcasts.** A first-class Podcasts tab backed by `ytmusicapi`: browse your
-  saved shows, search the YouTube Music podcast catalogue, open a show with its
+- **Warm start.** Closing the window can park crossfade resident behind a
+  single-instance socket. Launching `crossfade` again is **0 s of startup**:
+  it raises the existing window instead of rebuilding the UI, backend and
+  caches. `--warm`, `--toggle`, `--quit` and `--new-instance` expose the
+  behaviour from the shell, and Settings chooses whether the backend stays
+  warm or is parked.
+- **Configurable multi-band equalizer.** Choose 5, 10, 15, 31 or a custom
+  number of bands, with presets, per-band frequency/gain/Q, and vertically
+  scrollable faders that stay usable at every UI scale.
+- **In-app ZIP data transfer.** Settings → System → Data transfer exports
+  selectable sections (settings, sign-in, library, album/artist caches, lyrics,
+  thumbnails, downloaded audio, logs) to one portable ZIP and restores it on
+  another machine. Import runs after the app closes, keeps a
+  `crossfade-pre-import-*` safety copy, validates paths, and rebases old
+  Linux/Windows audio paths by track id.
+- **Full diagnostics report.** One bundle with system/CPU/GPU/SDL/mpv/Python
+  versions, startup phase timings, task/backend timing, RSS/PSS, cache sizes,
+  live state and recent logs, plus a history toggle.
+- **Low power mode.** A Settings → System → Power toggle caps the UI at ~4 FPS
+  during playback, disables motion, and skips speculative stream warming,
+  background downloads and cover sweeps. It can turn itself on when the system
+  reports battery power, and `--low-power` / `P100_LOW_POWER=1` force it for a
+  session without changing saved settings. Playback itself is unaffected.
+- **Shader-generated hero blur.** A cached glass/cover blur with aspect-preserving
+  sampling replaces the old per-frame hero blur work.
+- **Podcasts.** A first-class Podcasts tab backed by `ytmusicapi`: browse saved
+  shows, search the YouTube Music podcast catalogue, open a show with its
   recent episodes, play episodes through the normal queue, save shows locally,
   and download a single episode or a whole show for offline listening.
-- **Audio-reactive visualizer.** A new full-canvas Visualizer page with Bars,
-  Waves and Orbits modes. It captures the default PipeWire/PulseAudio monitor
-  with `parec` and runs a real FFT on the audio, so the spectrum, waveform,
-  radial spokes and bass pulses follow the music instead of a canned animation.
-  Falls back gracefully when capture is unavailable.
 - **Spotify playlist import.** Paste a public Spotify playlist link in
-  Playlists; crossfade reads its track list and matches each song on YouTube
+  Playlists; crossfade reads its track list, matches each song on YouTube
   Music, then creates a local playlist. Optional Spotify sign-in stores an
   `sp_dc` cookie for private playlists.
 - **Seamless Google sign-in.** Settings can open a real WebKitGTK sign-in popup
   (WebKit 6/GTK4 or WebKit2GTK 4.1/GTK3) and write `browser.json` directly once
   the session cookie appears. If WebKitGTK is missing it imports the existing
   Firefox session instead. No OAuth client keys or manual header copying.
-- **Visualizer visibility toggle** in Settings, since the page is still
-  experimental.
 
 ### Changed
 
+- **Startup is much faster.** The Python backend, library data and optional
+  workers load in parallel with window/GL init; the UI is shown before the
+  backend is ready, and early commands are gated on readiness. Cold start to
+  first audio is now ~0.35 s on the author's machine, with the window painted
+  in ~0.30 s.
 - **Settings redesigned.** A two-pane layout with a vertical category rail,
   rounded section cards, a live scale preview, custom sliders, switches and
   segmented controls. The centred column is gone; content stays left-aligned
@@ -37,9 +58,62 @@ All notable changes to crossfade are documented here.
 - **Fine-tune works for every element.** Top navigation, search bar, bottom bar,
   track thumbnails, row spacing, bottom cover, transport controls, seek/volume
   bars and the lyrics cover all honour their individual multiplier.
+- **Downloads sync is ~60× faster.** The page updates from cached audio
+  metadata in ~20 ms instead of ~1.2 s, and cached-audio lookups probe known
+  extensions instead of scanning the whole cache.
 - **AppImage** now ships `libjack.so.0` and puts the bundled library directory
   on the loader path, fixing the startup failure on systems without JACK.
+- **Theme.** Spotify-style green accent and a header credit; albums, artists and
+  podcasts share the same animated hero and staggered lists.
 
+### Removed
+
+- **Visualizer.** The experimental audio-reactive page and its `parec` capture
+  thread were removed. It kept capturing system audio after the page was closed
+  and pinned the UI at 60 FPS, so it was a poor trade for power.
+
+### Fixed
+
+- **Seek bar pinned the UI at 60 FPS.** The knob spring never settled while a
+  track was playing (the target moved by more than its snap threshold each
+  frame), so every song ran the full layout + GL redraw at 60 FPS. The spring
+  now only runs while hovering/seeking or briefly after a seek; steady
+  playback returns to the 10 FPS budget.
+- **Settings pinned the UI at 60 FPS.** The animated equalizer in the live
+  preview requested a frame forever. It is now static.
+- **Per-frame style rescaling.** `apply_ui_scale()` no longer re-runs
+  `ScaleAllSizes()` and the full palette assignment on every rendered frame.
+- **Bottom bar read mpv properties synchronously every frame.** It now uses
+  the cached time/duration observers.
+- **Thumbnails were uploaded at full 1280×720 resolution.** Covers are now
+  box-downscaled to at most 512 px before the GPU upload.
+- **UI freezes after background work.** The worker registry could deadlock:
+  a task published its `finished` flag before releasing the registry mutex, so
+  `spawn()` could join it from inside that same mutex while the task waited for
+  it. Browsing Radio, Podcasts or History could hang the main thread
+  permanently. Finished is now published after the mutex is released, with a
+  stress test covering it.
+- **Hang diagnostics.** A watchdog now detects a main loop that has not ticked
+  for ~60 s, writes `hang-<time>.log`, and signals the stuck thread so the
+  normal crash log includes its stack.
+- **Party search no longer freezes.** Speculative stream warming moved to a
+  dedicated backend channel, so a slow yt-dlp resolve cannot hold up a guest
+  search (or the app's own search/metadata requests). A failed lookup now
+  reports "search unavailable" instead of being cached as no matches.
+- **Radio station error panel.** The retry panel no longer trips ImGui's
+  `SetCursorPos` boundary assert when the page is closed.
+- **Download and history crashes.** Deletes are deferred and serialized against
+  the background metadata finalizer, so a delete can no longer race a
+  half-written sidecar or a widget rebuild.
+- **yt-dlp cookies and user agent.** `cookiesfrombrowser` is passed as a tuple
+  in the warm extractor, and the broken custom user-agent option was dropped.
+- **Queue/session restore.** The startup split no longer drops the restored
+  queue, and quitting with no track loaded keeps the last session instead of
+  erasing it.
+- **Album fetch race.** An album page closed while its fetch was still running
+  can no longer touch freed state.
+- **Persistence escaping.** JSON writes are escaped consistently, including
+  notes, party names and playlist metadata.
 
 ## 0.2.0 - 2026-11-05
 

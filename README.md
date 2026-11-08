@@ -32,25 +32,54 @@ C++17 · SDL2 + OpenGL + Dear ImGui · playback by `mpv` · music data by a Pyth
 
 ## At a glance
 
-Measured on the author's Linux desktop with `./scripts/bench.sh` plus a cached-track
-playback run. Numbers are machine-dependent; the method is below.
+Measured on the author's Linux desktop (performance power profile) with
+`./scripts/bench.sh` plus a cached-track playback run. Numbers are machine-dependent;
+the method is below.
 
 | Metric | crossfade |
 |---|---:|
-| Cold start → first audio (cached session) | **~0.9 s** |
-| Idle RAM (paused, 5 s) | **~115 MB** |
+| Warm start (resident window) | **0 s** |
+| Cold start → window painted | **~0.30 s** |
+| Cold start → first audio (cached session) | **~0.35 s** |
+| Idle RAM (paused, 5 s) | **~116 MB** |
+| Playing RAM (cached track) | **~128 MB** |
+| Idle CPU (all 16 threads) | **~0%** |
+| Playing CPU (all 16 threads) | **~0.23%** |
+| Binary + assets + backend package | **~7.9 MB** |
+| Source | **~38k lines** of C++/headers |
+
+All rows above are with **low power mode off**. Low power caps the UI at ~4 FPS,
+disables motion and speculative warming, and skips background downloads/sweeps;
+playback itself is unchanged. Measured separately with `--low-power`:
+
+| Low power mode | crossfade |
+|---|---:|
+| Cold start → window painted | **~0.35 s** |
+| Cold start → first audio (cached session) | **~0.41 s** |
 | Playing RAM (cached track) | **~125 MB** |
-| Binary + assets + backend package | **~7.3 MB** |
-| Source | **~34k lines** of C++/headers |
+| Playing CPU (all 16 threads) | **~0.17%** |
 
 <details>
 <summary>How these were measured</summary>
 
-- `./scripts/bench.sh` for idle RSS/CPU, binary and source size.
-- `P100_CONFIG_DIR=~/.config/crossfade ./build/crossfade --autoplay-last`, timestamped
-  from process start to the `boot: first audio` log line. Three runs: 0.81 s, 0.81 s,
-  0.90 s on this machine.
-- `ps -o rss= -p <pid>` after 4 s of cached playback.
+- **Warm start is 0 s by design.** With warm start enabled the process, UI, backend
+  and caches stay resident; invoking `crossfade` only sends a show/raise command to
+  the existing instance, so there is no startup work to measure. The cold-start rows
+  below are a fresh process.
+- `./scripts/bench.sh` for binary/source/install size, unit tests, startup→window,
+  startup→ready, idle RSS/CPU, and (when a real config with a session exists) two
+  cached-playback passes: normal and `--low-power`. Each pass records startup→window,
+  startup→audio, playing RSS and playing CPU.
+- Startup timings are wall-clock from process start to the `boot: first frame` /
+  `boot: first audio` log lines. Three normal cached-playback runs: 0.345 s, 0.348 s,
+  0.349 s to audio; 0.319–0.322 s to the first painted window. Cold starts without
+  playback painted in 0.302–0.328 s. The three low-power runs started audio in
+  0.402–0.428 s and painted in 0.351–0.352 s.
+- RSS is `VmRSS` after 5 s idle or ~8 s of cached playback.
+- CPU is sampled from `/proc/<pid>/stat` over a 4 s window after an 8 s playback
+  settle (so backend startup is excluded), then divided by the 16 hardware threads
+  so it is a percentage of total machine CPU, not per-core. Low power uses the same
+  window and divisor.
 - Install size excludes the Python venv and the audio/thumbnail caches; packaged
   AppImage/deb/rpm sizes are larger.
 
@@ -118,10 +147,14 @@ not started.
 
 ## Why crossfade
 
-- **It feels instant.** Click a song and it plays — search results are URL-prefetched before
-  you click, a dedicated play worker guarantees your click never queues behind background
-  work, and an optional in-process extractor removes the per-song startup cost entirely.
-  Repeat searches come back in milliseconds. No spinner purgatory.
+- **It feels instant.** The first window is painted in about a third of a second, and a
+  cached track starts just after it. Click a song and it plays — search results are
+  URL-prefetched before you click, a dedicated play worker guarantees your click never
+  queues behind background work, and an optional in-process extractor removes the per-song
+  startup cost entirely. Repeat searches come back in milliseconds. No spinner purgatory.
+  With warm start on, closing the window parks the app resident, so the next launch is
+  **0 s of startup**: it only raises the existing window instead of paying the cold-start
+  cost again.
 - **Offline, automatically.** Every song you listen to is cached as it streams, so the
   second play starts from your disk — no network, no wait. Want it explicit? Download whole
   albums with one click. A configurable cache cap with least-listened-first eviction keeps
@@ -134,9 +167,9 @@ not started.
   no 500 MB of JavaScript. The render loop is demand-driven, so the app idles at
   **near-zero CPU** and gets out of the way of your music.
 - **Everything the web player can't give you.** Karaoke-style synced lyrics you can click
-  to seek, media keys and MPRIS, a sleep timer, a 5-band EQ, volume normalization, playback
-  speed, smart **On Repeat** lists, listening stats, an endless radio, M3U/XSPF export, and
-  a keyboard-first interface.
+  to seek, media keys and MPRIS, a sleep timer, a multi-band EQ (5, 10, 15, 31 or custom
+  bands), volume normalization, playback speed, smart **On Repeat** lists, listening stats,
+  an endless radio, M3U/XSPF export, and a keyboard-first interface.
 - **Your library, actually yours.** Likes, saved albums/artists, local playlists, history,
   and your YouTube account playlists — mirrored locally, with optional write-back to
   YouTube Music.
@@ -252,7 +285,7 @@ Keep one background instance resident and make later launches instant:
 
 ```bash
 crossfade --warm &   # from ~/.xinitrc or your desktop autostart
-crossfade            # shows/raises the resident window in ~100 ms
+crossfade            # 0 s of startup: shows/raises the resident window
 crossfade --toggle   # hide/show
 crossfade --quit     # stop the background instance
 ```

@@ -23,11 +23,11 @@ landed on, and the security and testing decisions that keep it contained.
 - `AppState` is a large shared struct. Most cross-thread fields are guarded by
   `g_data_mutex` or are atomics (for example `repaint_requested`,
   `queue_dirty`, `playing`).
-- `ytdlp.cpp` owns two line-based JSON backend channels:
-  - the **main channel** for search, metadata, lyrics, library reads and
-    speculative prefetches;
-  - a dedicated **play channel** so a host click never queues behind search or
-    background work.
+- `ytdlp.cpp` owns three line-based JSON backend channels:
+  - the **main channel** for search, metadata, lyrics and library reads;
+  - a dedicated **play channel** so a host click never queues behind search;
+  - a dedicated **prefetch channel** for speculative stream warming, so a long
+    background resolve cannot starve party search or metadata lookups.
   `send_command_on()` serialises each channel with its own mutex.
 - `texture.cpp` already keeps downloaded cover art in an on-disk cache and
   exposes `get_cached_thumbnail_path()` / `thumbnail_cache_path()`.
