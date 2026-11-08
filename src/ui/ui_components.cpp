@@ -133,7 +133,8 @@ void ui_play_track(AppState &state, const Track &track, int index)
 }
 
 void ui_selection_bar(AppState &state, const std::vector<Track> &visible, const char *context,
-                      bool allow_like, bool allow_delete, int playlist_index)
+                      bool allow_like, bool allow_delete, int playlist_index,
+                      std::vector<std::string> *deferred_deletes)
 {
     if (state.selected_track_ids.empty())
         return;
@@ -213,8 +214,18 @@ void ui_selection_bar(AppState &state, const std::vector<Track> &visible, const 
         ImGui::SameLine();
         if (ui_ghost_button("Delete", ImVec2(0, m.control_h)))
         {
-            for (const auto &t : picked)
-                delete_downloaded_track(state, t.id);
+            if (deferred_deletes)
+            {
+                // The list being iterated aliases state.downloaded_tracks;
+                // deleting now would invalidate it mid-frame.
+                for (const auto &t : picked)
+                    deferred_deletes->push_back(t.id);
+            }
+            else
+            {
+                for (const auto &t : picked)
+                    delete_downloaded_track(state, t.id);
+            }
             clear_selection();
         }
     }
@@ -246,7 +257,7 @@ void ui_selection_bar(AppState &state, const std::vector<Track> &visible, const 
 
 void ui_track_context_menu(AppState &state, const Track &track, bool allow_delete,
                            bool show_download, bool *download_requested,
-                           bool *download_remove)
+                           bool *download_remove, bool *delete_requested)
 {
     if (!ImGui::BeginPopup("TrackContextMenu"))
         return;
@@ -404,8 +415,8 @@ void ui_track_context_menu(AppState &state, const Track &track, bool allow_delet
     if (allow_delete)
     {
         ImGui::Separator();
-        if (ImGui::MenuItem("Delete download"))
-            delete_downloaded_track(state, track.id);
+        if (ImGui::MenuItem("Delete download") && delete_requested)
+            *delete_requested = true;
     }
     ImGui::EndPopup();
 }
@@ -909,13 +920,23 @@ TrackRowResult ui_track_row(AppState &state, const Track &track, int index, cons
         ImGui::PopStyleVar();
         if (deleted)
         {
-            delete_downloaded_track(state, track.id);
+            // The caller owns the vector being iterated, so defer the erase
+            // until the row loop finishes; mutating it here would dangle
+            // `track` and the remaining rows.
             result.deleted = true;
+            result.deleted_id = track.id;
         }
     }
 
+    bool delete_requested = false;
     ui_track_context_menu(state, track, opt.show_delete, opt.show_download,
-                          &result.download_requested, &result.download_remove);
+                          &result.download_requested, &result.download_remove,
+                          &delete_requested);
+    if (delete_requested)
+    {
+        result.deleted = true;
+        result.deleted_id = track.id;
+    }
 
     if ((double_clicked || (result.clicked && ui_touch_tap_recent())) &&
         !result.deleted && opt.auto_play_double_click)

@@ -44,6 +44,7 @@ struct TrackRowResult
     bool hovered = false;
     bool double_clicked = false;
     bool deleted = false;
+    std::string deleted_id; // caller performs the actual erase after iteration
     bool menu_open = false;
     bool download_requested = false;
     bool download_remove = false;
@@ -107,10 +108,11 @@ inline void ui_prune_hover_map(MapT &m)
 }
 void ui_track_context_menu(AppState &state, const Track &track, bool allow_delete,
                            bool show_download = false, bool *download_requested = nullptr,
-                           bool *download_remove = nullptr);
+                           bool *download_remove = nullptr, bool *delete_requested = nullptr);
 void ui_play_track(AppState &state, const Track &track, int index);
 void ui_selection_bar(AppState &state, const std::vector<Track> &visible, const char *context,
-                      bool allow_like, bool allow_delete, int playlist_index = -1);
+                      bool allow_like, bool allow_delete, int playlist_index = -1,
+                      std::vector<std::string> *deferred_deletes = nullptr);
 
 bool ui_section_header(const char *title, const char *meta = nullptr, const char *action = nullptr);
 // Glowing rule for section headers: a soft album-coloured light streak that

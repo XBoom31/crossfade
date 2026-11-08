@@ -572,12 +572,20 @@ static bool draw_list_hero(AppState &state, const std::vector<Track> &tracks,
     const int clicked = ui_hero(eyebrow, title, sub, cover, fallback, scope,
                                 chips, actions, anim);
 
+    // -1 means "nothing clicked"; every index below is -1 when that action
+    // was not added, so never compare against the sentinel.
+    if (clicked < 0)
+        return false;
     if (clicked == clear_index)
         return true;
     if (clicked == play_index && !tracks.empty())
         ui_play_track(state, tracks[0], 0);
-    else if (clicked == shuffle_index)
-        ui_play_track(state, tracks[(int)((double)rand() / ((double)RAND_MAX + 1.0) * (int)tracks.size())], -1);
+    else if (clicked == shuffle_index && !tracks.empty())
+    {
+        const int pick = (int)((double)rand() / ((double)RAND_MAX + 1.0) *
+                               (double)tracks.size());
+        ui_play_track(state, tracks[std::min(pick, (int)tracks.size() - 1)], -1);
+    }
     return false;
 }
 
@@ -597,6 +605,7 @@ static void draw_list_page(AppState &state, const AppLayout &layout, float width
     smooth_scroll_child();
 
     TrackListPtr tracks = source_for_tab(state);
+    std::vector<std::string> pending_deletes;
     if (is_local_search_list(state))
         tracks = alias_of(state.local_search_results);
 
@@ -880,7 +889,8 @@ static void draw_list_page(AppState &state, const AppLayout &layout, float width
     }
 
     if (!selection_context.empty())
-        ui_selection_bar(state, *tracks, selection_context.c_str(), true, downloads);
+        ui_selection_bar(state, *tracks, selection_context.c_str(), true, downloads, -1,
+                         &pending_deletes);
 
     const float art = ui_elem("list_thumb", 48.0f);
     const float title_line = 24.0f * m.text_scale * 1.22f;
@@ -1036,6 +1046,7 @@ static void draw_list_page(AppState &state, const AppLayout &layout, float width
         }
     }
 
+    std::string pending_delete_id;
     const float start_y = ImGui::GetCursorPosY();
     ImGuiListClipper clipper;
     clipper.Begin(count, pitch);
@@ -1075,8 +1086,9 @@ static void draw_list_page(AppState &state, const AppLayout &layout, float width
             TrackRowResult row = ui_track_row(state, track, i, opt);
             if (row.deleted)
             {
-                state.selected_track_ids.erase(track.id);
-                if (state.selection_anchor == track.id)
+                pending_delete_id = row.deleted_id;
+                state.selected_track_ids.erase(row.deleted_id);
+                if (state.selection_anchor == row.deleted_id)
                     state.selection_anchor.clear();
             }
             if (!selection_context.empty() && row.clicked)
@@ -1121,6 +1133,13 @@ static void draw_list_page(AppState &state, const AppLayout &layout, float width
             }
         }
     }
+    // Apply a deferred download deletion outside the row loop: erasing while
+    // the clipper still holds indices would invalidate the remaining rows.
+    if (!pending_delete_id.empty())
+        pending_deletes.push_back(pending_delete_id);
+    for (const std::string &id : pending_deletes)
+        delete_downloaded_track(state, id);
+
     // Home endless scroll: fetch the next batch when the user nears the
     // bottom of the home list.
     if (state.current_tab == Tab::Home)

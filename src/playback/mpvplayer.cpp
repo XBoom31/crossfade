@@ -18,8 +18,12 @@ MpvPlayer::MpvPlayer(const std::string &browser)
     // Direct googlevideo streams are 403 without a YouTube referrer.
     mpv_set_option_string(h, "referrer", "https://www.youtube.com/");
     mpv_set_option_string(h, "user-agent", "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36");
-    std::string ytdl_opts = "cookies-from-browser=" + browser +
-                            ",user-agent=Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
+    // Note: do not add the user-agent here. mpv's ytdl-raw-options is a
+    // comma-separated list and a value containing spaces (the UA string)
+    // leaks into --cookies-from-browser, which then fails with
+    // "_parse_browser_specification() takes ... but 7 were given". The
+    // user-agent option above already applies to mpv's own requests.
+    std::string ytdl_opts = "cookies-from-browser=" + browser;
     mpv_set_option_string(h, "ytdl-raw-options", ytdl_opts.c_str());
 
     // Crossfade
