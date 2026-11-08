@@ -478,6 +478,8 @@ int app_run(int argc, char **argv)
                 }
             }, warm_error))
             DLOG("warm start unavailable: %s", warm_error.c_str());
+        else
+            DLOG("warm start: listening on %s", warm_start::socket_path().c_str());
     }
 
     // Bootstrap the Python backend in parallel with the rest of startup. It
@@ -561,6 +563,7 @@ int app_run(int argc, char **argv)
     // Touch is translated to ImGui input manually (tap/scroll/long-press),
     // so suppress SDL's synthetic touch-to-mouse events.
     SDL_SetHint(SDL_HINT_TOUCH_MOUSE_EVENTS, "0");
+    SDL_SetHint(SDL_HINT_QUIT_ON_LAST_WINDOW_CLOSE, "0");
     SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER);
     g_sdl_ready.store(true, std::memory_order_relaxed);
     party_init();
@@ -769,6 +772,7 @@ int app_run(int argc, char **argv)
     bool defer_play = start_hidden && !autoplay_last;
 
     auto hide_window = [&]() {
+        DLOG("warm start: window hidden (process stays resident)");
         SDL_HideWindow(window);
         g_window_hidden = true;
         if (warm_keep == 2)
@@ -783,6 +787,7 @@ int app_run(int argc, char **argv)
         }
     };
     auto show_window = [&]() {
+        DLOG("warm start: showing window");
         SDL_ShowWindow(window);
         SDL_RestoreWindow(window);
         SDL_RaiseWindow(window);
@@ -925,7 +930,17 @@ int app_run(int argc, char **argv)
             {
                 ImGui_ImplSDL2_ProcessEvent(&event);
                 if (event.type == SDL_QUIT)
-                    running = false;
+                {
+                    // Some window managers report a window close as SDL_QUIT
+                    // instead of SDL_WINDOWEVENT_CLOSE. In warm mode that
+                    // should hide, not kill the resident process. SIGTERM /
+                    // SIGINT still exit via g_quit_requested.
+                    if (serve_warm && g_state.settings.warm_close_hides &&
+                        !g_quit_requested)
+                        hide_window();
+                    else
+                        running = false;
+                }
                 if (event.type == SDL_USEREVENT)
                     g_state.repaint_requested = true;
                 if (event.type == SDL_WINDOWEVENT)
@@ -934,7 +949,17 @@ int app_run(int argc, char **argv)
                         event.window.windowID == SDL_GetWindowID(window))
                     {
                         if (serve_warm && g_state.settings.warm_close_hides)
+                        {
                             hide_window();
+                            static bool s_hide_notified = false;
+                            if (!s_hide_notified)
+                            {
+                                s_hide_notified = true;
+                                show_notification(
+                                    "crossfade is still running",
+                                    "Use `crossfade` to reopen it, or `crossfade --quit` to stop it.");
+                            }
+                        }
                         else
                             running = false;
                     }
