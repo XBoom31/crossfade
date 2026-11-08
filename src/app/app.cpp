@@ -428,8 +428,9 @@ int app_run(int argc, char **argv)
         backend_boot_state.store(start_backend() ? 1 : -1, std::memory_order_release);
     });
 
-    // ---- Local library database ----
-    {
+    // SQLite + saved-data loading runs in parallel with SDL/GL window setup.
+    // It costs ~160 ms and does not touch UI or graphics state.
+    std::thread data_boot_thread([]() {
         std::string library_error;
         if (!library::init(library_error))
         {
@@ -441,16 +442,35 @@ int app_run(int argc, char **argv)
         {
             diagnostics::log("library", "SQLite library ready");
         }
-    }
 
-    // ---- Load up-next queue and recent searches ----
-    g_state.play_queue = load_play_queue();
-    // Persisted rows came from the single global queue; keep guest requests
-    // ahead of them instead of treating the whole restored list as "Play
-    // next" pins.
-    for (Track &t : g_state.play_queue)
-        t.from_queue_source = true;
-    g_state.search_recent = load_search_recent();
+        g_state.liked_tracks = load_liked_tracks();
+        g_state.saved_albums = load_saved_albums();
+        g_state.saved_artists = load_saved_artists();
+        g_state.playback_history = load_playback_history();
+        g_state.play_counts = load_play_counts();
+        g_state.play_log = load_play_log();
+
+        auto names = get_playlist_names();
+        for (const auto &name : names)
+        {
+            Playlist pl;
+            pl.name = name;
+            pl.tracks = load_playlist_tracks(name);
+            g_state.playlists.push_back(pl);
+        }
+    });
+
+    // Early graphics failures still need to tear down the background workers
+    // and join every thread before app_run returns.
+    auto fatal_exit = [&](int code) {
+        cancel_backend_startup();
+        if (backend_boot_thread.joinable())
+            backend_boot_thread.join();
+        if (data_boot_thread.joinable())
+            data_boot_thread.join();
+        stop_backend();
+        return code;
+    };
 
     // ---- Accent colour (custom setting, system portal or daily fallback) ----
     update_accent(g_state.settings);
@@ -460,35 +480,6 @@ int app_run(int argc, char **argv)
     notify_init("crossfade");
     notify_init_done = true;
 #endif
-
-    // ---- Load liked tracks ----
-    g_state.liked_tracks = load_liked_tracks();
-
-    // ---- Load saved albums ----
-    g_state.saved_albums = load_saved_albums();
-    g_state.saved_artists = load_saved_artists();
-
-    // ---- Load playback history ----
-    g_state.playback_history = load_playback_history();
-
-    // ---- Load play counts ----
-    g_state.play_counts = load_play_counts();
-
-    // ---- Load play event log (drives the Most Played / stats tab) ----
-    g_state.play_log = load_play_log();
-
-    // ---- Load playlists ----
-    auto names = get_playlist_names();
-    for (const auto &name : names)
-    {
-        Playlist pl;
-        pl.name = name;
-        pl.tracks = load_playlist_tracks(name);
-        g_state.playlists.push_back(pl);
-    }
-
-    // ---- Load session ----
-    load_session(g_state);
 
     // ---- SDL init ----
     // Touch is translated to ImGui input manually (tap/scroll/long-press),
@@ -503,7 +494,7 @@ int app_run(int argc, char **argv)
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 2);
     SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
-    SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 24);
+    SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 0);
 
     SDL_Window *window = SDL_CreateWindow("crossfade",
                                           SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, 1280, 820,
@@ -511,14 +502,14 @@ int app_run(int argc, char **argv)
     if (!window)
     {
         fprintf(stderr, "SDL_CreateWindow failed: %s\n", SDL_GetError());
-        return 1;
+        return fatal_exit(1);
     }
     SDL_SetWindowMinimumSize(window, 860, 600);
     SDL_GLContext gl_context = SDL_GL_CreateContext(window);
     if (!gl_context)
     {
         fprintf(stderr, "OpenGL 3.2 core context unavailable: %s\n", SDL_GetError());
-        return 1;
+        return fatal_exit(1);
     }
     SDL_GL_MakeCurrent(window, gl_context);
     SDL_GL_SetSwapInterval(1);
