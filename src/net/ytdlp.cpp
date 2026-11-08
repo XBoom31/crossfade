@@ -2,6 +2,7 @@
 #include "json_util.h"
 #include "paths.h"
 #include <chrono>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <memory>
@@ -72,6 +73,9 @@ static std::vector<std::string> list_dir_names(const std::string &dir)
 struct BackendChannel
 {
     std::atomic<bool> ready{false}; // set once the {"status":"ready"} line arrives
+    std::atomic<uint64_t> commands{0};
+    std::atomic<uint64_t> errors{0};
+    std::atomic<uint64_t> last_ms{0};
     std::mutex ready_mutex;
     std::condition_variable ready_cv;
 #ifndef P100_WINDOWS
@@ -783,6 +787,29 @@ void cancel_backend_startup()
         ch->ready_cv.notify_all();
 }
 
+std::string backend_diagnostics()
+{
+    auto line = [](const char *name, const BackendChannel &ch) {
+        char buf[256];
+        std::snprintf(buf, sizeof(buf),
+                      "%-8s ready=%d dead=%d pid=%llu commands=%llu errors=%llu last=%llums",
+                      name, (int)ch.ready.load(), (int)ch.dead.load(),
+                      (unsigned long long)(uintptr_t)ch.pid,
+                      (unsigned long long)ch.commands.load(),
+                      (unsigned long long)ch.errors.load(),
+                      (unsigned long long)ch.last_ms.load());
+        return std::string(buf);
+    };
+    std::string out;
+    out += line("main", g_backend);
+    out += '\n';
+    out += line("play", g_play_backend);
+    out += '\n';
+    out += line("prefetch", g_prefetch_backend);
+    out += '\n';
+    return out;
+}
+
 void stop_backend()
 {
     // Cancel an in-flight optional-channel ready wait, then join before we
@@ -1173,6 +1200,7 @@ static std::string send_command_on(BackendChannel &ch, const std::string &cmd)
         if (!ch.ready.load(std::memory_order_acquire))
             return "{\"error\":\"Backend not running\",\"kind\":\"backend\"}";
     }
+    const auto cmd_start = std::chrono::steady_clock::now();
     std::lock_guard<std::mutex> lock(ch.mutex);
 #ifndef P100_WINDOWS
     if (!ch.in)
@@ -1200,8 +1228,16 @@ static std::string send_command_on(BackendChannel &ch, const std::string &cmd)
         g_backend_error.message = "Backend not running";
         return "{\"error\":\"Backend not running\",\"kind\":\"backend\"}";
     }
+    ch.commands.fetch_add(1, std::memory_order_relaxed);
+    ch.last_ms.store((uint64_t)std::chrono::duration_cast<std::chrono::milliseconds>(
+                         std::chrono::steady_clock::now() - cmd_start)
+                         .count(),
+                     std::memory_order_relaxed);
     if (response.find("\"error\"") != std::string::npos)
+    {
+        ch.errors.fetch_add(1, std::memory_order_relaxed);
         record_backend_error(response);
+    }
     else if (g_backend_error.ok())
         g_backend_error.clear();
     return response;

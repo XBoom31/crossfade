@@ -510,6 +510,13 @@ Local-only use is fully supported.
 
 ### Libraries, undo, and diagnostics
 
+Settings → System → Diagnostics → **Full report** shows/saves everything useful
+in one text bundle: system/CPU/GPU/SDL/mpv/Python versions, startup phase
+timings, backend channel status, background-task start times and durations,
+memory/PSS, cache sizes, current app/playback state, the recent app log,
+backend log tail and the newest crash log. **Detailed diagnostics history** can
+be toggled off to keep only the on-demand system snapshot.
+
 Crossfade keeps your local library in a single SQLite database with full-text search. Likes,
 playlists, play counts, history, saved albums/artists, the queue, and downloaded-track metadata
 live in `library.db`;

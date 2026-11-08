@@ -180,6 +180,7 @@ void save_settings(const Settings &settings)
         << "\"warm_start\":" << (settings.warm_start ? "true" : "false") << ","
         << "\"warm_start_mode\":" << settings.warm_start_mode << ","
         << "\"warm_close_hides\":" << (settings.warm_close_hides ? "true" : "false") << ","
+        << "\"diagnostics_history\":" << (settings.diagnostics_history ? "true" : "false") << ","
         << "\"safe_mode\":" << (settings.safe_mode ? "true" : "false") << ","
         << "\"low_power\":" << (settings.low_power ? "true" : "false") << ","
         << "\"low_power_on_battery\":" << (settings.low_power_on_battery ? "true" : "false") << ","
@@ -395,6 +396,8 @@ Settings load_settings()
                 std::max(0, std::min(2, (int)std::lround(get_float("warm_start_mode"))));
         if (json.find("\"warm_close_hides\"") != std::string::npos)
             s.warm_close_hides = get_bool("warm_close_hides");
+        if (json.find("\"diagnostics_history\"") != std::string::npos)
+            s.diagnostics_history = get_bool("diagnostics_history");
         if (json.find("\"safe_mode\"") != std::string::npos)
             s.safe_mode = get_bool("safe_mode");
         if (json.find("\"low_power\"") != std::string::npos)
@@ -590,6 +593,8 @@ enum SettingsCategory
 };
 
 static int s_settings_category = SC_APPEARANCE;
+static std::string s_diag_report;
+static bool s_diag_open = false;
 
 static ImU32 settings_lerp_col(ImU32 a, ImU32 b, float t)
 {
@@ -1887,14 +1892,38 @@ void draw_settings_panel(AppState &state)
         if (!library::backup_dir().empty())
             settings_help(("Legacy JSON backup: " + library::backup_dir()).c_str());
 
-        const float bw = 176.0f * m.layout_scale;
-        if (ui_ghost_button("Copy diagnostics", ImVec2(bw, m.control_h)))
+        if (settings_toggle_row("##diag_history", "Detailed diagnostics history",
+                                &state.settings.diagnostics_history,
+                                "Keep recent log lines and background-task timings for the report. Passive: a small in-memory ring plus one record per task, no polling or per-frame work."))
+        {
+            diagnostics::set_history_enabled(state.settings.diagnostics_history);
+            tasks::set_history_enabled(state.settings.diagnostics_history);
+            save = true;
+        }
+
+        const float bw = std::min(176.0f * m.layout_scale,
+                                  (content_w - m.space_2 * 2.0f) / 3.0f);
+        if (ui_ghost_button("Full report", ImVec2(bw, m.control_h)))
+        {
+            s_diag_report = diagnostics::bundle();
+            s_diag_open = true;
+        }
+        ImGui::SameLine(0.0f, m.space_2);
+        if (ui_ghost_button("Save report", ImVec2(bw, m.control_h)))
+        {
+            std::string path, err;
+            if (diagnostics::save_bundle(path, err))
+                ui_notify(UiNotifyType::Success, "Diagnostics saved", path, 6.0f);
+            else
+                ui_notify(UiNotifyType::Error, "Could not save diagnostics", err, 7.0f);
+        }
+        ImGui::SameLine(0.0f, m.space_2);
+        if (ui_ghost_button("Copy report", ImVec2(bw, m.control_h)))
         {
             ImGui::SetClipboardText(diagnostics::bundle().c_str());
             ui_notify(UiNotifyType::Success, "Diagnostics copied",
-                      "Version, paths, library status and recent log lines are on the clipboard.", 4.0f);
+                      "The full bundle is on the clipboard.", 4.0f);
         }
-        ImGui::SameLine(0.0f, m.space_2);
         if (ui_ghost_button("Check library", ImVec2(bw, m.control_h)))
         {
             std::string result;
@@ -1942,6 +1971,41 @@ void draw_settings_panel(AppState &state)
         }
     }
 
+    }
+
+    if (s_diag_open)
+    {
+        ImGui::OpenPopup("Full diagnostics##diag");
+        s_diag_open = false;
+    }
+    if (ImGui::BeginPopupModal("Full diagnostics##diag", nullptr,
+                               ImGuiWindowFlags_AlwaysAutoResize))
+    {
+        const float w = std::min(1000.0f * m.layout_scale,
+                                 ImGui::GetIO().DisplaySize.x - 80.0f * m.layout_scale);
+        ImGui::InputTextMultiline("##diag_text", &s_diag_report,
+                                  ImVec2(w, 520.0f * m.layout_scale),
+                                  ImGuiInputTextFlags_ReadOnly);
+        const float bw2 = 150.0f * m.layout_scale;
+        if (ui_ghost_button("Copy", ImVec2(bw2, m.control_h)))
+        {
+            ImGui::SetClipboardText(s_diag_report.c_str());
+            ui_notify(UiNotifyType::Success, "Diagnostics copied",
+                      "The full report is on the clipboard.", 4.0f);
+        }
+        ImGui::SameLine(0.0f, m.space_2);
+        if (ui_ghost_button("Save as file", ImVec2(bw2, m.control_h)))
+        {
+            std::string path, err;
+            if (diagnostics::save_bundle(path, err))
+                ui_notify(UiNotifyType::Success, "Diagnostics saved", path, 6.0f);
+            else
+                ui_notify(UiNotifyType::Error, "Could not save diagnostics", err, 7.0f);
+        }
+        ImGui::SameLine(0.0f, m.space_2);
+        if (ui_ghost_button("Close", ImVec2(bw2, m.control_h)))
+            ImGui::CloseCurrentPopup();
+        ImGui::EndPopup();
     }
     if (s_settings_category == SC_NOTES)
     {

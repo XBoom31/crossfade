@@ -13,6 +13,7 @@
 #include <set>
 #include <vector>
 #include <string>
+#include <sstream>
 #include <cstdlib>
 #include <cctype>
 #include <ctime>
@@ -381,6 +382,75 @@ std::atomic<int> g_bg_download_count{0};
 // Advance playback: pop the head of the single global queue. Manual skips and
 // natural end-of-track use exactly the same order, so guest requests can no
 // longer be stranded by pressing Next.
+static const char *tab_name(Tab t)
+{
+    switch (t)
+    {
+    case Tab::Home: return "Home";
+    case Tab::Downloads: return "Downloads";
+    case Tab::Radio: return "Radio";
+    case Tab::Liked: return "Liked";
+    case Tab::Playlists: return "Playlists";
+    case Tab::Albums: return "Albums";
+    case Tab::Artists: return "Artists";
+    case Tab::History: return "History";
+    case Tab::Stats: return "Stats";
+    case Tab::Queue: return "Queue";
+    case Tab::Album: return "Album";
+    case Tab::Artist: return "Artist";
+    case Tab::Podcasts: return "Podcasts";
+    case Tab::Settings: return "Settings";
+    case Tab::YouTube: return "YouTube";
+    case Tab::Smart: return "Smart";
+    case Tab::Party: return "Party";
+    }
+    return "?";
+}
+
+// Built on demand by the diagnostics bundle; cheap enough to compose from the
+// current state whenever the user clicks Copy/Save.
+static std::string app_context_summary()
+{
+    std::ostringstream out;
+    const Settings &st = g_state.settings;
+    out << "tab: " << tab_name(g_state.current_tab) << "\n"
+        << "source: " << playlist_source_name(g_state.current_playlist_source) << "\n"
+        << "playing: " << (g_state.playing.load() ? 1 : 0)
+        << " loading: " << (g_state.loading.load() ? 1 : 0)
+        << " window_hidden: " << (g_window_hidden ? 1 : 0) << "\n"
+        << "track: " << g_state.current_title << " - " << g_state.current_artist
+        << " [" << g_state.current_track_id << "] index=" << g_state.current_track_index << "\n"
+        << "status: " << g_state.status_text << "\n"
+        << "queue: " << g_state.play_queue.size()
+        << " crossfade: ";
+    if (g_cf.active.load())
+        out << "active progress=" << g_state.crossfade_progress;
+    else if (g_cf.pending.load())
+        out << "pending";
+    else
+        out << "off";
+    out << "\n"
+        << "counts: liked=" << g_state.liked_tracks.size()
+        << " history=" << g_state.playback_history.size()
+        << " playlists=" << g_state.playlists.size()
+        << " downloads=" << g_state.downloaded_tracks.size()
+        << " play_counts=" << g_state.play_counts.size() << "\n"
+        << "settings: crossfade=" << st.crossfade_duration
+        << "s normalization=" << (st.volume_normalization ? 1 : 0)
+        << " low_power=" << (st.low_power ? 1 : 0)
+        << " warm_start=" << (st.warm_start ? 1 : 0)
+        << "/" << st.warm_start_mode
+        << " warm_close_hides=" << (st.warm_close_hides ? 1 : 0)
+        << " diagnostics_history=" << (st.diagnostics_history ? 1 : 0)
+        << " browser=" << st.ytdl_browser
+        << " auth=" << st.auth_mode
+        << " day_mode=" << (st.day_mode ? 1 : 0)
+        << " ui_scale=" << st.ui_scale << "\n";
+    if (g_state.backend_status)
+        out << "backend_error: " << g_state.backend_status.message << "\n";
+    return out.str();
+}
+
 // ----------------------------------------------------------------------
 // Main
 // ----------------------------------------------------------------------
@@ -414,6 +484,7 @@ int app_run(int argc, char **argv)
             toggle_flag = true;
     }
 
+    diagnostics::start_boot_clock();
     // ---- Load settings (needed to know whether single-instance is enabled) ----
     g_state.settings = load_settings();
 
@@ -435,6 +506,11 @@ int app_run(int argc, char **argv)
                  warm_start::send(warm_start::Command::Show))
             return 0;
     }
+
+    diagnostics::set_history_enabled(g_state.settings.diagnostics_history);
+    tasks::set_history_enabled(g_state.settings.diagnostics_history);
+    diagnostics::set_context_provider([]() { return app_context_summary(); });
+    diagnostics::mark("settings");
 
     DLOG("boot: app_run at %lld", DNOW());
     ensure_cache_dir();
@@ -500,6 +576,7 @@ int app_run(int argc, char **argv)
         backend_boot_state.store(0, std::memory_order_release);
         backend_boot_thread = std::thread([&backend_boot_state]() {
             backend_boot_state.store(start_backend() ? 1 : -1, std::memory_order_release);
+            diagnostics::mark("backend-main");
         });
     };
     if (!defer_backend)
@@ -552,6 +629,7 @@ int app_run(int argc, char **argv)
 
     // ---- Accent colour (custom setting, system portal or daily fallback) ----
     update_accent(g_state.settings);
+    diagnostics::mark("accent");
 
     // ---- libnotify init ----
 #ifndef P100_WINDOWS
@@ -566,6 +644,7 @@ int app_run(int argc, char **argv)
     SDL_SetHint(SDL_HINT_QUIT_ON_LAST_WINDOW_CLOSE, "0");
     SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER);
     g_sdl_ready.store(true, std::memory_order_relaxed);
+    diagnostics::mark("sdl");
     party_init();
     party_set_wake(party_wake_event);
     if (!safe_mode)
@@ -590,6 +669,7 @@ int app_run(int argc, char **argv)
     }
     SDL_SetWindowMinimumSize(window, 860, 600);
     g_window_hidden = start_hidden;
+    diagnostics::mark("window");
     SDL_GLContext gl_context = SDL_GL_CreateContext(window);
     if (!gl_context)
     {
@@ -598,11 +678,13 @@ int app_run(int argc, char **argv)
     }
     SDL_GL_MakeCurrent(window, gl_context);
     SDL_GL_SetSwapInterval(1);
+    diagnostics::mark("gl-context");
 
     // Saved data is ready now (the loader ran in parallel with window/GL
     // setup); main-thread consumers can use it safely.
     if (data_boot_thread.joinable())
         data_boot_thread.join();
+    diagnostics::mark("data");
 
     // ---- Load up-next queue and recent searches ----
     g_state.play_queue = load_play_queue();
@@ -619,6 +701,7 @@ int app_run(int argc, char **argv)
     // ---- ImGui init ----
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
+    diagnostics::mark("imgui");
     ImGuiIO &io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
     // Keep window layout in the same place as the rest of the user data so
@@ -633,6 +716,7 @@ int app_run(int argc, char **argv)
     g_state.title_font = g_ui_fonts.semibold;
 
     apply_ui_scale(g_state.settings);
+    diagnostics::mark("theme-fonts");
 
     // ---- Backends ----
     ImGui_ImplSDL2_InitForOpenGL(window, gl_context);
@@ -641,8 +725,9 @@ int app_run(int argc, char **argv)
         fprintf(stderr,
                 "OpenGL 3.2+ is required (found no working GL driver). "
                 "Update your GPU driver or use a machine with hardware/llvmpipe OpenGL.\n");
-        return 1;
+        return fatal_exit(1);
     }
+    diagnostics::mark("imgui-backend");
 
     // ---- Mpv ----
     // Download cache cap (0 = unlimited). Re-applied live when the user
@@ -667,6 +752,7 @@ int app_run(int argc, char **argv)
             g_cf.active = g_cf.pending.exchange(false);
     };
     g_fade_player->set_event_callback(g_fade_event_cb);
+    diagnostics::mark("mpv");
 
     ui_notify_set_open_settings([]()
     {
@@ -690,6 +776,7 @@ int app_run(int argc, char **argv)
     // ---- MPRIS ----
     auto mpris = std::make_unique<MprisPlayer>(g_state, g_player_raw);
     g_mpris = mpris.get();
+    diagnostics::mark("mpris");
 
     // ---- Session restore ----
     if (g_state.session_restore_pending)
@@ -735,9 +822,11 @@ int app_run(int argc, char **argv)
         g_state.pending_video_url = r.track_url;
     }
 
+    diagnostics::mark("session-restore");
+
     g_state.home_refreshing = !defer_backend;
     if (!defer_backend)
-        tasks::spawn([]() { load_recommendations(false); });
+        tasks::spawn("recommendations", []() { load_recommendations(false); });
 
 #ifndef P100_WINDOWS
     std::signal(SIGTERM, handle_quit_signal);
@@ -798,7 +887,7 @@ int app_run(int argc, char **argv)
             set_backend_deferred(false);
             start_backend_async(false);
             g_state.home_refreshing = true;
-            tasks::spawn([]() { load_recommendations(false); });
+            tasks::spawn("recommendations", []() { load_recommendations(false); });
         }
         g_state.repaint_requested = true;
     };
@@ -808,6 +897,7 @@ int app_run(int argc, char **argv)
     auto next_frame = last_save_time;
     auto last_activity_time = last_save_time;
 
+    diagnostics::mark("loop");
     diagnostics::start_watchdog();
     DLOG("boot: loop at %lld", DNOW());
     while (running && !g_quit_requested)
@@ -1354,7 +1444,7 @@ int app_run(int argc, char **argv)
                         const std::string pending_artist = g_state.pending_play_artist;
                         const std::string pending_thumb = g_state.pending_play_thumbnail_url;
                         const std::uint64_t pending_gen = g_play_generation.load();
-                        tasks::spawn([pending_id, pending_url, pending_title, pending_artist,
+                        tasks::spawn("resolve", [pending_id, pending_url, pending_title, pending_artist,
                                       pending_thumb, fresh, pending_gen]() {
                             resolve_audio(pending_id, pending_url, pending_title,
                                           pending_artist, pending_thumb, fresh, pending_gen);
@@ -1519,7 +1609,7 @@ int app_run(int argc, char **argv)
                 g_state.refresh_requested = false;
                 g_state.home_refreshing = true;
                 g_state.status_text = "Loading...";
-                tasks::spawn([]() { load_recommendations(true); });
+                tasks::spawn("recommendations-refresh", []() { load_recommendations(true); });
             }
 
             // Search: the UI debounces and snapshots the query; we run the
@@ -1530,7 +1620,7 @@ int app_run(int argc, char **argv)
                 g_state.search_dirty = false;
                 std::string query = g_state.queued_search;
                 int expect_id = g_state.search_id;
-                tasks::spawn([query, expect_id]() { search_all_and_update(query, expect_id); });
+                tasks::spawn("search", [query, expect_id]() { search_all_and_update(query, expect_id); });
             }
             if (g_state.auth_refresh_requested)
             {
@@ -1565,7 +1655,7 @@ int app_run(int argc, char **argv)
                 g_state.artist_search_dirty = false;
                 std::string query = g_state.queued_artist_search;
                 int expect_id = g_state.search_id;
-                tasks::spawn([query, expect_id]() { artist_search_and_update(query, expect_id); });
+                tasks::spawn("artist-search", [query, expect_id]() { artist_search_and_update(query, expect_id); });
             }
 
             // Lyrics: prefetch the current track's lyrics in the background
@@ -1590,7 +1680,7 @@ int app_run(int argc, char **argv)
                         g_state.lyrics_loading = true;
                         const std::string lyrics_id = g_state.lyrics_requested_id;
                         const int lyrics_seq = (int)g_state.lyrics_seq;
-                        tasks::spawn([lyrics_id, lyrics_seq]() {
+                        tasks::spawn("lyrics", [lyrics_id, lyrics_seq]() {
                             load_lyrics_worker(lyrics_id, lyrics_seq);
                         });
                     }

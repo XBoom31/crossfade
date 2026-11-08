@@ -80,6 +80,7 @@ The C++ process forks the Python backend at startup, communicating via pipes. Ea
 | `app/app_playback.cpp` | Queue building, stream resolution, recording, crossfade and player events |
 | `app/app_workers.cpp` | Background search, recommendations, lyrics and cover/download workers |
 | `app/app_internal.h` | Shared app-module globals, types and function declarations |
+| `app/diagnostics.cpp` | Crash logs, watchdog, boot marks and the full diagnostics bundle |
 | `app/warm_start.cpp` | Single-instance UNIX socket, warm start and show/hide/quit IPC |
 | `ui.h` | `AppState` struct (global state), `Track`/`Playlist`/`Settings`/`SessionState` types, UI function declarations, layout constants |
 | `ui_helpers.cpp` | Shared UI helpers, playlist source resolution, scroll/content fades |
@@ -120,6 +121,11 @@ The C++ process forks the Python backend at startup, communicating via pipes. Ea
 - **Playlist source tracking:** `current_playlist_source` (Home/Search/Downloads/Radio/Liked/Playlist/Album/Artist) determines which vector drives the current view
 
 ### Main loop power management
+
+Diagnostics (Settings → System → Diagnostics) captures boot marks, backend
+channel counters, named background-task timings, system/GL/tool versions, cache
+stats, app state, recent logs and the newest crash log. The detailed history is
+toggleable (`diagnostics_history`); boot marks and live counters stay on.
 
 Warm start (Settings → System → Warm start, `--warm`) keeps one background
 instance and routes later launches over a UNIX socket (`$XDG_RUNTIME_DIR/crossfade.sock`):

@@ -49,6 +49,8 @@ void set_optional_backends_enabled(bool enabled);
 // While parked, commands fail fast instead of waiting for a backend that is
 // intentionally not running yet.
 void set_backend_deferred(bool deferred);
+// Per-channel status/counters for the diagnostics bundle.
+std::string backend_diagnostics();
 // Cancel an in-flight startup wait (called before joining the boot thread
 // during shutdown).
 void cancel_backend_startup();

@@ -3,10 +3,24 @@
 #include "library.h"
 #include "paths.h"
 #include "version.h"
+#include "warm_start.h"
+#include "ytdlp.h"
+#include "tasks.h"
+
+#include <GL/gl.h>
+#include <SDL2/SDL.h>
+#include <mpv/client.h>
+
+#include <algorithm>
+#include <fstream>
+#include <functional>
+#include <sstream>
+#include <vector>
 
 #include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <cstdarg>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -30,6 +44,7 @@
 #include <signal.h>
 #include <unistd.h>
 #include <sys/stat.h>
+#include <sys/utsname.h>
 #endif
 
 namespace diagnostics
@@ -38,7 +53,15 @@ namespace
 {
 std::mutex g_mu;
 std::deque<std::string> g_lines;
-constexpr size_t kMaxLines = 400;
+constexpr size_t kMaxLines = 2000;
+std::atomic<bool> g_history_enabled{true};
+
+std::mutex g_boot_mu;
+std::chrono::steady_clock::time_point g_boot_start;
+std::vector<std::pair<std::string, long long>> g_marks;
+
+std::mutex g_provider_mu;
+std::function<std::string()> g_context_provider;
 std::string g_crash_dir;
 char g_crash_dir_buf[1024] = {0};
 
@@ -90,6 +113,220 @@ void append_line(const std::string &line)
     g_lines.push_back(line);
     while (g_lines.size() > kMaxLines)
         g_lines.pop_front();
+}
+
+
+std::string read_proc_value(const char *path, const char *prefix)
+{
+    std::ifstream in(path);
+    if (!in.good())
+        return {};
+    std::string line;
+    const std::string pfx(prefix);
+    while (std::getline(in, line))
+    {
+        if (line.rfind(pfx, 0) == 0)
+        {
+            size_t start = pfx.size();
+            while (start < line.size() && (line[start] == ' ' || line[start] == '\t'))
+                ++start;
+            std::string value = line.substr(start);
+            if (value.rfind(": ", 0) == 0)
+                value.erase(0, 2);
+            if (value.size() >= 2 &&
+                ((value.front() == '\'' && value.back() == '\'') ||
+                 (value.front() == '"' && value.back() == '"')))
+                value = value.substr(1, value.size() - 2);
+            return value;
+        }
+    }
+    return {};
+}
+
+std::string tail_file(const std::string &path, size_t max_lines)
+{
+    std::ifstream in(path, std::ios::binary);
+    if (!in.good())
+        return "(missing)\n";
+    std::deque<std::string> lines;
+    std::string line;
+    while (std::getline(in, line))
+    {
+        lines.push_back(line);
+        if (lines.size() > max_lines)
+            lines.pop_front();
+    }
+    std::string out;
+    for (const auto &l : lines)
+    {
+        out += l;
+        out += '\n';
+    }
+    return out.empty() ? "(empty)\n" : out;
+}
+
+std::string run_capture(const std::string &cmd)
+{
+#ifdef _WIN32
+    (void)cmd;
+    return "n/a\n";
+#else
+    std::string out;
+    FILE *pipe = popen(cmd.c_str(), "r");
+    if (!pipe)
+        return "n/a\n";
+    char buf[512];
+    while (fgets(buf, sizeof(buf), pipe))
+        out += buf;
+    pclose(pipe);
+    return out.empty() ? "n/a\n" : out;
+#endif
+}
+
+std::string runtime_info()
+{
+    std::ostringstream out;
+    out << "version: " << version() << "\n";
+#ifdef _WIN32
+    out << "platform: Windows\n";
+#elif defined(__APPLE__)
+    out << "platform: macOS\n";
+#else
+    out << "platform: Linux\n";
+#endif
+#ifndef _WIN32
+    struct utsname uts{};
+    if (uname(&uts) == 0)
+        out << "kernel: " << uts.sysname << " " << uts.release << " (" << uts.machine << ")\n";
+#endif
+    const std::string distro = read_proc_value("/etc/os-release", "PRETTY_NAME=");
+    if (!distro.empty())
+        out << "distro: " << distro << "\n";
+    const std::string cpu = read_proc_value("/proc/cpuinfo", "model name");
+    if (!cpu.empty())
+        out << "cpu: " << cpu << "\n";
+
+    out << "memory: RSS " << read_proc_value("/proc/self/status", "VmRSS:")
+        << "  peak " << read_proc_value("/proc/self/status", "VmHWM:")
+        << "  PSS " << read_proc_value("/proc/self/smaps_rollup", "Pss:")
+        << "  threads " << read_proc_value("/proc/self/status", "Threads:") << "\n";
+    out << "config: " << p100_config_dir() << "\n";
+    out << "library DB: " << library::db_path() << "\n";
+
+    SDL_version sdl{};
+    SDL_GetVersion(&sdl);
+    out << "SDL: " << (int)sdl.major << "." << (int)sdl.minor << "." << (int)sdl.patch << "\n";
+
+    const GLubyte *glver = glGetString(GL_VERSION);
+    const GLubyte *glren = glGetString(GL_RENDERER);
+    const GLubyte *glven = glGetString(GL_VENDOR);
+    if (glver)
+        out << "GL: " << (const char *)glver << " | " << (glren ? (const char *)glren : "?")
+            << " | " << (glven ? (const char *)glven : "?") << "\n";
+
+    const unsigned long mpv_api = mpv_client_api_version();
+    out << "mpv client API: " << (mpv_api >> 16) << "." << (mpv_api & 0xFFFF) << "\n";
+
+    static std::mutex ver_mu;
+    static std::string versions;
+    {
+        std::lock_guard<std::mutex> lock(ver_mu);
+        if (versions.empty())
+        {
+            const std::string py = backend_python_path();
+            versions = run_capture(
+                "\"" + py + "\" -c \"import sys; print('python', sys.version.split()[0]);"
+                "import yt_dlp; print('yt-dlp', yt_dlp.version.__version__);"
+                "import ytmusicapi; print('ytmusicapi', getattr(ytmusicapi, '__version__', '?'))\"");
+        }
+    }
+    out << "backend toolchain:\n" << versions;
+    return out.str();
+}
+
+std::string boot_marks_text()
+{
+    std::lock_guard<std::mutex> lock(g_boot_mu);
+    if (g_marks.empty())
+        return "(none)\n";
+    std::ostringstream out;
+    for (const auto &m : g_marks)
+        out << "  " << m.second << " ms  " << m.first << "\n";
+    return out.str();
+}
+
+std::string cache_stats()
+{
+    auto dir_bytes = [](const std::string &dir, size_t &files) {
+        files = 0;
+        std::error_code ec;
+        uintmax_t total = 0;
+        for (std::filesystem::recursive_directory_iterator it(dir, ec), end;
+             !ec && it != end; it.increment(ec))
+        {
+            if (it->is_regular_file(ec) && !ec)
+            {
+                total += it->file_size(ec);
+                ++files;
+            }
+            ec.clear();
+        }
+        return total;
+    };
+    size_t audio_files = 0, thumb_files = 0, lyric_files = 0;
+    const uintmax_t audio = dir_bytes(p100_config_path("audio_cache"), audio_files);
+    const uintmax_t thumbs = dir_bytes(p100_config_path("thumb_cache"), thumb_files);
+    const uintmax_t lyrics = dir_bytes(p100_config_path("lyrics"), lyric_files);
+    std::ostringstream out;
+    out << "audio_cache: " << audio_files << " files, " << (audio / (1024 * 1024)) << " MB\n";
+    out << "thumb_cache: " << thumb_files << " files, " << (thumbs / (1024 * 1024)) << " MB\n";
+    out << "lyrics: " << lyric_files << " files, " << (lyrics / (1024 * 1024)) << " MB\n";
+    return out.str();
+}
+
+std::string newest_crash_tail()
+{
+    std::error_code ec;
+    std::string newest;
+    std::filesystem::file_time_type newest_time{};
+    for (std::filesystem::directory_iterator it(p100_config_dir(), ec), end;
+         !ec && it != end; it.increment(ec))
+    {
+        const std::string name = it->path().filename().string();
+        if (name.rfind("crash-", 0) != 0 && name.rfind("hang-", 0) != 0)
+            continue;
+        const auto t = it->last_write_time(ec);
+        if (!ec && (newest.empty() || t > newest_time))
+        {
+            newest = it->path().string();
+            newest_time = t;
+        }
+    }
+    if (newest.empty())
+        return "(none)\n";
+    return newest + "\n" + tail_file(newest, 80);
+}
+
+std::string tasks_text()
+{
+    const auto rows = tasks::snapshot();
+    std::ostringstream out;
+    out << "workers: active=" << tasks::active_count() << " total=" << tasks::total_count() << "\n";
+    const size_t start = rows.size() > 80 ? rows.size() - 80 : 0;
+    double base = rows.empty() ? 0.0 : rows.front().start_ms;
+    for (size_t i = 1; i < rows.size(); ++i)
+        base = std::min(base, rows[i].start_ms);
+    for (size_t i = start; i < rows.size(); ++i)
+    {
+        const auto &r = rows[i];
+        out << "  #" << r.id << " " << r.name << " "
+            << (r.active ? "running" : "done") << " start=+"
+            << (long long)(r.start_ms - base) << "ms";
+        if (!r.active)
+            out << " dur=" << (long long)r.duration_ms << "ms";
+        out << "\n";
+    }
+    return out.str();
 }
 
 #ifdef _WIN32
@@ -231,6 +468,8 @@ void install_crash_handler()
 
 void log(const char *category, const std::string &message)
 {
+    if (!g_history_enabled.load(std::memory_order_relaxed))
+        return;
     const auto now = std::chrono::system_clock::now();
     const std::time_t t = std::chrono::system_clock::to_time_t(now);
     std::tm tm{};
@@ -258,26 +497,108 @@ std::string recent_log()
     return out;
 }
 
+void logf(const char *category, const char *fmt, ...)
+{
+    char buf[2048];
+    va_list args;
+    va_start(args, fmt);
+    vsnprintf(buf, sizeof(buf), fmt, args);
+    va_end(args);
+    log(category, buf);
+}
+
+void set_history_enabled(bool enabled)
+{
+    std::lock_guard<std::mutex> lock(g_mu);
+    g_history_enabled.store(enabled, std::memory_order_relaxed);
+    if (!enabled)
+        g_lines.clear();
+}
+
+bool history_enabled()
+{
+    std::lock_guard<std::mutex> lock(g_mu);
+    return g_history_enabled.load(std::memory_order_relaxed);
+}
+
+void start_boot_clock()
+{
+    std::lock_guard<std::mutex> lock(g_boot_mu);
+    g_boot_start = std::chrono::steady_clock::now();
+    g_marks.clear();
+    g_marks.emplace_back("boot", 0);
+}
+
+void mark(const char *name)
+{
+    std::lock_guard<std::mutex> lock(g_boot_mu);
+    if (g_boot_start == std::chrono::steady_clock::time_point{})
+        g_boot_start = std::chrono::steady_clock::now();
+    const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                        std::chrono::steady_clock::now() - g_boot_start)
+                        .count();
+    g_marks.emplace_back(name ? name : "mark", (long long)ms);
+}
+
+void set_context_provider(std::function<std::string()> provider)
+{
+    std::lock_guard<std::mutex> lock(g_provider_mu);
+    g_context_provider = std::move(provider);
+}
+
 std::string bundle()
 {
     std::ostringstream out;
     out << "crossfade diagnostics\n"
-        << "version: " << version() << "\n"
-#ifdef _WIN32
-        << "platform: Windows\n"
-#elif defined(__APPLE__)
-        << "platform: macOS\n"
-#else
-        << "platform: Linux\n"
-#endif
-        << "config: " << p100_config_dir() << "\n"
-        << "library DB: " << library::db_path() << "\n"
-        << "library backup: " << library::backup_dir() << "\n\n"
-        << "Library status:\n"
-        << library::status_text() << "\n\n"
-        << "Recent log:\n"
-        << recent_log();
+        << "====================\n"
+        << runtime_info()
+        << "\nBoot timings:\n" << boot_marks_text()
+        << "\nBackend channels:\n" << backend_diagnostics()
+        << "\nBackground workers:\n" << tasks_text()
+        << "\nWarm start: active=" << (warm_start::server_active() ? 1 : 0)
+        << " socket=" << warm_start::socket_path() << "\n";
+
+    std::function<std::string()> provider;
+    {
+        std::lock_guard<std::mutex> lock(g_provider_mu);
+        provider = g_context_provider;
+    }
+    if (provider)
+    {
+        const std::string ctx = provider();
+        if (!ctx.empty())
+            out << "\nApp state:\n" << ctx;
+    }
+
+    out << "\nCache:\n" << cache_stats()
+        << "\nLibrary status:\n" << library::status_text()
+        << "\nRecent app log:\n" << recent_log()
+        << "\nBackend log (tail):\n" << tail_file(p100_config_path("backend.log"), 200)
+        << "\nNewest crash log:\n" << newest_crash_tail();
     return out.str();
+}
+
+bool save_bundle(std::string &path, std::string &error)
+{
+    error.clear();
+    const long long stamp = (long long)std::time(nullptr);
+    char name[64];
+    std::snprintf(name, sizeof(name), "diagnostics-%lld.txt", stamp);
+    path = p100_config_path(name);
+    std::ofstream out(path, std::ios::binary);
+    if (!out)
+    {
+        error = "Could not create " + path;
+        return false;
+    }
+    const std::string text = bundle();
+    out.write(text.data(), (std::streamsize)text.size());
+    if (!out.good())
+    {
+        error = "Failed while writing " + path;
+        return false;
+    }
+    return true;
 }
 
 bool safe_mode_requested()

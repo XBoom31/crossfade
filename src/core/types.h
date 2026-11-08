@@ -225,6 +225,9 @@ struct Settings
     bool warm_start = true;
     int warm_start_mode = 0;
     bool warm_close_hides = true;
+    // Keep detailed task/log history for the diagnostics report. Passive:
+    // a small in-memory ring plus one record per background task.
+    bool diagnostics_history = true;
     // Glowing separators: a soft album-coloured light streak under each
     // section header, plus album-tinted structural hairlines. Uses the same
     // dominant-colour tint as the backdrop, but works with the backdrop off.
@@ -305,6 +308,7 @@ struct Settings
                warm_start == o.warm_start &&
                warm_start_mode == o.warm_start_mode &&
                warm_close_hides == o.warm_close_hides &&
+               diagnostics_history == o.diagnostics_history &&
                glow_separators == o.glow_separators &&
                glow_separator_strength == o.glow_separator_strength &&
                backdrop_drift == o.backdrop_drift &&

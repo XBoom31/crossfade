@@ -20,9 +20,10 @@
 #include <vector>
 
 #include "ui.h"
+#include "diagnostics.h"
 #include "crossfade.h"
 
-#define DLOG(...) do { fputs("[p100] ", stderr); fprintf(stderr, __VA_ARGS__); fputc('\n', stderr); fflush(stderr); } while (0)
+#define DLOG(...) do { fputs("[p100] ", stderr); fprintf(stderr, __VA_ARGS__); fputc('\n', stderr); fflush(stderr); diagnostics::logf("app", __VA_ARGS__); } while (0)
 #define DNOW() ((long long)(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count()))
 
 class MpvPlayer;
