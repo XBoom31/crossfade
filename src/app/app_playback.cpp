@@ -471,12 +471,12 @@ void begin_play_track(const Track &t, int index)
     g_state.current_track_index = resolved_index;
 
     g_state.pending_manual_play = true;
-    g_state.pending_play_url = t.url;
+    g_state.pending_play_url = playable_track_url(t.id, t.url);
     g_state.pending_play_title = t.title;
     g_state.pending_play_artist = t.artist;
     g_state.pending_play_thumbnail_url = t.thumbnail_url;
     g_state.pending_video_id = t.id;
-    g_state.pending_video_url = t.url;
+    g_state.pending_video_url = playable_track_url(t.id, t.url);
 }
 
 

@@ -2194,6 +2194,26 @@ std::string find_cached_audio_path(const std::string &video_id)
     return find_audio_in(dir, video_id);
 }
 
+std::string playable_track_url(const std::string &id, const std::string &url)
+{
+    if (!url.empty() && url.find("://") != std::string::npos)
+        return url; // remote stream / YouTube URL
+    if (!url.empty())
+    {
+        std::error_code ec;
+        if (std::filesystem::is_regular_file(url, ec))
+            return url;
+    }
+    if (!id.empty())
+    {
+        const std::string cached = find_cached_audio_path(id);
+        if (!cached.empty())
+            return cached;
+        return "https://www.youtube.com/watch?v=" + id;
+    }
+    return url;
+}
+
 std::string get_cached_audio_path(const std::string &video_id)
 {
     if (video_id.empty())

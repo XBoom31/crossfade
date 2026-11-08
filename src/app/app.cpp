@@ -46,6 +46,7 @@
 #include "power.h"
 #include "app_internal.h"
 #include "warm_start.h"
+#include "data_transfer.h"
 #include "session.h"
 
 // ---- libnotify (Linux desktop notifications; no-op on Windows) ----
@@ -636,6 +637,11 @@ int app_run(int argc, char **argv)
     notify_init("crossfade");
     notify_init_done = true;
 #endif
+    {
+        const std::string msg = data_transfer::take_result_message();
+        if (!msg.empty())
+            show_notification("crossfade data", msg);
+    }
 
     // ---- SDL init ----
     // Touch is translated to ImGui input manually (tap/scroll/long-press),
@@ -814,12 +820,12 @@ int app_run(int argc, char **argv)
         g_state.loading = true;
         g_loading_since = std::chrono::steady_clock::now();
         g_state.pending_manual_play = true;
-        g_state.pending_play_url = r.track_url;
+        g_state.pending_play_url = playable_track_url(r.track_id, r.track_url);
         g_state.pending_play_title = r.track_title;
         g_state.pending_play_artist = r.track_artist;
         g_state.pending_play_thumbnail_url = r.track_thumbnail;
         g_state.pending_video_id = r.track_id;
-        g_state.pending_video_url = r.track_url;
+        g_state.pending_video_url = playable_track_url(r.track_id, r.track_url);
     }
 
     diagnostics::mark("session-restore");
@@ -900,7 +906,7 @@ int app_run(int argc, char **argv)
     diagnostics::mark("loop");
     diagnostics::start_watchdog();
     DLOG("boot: loop at %lld", DNOW());
-    while (running && !g_quit_requested)
+    while (running && !g_quit_requested && !g_state.quit_requested.load())
     {
         // Tell the hang watchdog this thread is alive. If the loop stops
         // advancing (deadlock or a synchronous backend call on the UI thread),
@@ -2014,6 +2020,7 @@ int app_run(int argc, char **argv)
     if (notify_init_done)
         notify_uninit();
 #endif
+    data_transfer::mark_shutdown_ready();
     DLOG("shutdown: done");
     // GLib/GDBus and SDL can leave atexit/static teardown waiting on helper
     // threads after main returns. Every resource we own has been released

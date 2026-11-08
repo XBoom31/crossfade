@@ -209,6 +209,8 @@ struct AppState
 
     // Status / errors
     std::string status_text = "Loading...";
+    // Set by UI actions that must exit the process (e.g. import-after-exit).
+    std::atomic<bool> quit_requested{false};
     // Last classified backend failure (kind + raw message). Persists until a
     // later success clears it, so Settings can always show what's wrong.
     BackendError backend_status;

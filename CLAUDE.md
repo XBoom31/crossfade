@@ -82,6 +82,8 @@ The C++ process forks the Python backend at startup, communicating via pipes. Ea
 | `app/app_internal.h` | Shared app-module globals, types and function declarations |
 | `app/diagnostics.cpp` | Crash logs, watchdog, boot marks and the full diagnostics bundle |
 | `app/warm_start.cpp` | Single-instance UNIX socket, warm start and show/hide/quit IPC |
+| `app/data_transfer.cpp` | In-app ZIP backup/restore orchestration + detached import helper |
+| `py/cf_backend/transfer.py` | Cross-platform stdlib ZIP export/import with section selection |
 | `ui.h` | `AppState` struct (global state), `Track`/`Playlist`/`Settings`/`SessionState` types, UI function declarations, layout constants |
 | `ui_helpers.cpp` | Shared UI helpers, playlist source resolution, scroll/content fades |
 | `data/store.cpp` | JSON persistence fallbacks (`liked.json`, `history.json`, counts, log, queue) when SQLite is unavailable |
@@ -121,6 +123,12 @@ The C++ process forks the Python backend at startup, communicating via pipes. Ea
 - **Playlist source tracking:** `current_playlist_source` (Home/Search/Downloads/Radio/Liked/Playlist/Album/Artist) determines which vector drives the current view
 
 ### Main loop power management
+
+Data transfer (Settings → System → Data transfer) exports selected sections
+(settings/auth/library/caches/lyrics/thumbs/audio/logs) to one portable ZIP and
+imports it on another OS. Import is a detached helper that waits for the app to
+exit, replaces only the sections present, and keeps a `crossfade-pre-import-*`
+safety copy. Playback rebases old absolute audio-cache paths by track id.
 
 Diagnostics (Settings → System → Diagnostics) captures boot marks, backend
 channel counters, named background-task timings, system/GL/tool versions, cache

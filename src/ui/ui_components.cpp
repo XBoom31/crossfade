@@ -121,13 +121,13 @@ void ui_play_track(AppState &state, const Track &track, int index)
     state.queue_replace_index = index;
     state.queue_replace_id = track.id;
 
-    state.pending_play_url = track.url;
+    state.pending_play_url = playable_track_url(track.id, track.url);
     state.current_track_url = track.url;
     state.pending_play_title = track.title;
     state.pending_play_artist = track.artist;
     state.pending_play_thumbnail_url = thumb_url;
     state.pending_video_id = track.id;
-    state.pending_video_url = track.url;
+    state.pending_video_url = playable_track_url(track.id, track.url);
     state.pending_manual_play = true;
     state.loading_seq.fetch_add(1, std::memory_order_relaxed);
 }

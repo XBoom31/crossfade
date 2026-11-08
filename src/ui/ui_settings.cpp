@@ -14,6 +14,7 @@
 #include "writeback.h"
 #include "library.h"
 #include "diagnostics.h"
+#include "data_transfer.h"
 #include "power.h"
 #include "misc/cpp/imgui_stdlib.h"
 #include <fstream>
@@ -638,6 +639,7 @@ enum SettingsCategory
     SC_LIBRARY,
     SC_POWER,
     SC_WARMSTART,
+    SC_DATA,
     SC_DIAGNOSTICS,
     SC_NOTES,
     SC_DANGER,
@@ -647,6 +649,12 @@ enum SettingsCategory
 static int s_settings_category = SC_APPEARANCE;
 static std::string s_diag_report;
 static bool s_diag_open = false;
+static data_transfer::Sections s_xfer_sections;
+static std::string s_xfer_export_path;
+static std::string s_xfer_import_path;
+static std::string s_xfer_pick_dir;
+static bool s_xfer_pick_open = false;
+static bool s_xfer_confirm_open = false;
 
 static ImU32 settings_lerp_col(ImU32 a, ImU32 b, float t)
 {
@@ -682,6 +690,7 @@ static const SettingsNavEntry kSettingsNav[] = {
     {SC_SHORTCUTS, UiIcon::More, "Shortcuts", nullptr},
     {SC_POWER, UiIcon::Moon, "Power", nullptr},
     {SC_WARMSTART, UiIcon::Repeat, "Warm start", nullptr},
+    {SC_DATA, UiIcon::Download, "Data transfer", nullptr},
     {SC_DIAGNOSTICS, UiIcon::Stats, "Diagnostics", nullptr},
     {SC_NOTES, UiIcon::Settings, "Notes", nullptr},
     {SC_DANGER, UiIcon::Close, "Danger Zone", nullptr},
@@ -2252,6 +2261,168 @@ void draw_settings_panel(AppState &state)
             settings_help("xinitrc: `crossfade --warm &`. Later: `crossfade` shows it, `crossfade --toggle` hides/shows, `crossfade --quit` exits.");
         }
     }
+    if (s_settings_category == SC_DATA)
+    {
+        SettingsCard card("Data transfer", "One ZIP for backup or moving to another machine.",
+                          UiIcon::Download);
+        settings_help("Plain ZIP files; works between Linux, Windows and macOS. The library is snapshotted consistently before export.");
+
+        if (s_xfer_export_path.empty())
+            s_xfer_export_path = data_transfer::default_export_path();
+        if (s_xfer_import_path.empty())
+            s_xfer_import_path = data_transfer::default_import_path();
+
+        settings_group_label("Include");
+        settings_toggle_row("##xf_settings", "Settings & session",
+                            &s_xfer_sections.settings,
+                            "settings.json, session.json and the ImGui layout.");
+        settings_toggle_row("##xf_auth", "Sign-in & cookies",
+                            &s_xfer_sections.auth,
+                            "browser.json, browseroauth.json and the Spotify cookie. Cookies may have expired by the time you restore.");
+        settings_toggle_row("##xf_library", "Library",
+                            &s_xfer_sections.library,
+                            "SQLite library, likes, history, playlists, stats, queue and recommendations cache.");
+        settings_toggle_row("##xf_album", "Album cache", &s_xfer_sections.album_cache,
+                            "Cached album pages for instant/offline reopening.");
+        settings_toggle_row("##xf_artist", "Artist cache", &s_xfer_sections.artist_cache,
+                            "Cached artist pages for instant/offline reopening.");
+        settings_toggle_row("##xf_lyrics", "Lyrics", &s_xfer_sections.lyrics,
+                            "Downloaded per-track lyrics.");
+        settings_toggle_row("##xf_thumbs", "Thumbnail cache", &s_xfer_sections.thumbs,
+                            "Cover artwork cache (can be several hundred MB).");
+        settings_toggle_row("##xf_audio", "Downloaded audio", &s_xfer_sections.audio,
+                            "Full audio cache. This can make the ZIP many GB; it is stored uncompressed for speed.");
+        settings_toggle_row("##xf_logs", "Logs & crash reports", &s_xfer_sections.logs,
+                            "backend.log, crash logs and saved diagnostics bundles.");
+
+        settings_group_label("Export");
+        settings_row_label("Destination ZIP", "", "The archive is created on a background worker; the UI stays responsive.");
+        ImGui::SetNextItemWidth(field_w);
+        ImGui::InputText("##xf_export_path", &s_xfer_export_path);
+        if (ui_ghost_button("Export ZIP", ImVec2(160.0f * m.layout_scale, m.control_h)))
+        {
+            std::string err;
+            if (!data_transfer::export_async(s_xfer_export_path, s_xfer_sections, err))
+                ui_notify(UiNotifyType::Error, "Export", err, 7.0f);
+        }
+        if (data_transfer::export_running())
+        {
+            ImGui::SameLine();
+            ImGui::TextDisabled("Exporting...");
+        }
+        settings_help("Default location is the crossfade config folder. Copy the ZIP anywhere; it is portable.");
+
+        settings_group_label("Import");
+        settings_row_label("Backup ZIP", "", "The selected sections in the archive replace the current ones. A safety copy of replaced data is kept next to the config folder.");
+        ImGui::SetNextItemWidth(field_w);
+        ImGui::InputText("##xf_import_path", &s_xfer_import_path);
+        if (ui_ghost_button("Browse...", ImVec2(120.0f * m.layout_scale, m.control_h)))
+        {
+            s_xfer_pick_dir = p100_config_dir();
+            s_xfer_pick_open = true;
+        }
+        ImGui::SameLine(0.0f, m.space_2);
+        if (ui_ghost_button("Import and close", ImVec2(190.0f * m.layout_scale, m.control_h)))
+            s_xfer_confirm_open = true;
+        settings_help("Import runs after crossfade closes, so open files can be replaced safely. Relaunch when it finishes; the next launch reports the result.");
+    }
+
+    if (s_xfer_pick_open)
+    {
+        ImGui::OpenPopup("Choose backup ZIP");
+        s_xfer_pick_open = false;
+    }
+    if (ImGui::BeginPopupModal("Choose backup ZIP", nullptr,
+                               ImGuiWindowFlags_AlwaysAutoResize))
+    {
+        ImGui::SetNextItemWidth(700.0f * m.layout_scale);
+        ImGui::InputText("##xf_pick_dir", &s_xfer_pick_dir);
+        std::vector<std::filesystem::directory_entry> dirs, zips;
+        std::error_code ec;
+        for (std::filesystem::directory_iterator it(s_xfer_pick_dir, ec), end;
+             !ec && it != end; it.increment(ec))
+        {
+            const std::string name = it->path().filename().string();
+            if (name.empty() || name[0] == '.')
+                continue;
+            std::error_code tc;
+            if (it->is_directory(tc))
+                dirs.push_back(*it);
+            else if (it->path().extension() == ".zip")
+                zips.push_back(*it);
+        }
+        auto by_name = [](const auto &a, const auto &b) {
+            return a.path().filename().string() < b.path().filename().string();
+        };
+        std::sort(dirs.begin(), dirs.end(), by_name);
+        std::sort(zips.begin(), zips.end(), by_name);
+        ImGui::BeginChild("##xf_pick_list", ImVec2(700.0f * m.layout_scale,
+                                                   320.0f * m.layout_scale),
+                          true);
+        if (ui_ghost_button("..", ImVec2(60.0f * m.layout_scale, m.control_h)))
+        {
+            const std::filesystem::path parent = std::filesystem::path(s_xfer_pick_dir).parent_path();
+            if (!parent.empty())
+                s_xfer_pick_dir = parent.string();
+        }
+        for (const auto &d : dirs)
+        {
+            const std::string name = d.path().filename().string();
+            if (ui_ghost_button(("[dir] " + name).c_str(),
+                                ImVec2(660.0f * m.layout_scale, m.control_h)))
+                s_xfer_pick_dir = d.path().string();
+        }
+        for (const auto &z : zips)
+        {
+            const std::string name = z.path().filename().string();
+            if (ui_ghost_button(name.c_str(), ImVec2(660.0f * m.layout_scale, m.control_h)))
+            {
+                s_xfer_import_path = z.path().string();
+                ImGui::CloseCurrentPopup();
+            }
+        }
+        ImGui::EndChild();
+        if (ui_ghost_button("Close", ImVec2(120.0f * m.layout_scale, m.control_h)))
+            ImGui::CloseCurrentPopup();
+        ImGui::EndPopup();
+    }
+
+    if (s_xfer_confirm_open)
+    {
+        ImGui::OpenPopup("Import backup");
+        s_xfer_confirm_open = false;
+    }
+    if (ImGui::BeginPopupModal("Import backup", nullptr,
+                               ImGuiWindowFlags_AlwaysAutoResize))
+    {
+        ImGui::PushTextWrapPos(520.0f * m.layout_scale);
+        ImGui::TextWrapped(
+            "The selected sections in this ZIP replace the current data. "
+            "crossfade will close, then the import runs in the background and "
+            "keeps a safety copy of replaced files next to the config folder. "
+            "Relaunch crossfade when it finishes.");
+        ImGui::PopTextWrapPos();
+        ImGui::Text("Archive: %s", s_xfer_import_path.c_str());
+        if (ui_ghost_button("Import and close", ImVec2(190.0f * m.layout_scale, m.control_h)))
+        {
+            std::string err;
+            if (data_transfer::start_import(s_xfer_import_path, err))
+            {
+                state.status_text = "Import pending; closing...";
+                state.quit_requested = true;
+                ImGui::CloseCurrentPopup();
+            }
+            else
+            {
+                ui_notify(UiNotifyType::Error, "Import", err, 7.0f);
+            }
+        }
+        ImGui::SameLine(0.0f, m.space_2);
+        if (ui_ghost_button("Cancel", ImVec2(120.0f * m.layout_scale, m.control_h)))
+            ImGui::CloseCurrentPopup();
+        ImGui::EndPopup();
+    }
+
     if (s_settings_category == SC_DIAGNOSTICS)
     {
         SettingsCard card("Diagnostics", "Local-only troubleshooting.", UiIcon::Stats);

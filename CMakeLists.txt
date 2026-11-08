@@ -58,6 +58,7 @@ set(SOURCES
     src/app/app_playback.cpp
     src/app/app_workers.cpp
     src/app/warm_start.cpp
+    src/app/data_transfer.cpp
     src/core/power.cpp
     src/core/tasks.cpp
     src/data/accent.cpp

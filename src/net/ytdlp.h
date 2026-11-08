@@ -326,7 +326,10 @@ bool parse_lyrics_json(const std::string &json, Lyrics &out);
 bool fetch_lyrics(const std::string &video_id, Lyrics &out);
 
 // Look up a previously downloaded file without triggering a download.
-std::string find_cached_audio_path(const std::string &video_id);// Download (if needed) and return the local audio file path.
+std::string find_cached_audio_path(const std::string &video_id);
+// Local paths in imported libraries may point at another OS/home. Prefer an
+// existing local file, then the current cache copy, then the YouTube URL.
+std::string playable_track_url(const std::string &id, const std::string &url);// Download (if needed) and return the local audio file path.
 std::string get_cached_audio_path(const std::string &video_id);
 // Resolve a direct streaming URL via the backend ("yt-dlp -g").
 std::string fetch_stream_url(const std::string &video_id);

@@ -656,7 +656,16 @@ history.
 
 ### Moving to a new machine
 
-A copy is enough:
+**Settings → System → Data transfer** creates one cross-platform ZIP and lets you
+choose exactly what goes in: settings/session, sign-in cookies, library and
+playlists, album/artist caches, lyrics, thumbnail cache, downloaded audio, and
+logs. The same controls import it on the target machine. Import runs after
+crossfade closes, keeps a safety copy of replaced files next to the config
+folder, and reports the result on the next launch. The library is snapshotted
+consistently before export, and downloaded-file paths are rebased automatically
+when moving between Linux and Windows.
+
+The scripts still work for scripted backups:
 
 ```bash
 ./scripts/crossfade-export.sh                 # everything (~GB, audio dominates)
