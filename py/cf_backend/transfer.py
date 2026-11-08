@@ -6,7 +6,7 @@ Uses only the Python standard library so it works with the bundled venv.
 Export:
     transfer.py export --zip BACKUP.zip --config CONFIG_DIR \
         --sections settings,auth,library,album_cache,artist_cache,lyrics,thumbs,audio,logs \
-        [--library SNAPSHOT_DB] [--version 0.3.1]
+        [--library SNAPSHOT_DB] [--version 0.3.2]
 
 Import (normally started by the app; it waits for the app to exit):
     transfer.py import --zip BACKUP.zip --config CONFIG_DIR \

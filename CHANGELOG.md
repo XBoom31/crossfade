@@ -2,6 +2,15 @@
 
 All notable changes to crossfade are documented here.
 
+## 0.3.2 - 2026-11-08
+
+### Added
+
+- **Right-click → Download is back.** Any track list can keep a song offline
+  from its context menu; cached songs offer **Remove download** instead.
+  Downloads appear in the Downloads tab as soon as the worker finishes, and
+  the removal action updates the list immediately.
+
 ## 0.3.1 - 2026-11-08
 
 ### Added

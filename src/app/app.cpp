@@ -1421,6 +1421,21 @@ int app_run(int argc, char **argv)
             // can overlap the two. Also applies the settings value.
             maybe_start_crossfade();
 
+            // Right-click Download: start the worker requested by the UI.
+            if (!g_state.download_request_id.empty())
+            {
+                const std::string id = g_state.download_request_id;
+                const std::string title = g_state.download_request_title;
+                g_state.download_request_id.clear();
+                g_state.download_request_title.clear();
+                background_download(id);
+                ui_notify(UiNotifyType::Info, "Downloading",
+                          title.empty() ? "The track will appear in Downloads when ready."
+                                        : title,
+                          4.0f);
+                g_state.repaint_requested = true;
+            }
+
             // Handle pending manual play
             {
                 std::lock_guard<std::mutex> lock(g_data_mutex);

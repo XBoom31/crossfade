@@ -267,6 +267,11 @@ struct AppState
     std::string pending_video_url;
     std::atomic<bool> pending_manual_play{false};
 
+    // Right-click "Download": the UI queues the request and the main loop
+    // starts the background worker (and shows the toast).
+    std::string download_request_id;
+    std::string download_request_title;
+
     // Playback queue. `play_queue` is the single global Up Next list: it
     // contains both host source tracks and guest requests, and playback only
     // ever advances by popping its front. `queue_cycle` is the source-list

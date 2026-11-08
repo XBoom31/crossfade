@@ -6,6 +6,7 @@
 #include "tasks.h"
 #include "texture.h"
 #include "writeback.h"
+#include "ui_notify.h"
 
 #include <algorithm>
 #include <cmath>
@@ -399,16 +400,38 @@ void ui_track_context_menu(AppState &state, const Track &track, bool allow_delet
         }
     }
 
-    if (show_download)
+    const bool cached = !find_cached_audio_path(track.id).empty();
+    const bool in_downloads = state.current_tab == Tab::Downloads;
+    // The Downloads tab already has "Delete download" below; every other list
+    // can download/remove the cached file from the right-click menu again.
+    if (!track.id.empty() && !(cached && in_downloads))
     {
         ImGui::Separator();
-        const bool cached = !find_cached_audio_path(track.id).empty();
-        if (ImGui::MenuItem(cached ? "Remove download" : "Download episode"))
+        const bool podcast_style = show_download;
+        const char *label = cached ? "Remove download"
+                                   : (podcast_style ? "Download episode" : "Download");
+        if (ImGui::MenuItem(label))
         {
-            if (download_requested)
-                *download_requested = true;
-            if (download_remove)
-                *download_remove = cached;
+            if (podcast_style)
+            {
+                // Podcast callers own episode retrieval and handle these flags.
+                if (download_requested)
+                    *download_requested = true;
+                if (download_remove)
+                    *download_remove = cached;
+            }
+            else if (cached)
+            {
+                delete_downloaded_track(state, track.id);
+                ui_notify(UiNotifyType::Success, "Download removed",
+                          track.title.empty() ? "The cached audio was deleted." : track.title, 4.0f);
+            }
+            else
+            {
+                state.download_request_id = track.id;
+                state.download_request_title = track.title;
+                state.repaint_requested = true;
+            }
         }
     }
 
