@@ -1309,6 +1309,8 @@ int app_run(int argc, char **argv)
                             g_state.video_close_requested = true;
                         else if (g_state.party_fullscreen)
                             g_state.party_fullscreen = false;
+                        else if (g_state.lyrics_immersive)
+                            g_state.lyrics_immersive = false;
                         else if (g_state.show_shortcuts)
                             g_state.show_shortcuts = false;
                         else if (g_state.current_tab != Tab::Album &&
@@ -2551,10 +2553,16 @@ int app_run(int argc, char **argv)
             draw_search_suggestions_overlay(g_state);
             updater::poll();
             ui_auth_poll(g_state);
-            ui_notify_draw();
+            // Toasts normally sit above everything, but they would break the
+            // immersive lyrics takeover (their windows are pulled to the front
+            // of the display list). Skip drawing them while it is up; anything
+            // that arrived meanwhile simply expires or is shown after exit.
+            if (!g_state.lyrics_immersive)
+                ui_notify_draw();
             // Draw the QR takeover after the toasts so it is a true top-most
             // surface. The modal already blocks clicks to everything behind it.
             draw_party_fullscreen(g_state);
+            draw_lyrics_immersive(g_state, *g_player);
 
             if (show_demo)
             {

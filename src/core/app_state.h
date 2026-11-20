@@ -240,6 +240,9 @@ struct AppState
     bool show_backend_debug = false;
     // Party view: fullscreen QR takeover. Session-only; never persisted.
     bool party_fullscreen = false;
+    // Lyrics immersive view: full-window, effects-driven lyrics takeover.
+    // Session-only; never persisted.
+    bool lyrics_immersive = false;
     // Set by the Party tab's "Party settings" shortcut so the Settings page
     // scrolls straight to the Party section on the next frame.
     bool settings_focus_party = false;

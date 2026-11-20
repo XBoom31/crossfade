@@ -424,3 +424,12 @@ void draw_youtube_panel(AppState &state);
 void draw_studio_panel(AppState &state, MpvPlayer &player);
 void draw_bottom_bar(AppState &state, MpvPlayer &player);
 void draw_lyrics_panel(AppState &state, MpvPlayer &player, float width, float height);
+// Full-window, effects-driven lyrics view. Drawn as a top-most modal takeover
+// so it also blocks the bottom bar / panels underneath.
+void draw_lyrics_immersive(AppState &state, MpvPlayer &player);
+
+// Shared lyrics timing helpers so the docked panel and the immersive view can
+// never disagree about which track or line is current.
+Track lyrics_display_track(const AppState &state);
+double lyrics_playback_time(const AppState &state, const MpvPlayer &player);
+int lyrics_active_line(const Lyrics &lyrics, const AppState &state, const MpvPlayer &player);

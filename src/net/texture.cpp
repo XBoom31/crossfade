@@ -70,6 +70,7 @@ void ensure_cache_dir()
 // -----------------------------------------------------------------------
 static std::unordered_map<std::string, TextureInfo> texture_cache;
 static std::unordered_map<std::string, TextureColor> color_cache; // guarded by cache_mutex
+static std::unordered_map<std::string, std::array<TextureColor, 3>> palette_cache;
 static std::mutex cache_mutex;
 
 struct PendingTexture
@@ -224,77 +225,47 @@ static bool download_url(const std::string &url, std::vector<uint8_t> &data)
 static bool download_thumbnail(const std::string &url, std::vector<uint8_t> &data);
 
 // -----------------------------------------------------------------------
-// Dominant-colour extraction.
+// Cover colour extraction.
 //
 // Runs once per decoded image (on the loader thread, or inline on the fast
-// disk-cache path) and is cached by URL, so the backdrop can read it every
-// frame for free. Vivid, mid-tone pixels get the most weight; that avoids
-// muddy averages where a cover is mostly black/white and keeps the glow tied
-// to the colour you actually associate with the artwork.
+// disk-cache path) and is cached by URL, so the UI can read it every frame for
+// free. Vivid, mid-tone pixels get the most weight; that avoids muddy averages
+// where a cover is mostly black/white and keeps the glow tied to the colour you
+// actually associate with the artwork. The same pass samples three horizontal
+// bands, which the immersive lyrics view uses for a centred ambient gradient.
 // -----------------------------------------------------------------------
-static void store_texture_color(const std::string &url, const TextureColor &color)
+namespace
 {
-    std::lock_guard<std::mutex> lock(cache_mutex);
-    color_cache[url] = color;
-}
+struct ColorAccum
+{
+    double r = 0.0, g = 0.0, b = 0.0, w = 0.0, vivid = 0.0;
+    int samples = 0;
 
-static TextureColor compute_dominant_color(const unsigned char *pixels, int width, int height)
+    void add(float cr, float cg, float cb, float weight, float vivid_contrib)
+    {
+        r += cr * weight;
+        g += cg * weight;
+        b += cb * weight;
+        w += weight;
+        vivid += vivid_contrib;
+        ++samples;
+    }
+};
+
+TextureColor finalize_color(const ColorAccum &a)
 {
     TextureColor out;
     out.ready = true;
-    if (!pixels || width <= 0 || height <= 0)
+    if (a.samples == 0 || a.w < 1e-5)
         return out;
 
-    const int step = std::max(1, std::max(width, height) / 64);
-    double sum_r = 0.0, sum_g = 0.0, sum_b = 0.0, sum_w = 0.0;
-    double vivid_weight = 0.0;
-    int samples = 0;
+    float r = (float)(a.r / a.w);
+    float g = (float)(a.g / a.w);
+    float b = (float)(a.b / a.w);
 
-    for (int y = 0; y < height; y += step)
-    {
-        for (int x = 0; x < width; x += step)
-        {
-            const unsigned char *p = pixels + ((size_t)y * width + x) * 4;
-            if (p[3] < 96)
-                continue;
-            ++samples;
-
-            const float r = p[0] / 255.0f;
-            const float g = p[1] / 255.0f;
-            const float b = p[2] / 255.0f;
-            const float mx = std::max({r, g, b});
-            const float mn = std::min({r, g, b});
-            const float sat = mx > 0.0001f ? (mx - mn) / mx : 0.0f;
-            const float luma = 0.2126f * r + 0.7152f * g + 0.0722f * b;
-
-            // Near-black and near-white pixels carry no usable hue.
-            if (luma < 0.04f || luma > 0.97f)
-                continue;
-
-            // Prefer colourful mid-tones; keep a small base weight so a
-            // completely desaturated cover still yields an average colour
-            // (which the caller then rejects via `valid`).
-            const float mid = std::clamp(1.0f - std::fabs(luma - 0.5f) * 0.9f, 0.15f, 1.0f);
-            const float w = (0.05f + sat * sat) * mid;
-
-            sum_r += r * w;
-            sum_g += g * w;
-            sum_b += b * w;
-            sum_w += w;
-            vivid_weight += sat * sat * mid;
-        }
-    }
-
-    if (samples == 0 || sum_w < 1e-5)
-        return out;
-
-    float r = (float)(sum_r / sum_w);
-    float g = (float)(sum_g / sum_w);
-    float b = (float)(sum_b / sum_w);
-
-    // Require a meaningful amount of colour in the cover. A greyscale sleeve
+    // Require a meaningful amount of colour in the region. A greyscale sleeve
     // (or one dominated by neutral artwork) falls back to the app accent.
-    if (vivid_weight < 0.015 * samples)
+    if (a.vivid < 0.015 * a.samples)
         return out;
 
     // Gentle saturation boost so the glow reads as colour, not grey haze.
@@ -326,6 +297,65 @@ static TextureColor compute_dominant_color(const unsigned char *pixels, int widt
     out.b = b;
     out.valid = true;
     return out;
+}
+} // namespace
+
+static void store_cover_colors(const std::string &url, const TextureColor &dominant,
+                               const TextureColor palette[3])
+{
+    std::lock_guard<std::mutex> lock(cache_mutex);
+    color_cache[url] = dominant;
+    palette_cache[url] = {palette[0], palette[1], palette[2]};
+}
+
+static void compute_cover_colors(const unsigned char *pixels, int width, int height,
+                                 TextureColor &dominant, TextureColor palette[3])
+{
+    dominant.ready = true;
+    for (int i = 0; i < 3; ++i)
+        palette[i].ready = true;
+    if (!pixels || width <= 0 || height <= 0)
+        return;
+
+    const int step = std::max(1, std::max(width, height) / 64);
+    ColorAccum total, bands[3];
+
+    for (int y = 0; y < height; y += step)
+    {
+        for (int x = 0; x < width; x += step)
+        {
+            const unsigned char *p = pixels + ((size_t)y * width + x) * 4;
+            if (p[3] < 96)
+                continue;
+
+            const float r = p[0] / 255.0f;
+            const float g = p[1] / 255.0f;
+            const float b = p[2] / 255.0f;
+            const float mx = std::max({r, g, b});
+            const float mn = std::min({r, g, b});
+            const float sat = mx > 0.0001f ? (mx - mn) / mx : 0.0f;
+            const float luma = 0.2126f * r + 0.7152f * g + 0.0722f * b;
+
+            // Near-black and near-white pixels carry no usable hue.
+            if (luma < 0.04f || luma > 0.97f)
+                continue;
+
+            // Prefer colourful mid-tones; keep a small base weight so a
+            // completely desaturated cover still yields an average colour
+            // (which the caller then rejects via `valid`).
+            const float mid = std::clamp(1.0f - std::fabs(luma - 0.5f) * 0.9f, 0.15f, 1.0f);
+            const float vivid = sat * sat * mid;
+            const float w = 0.05f * mid + vivid;
+
+            total.add(r, g, b, w, vivid);
+            const int band = std::min(2, x * 3 / width);
+            bands[band].add(r, g, b, w, vivid);
+        }
+    }
+
+    dominant = finalize_color(total);
+    for (int i = 0; i < 3; ++i)
+        palette[i] = finalize_color(bands[i]);
 }
 
 // Thumbnails arrive as full 1280x720 covers but are drawn at 48-64 px in a
@@ -421,7 +451,10 @@ static void load_texture_async(const std::string &url)
     }
 
     // Analyse the cover while it is already decoded (off the UI thread).
-    store_texture_color(url, compute_dominant_color(pixels, width, height));
+    TextureColor dominant;
+    TextureColor palette[3];
+    compute_cover_colors(pixels, width, height, dominant, palette);
+    store_cover_colors(url, dominant, palette);
 
     // Shrink before upload, then push the result to the GL queue.
     PendingTexture pending;
@@ -554,7 +587,10 @@ TextureInfo texture_info(const std::string &url)
             {
                 std::vector<unsigned char> rgba;
                 int dw = 0, dh = 0;
-                store_texture_color(url, compute_dominant_color(pixels, w, h));
+                TextureColor dominant;
+                TextureColor palette[3];
+                compute_cover_colors(pixels, w, h, dominant, palette);
+                store_cover_colors(url, dominant, palette);
                 downscale_rgba(pixels, w, h, rgba, dw, dh);
                 stbi_image_free(pixels);
                 TextureInfo info = store_texture(url, rgba, dw, dh);
@@ -592,6 +628,19 @@ TextureColor texture_dominant_color(const std::string &url)
     if (it == color_cache.end())
         return TextureColor{};
     return it->second;
+}
+
+bool texture_cover_palette(const std::string &url, TextureColor out[3])
+{
+    if (url.empty())
+        return false;
+    std::lock_guard<std::mutex> lock(cache_mutex);
+    auto it = palette_cache.find(url);
+    if (it == palette_cache.end())
+        return false;
+    for (int i = 0; i < 3; ++i)
+        out[i] = it->second[i];
+    return true;
 }
 
 // Cover-fit: the source is cropped (never deformed) to fill the box.
@@ -681,6 +730,7 @@ void clear_texture_cache()
         glDeleteTextures(1, &kv.second.id);
     texture_cache.clear();
     color_cache.clear();
+    palette_cache.clear();
 }
 
 bool thumbnail_is_cached(const std::string &url)

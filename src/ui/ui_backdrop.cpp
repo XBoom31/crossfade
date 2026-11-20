@@ -952,6 +952,10 @@ void main()
 // ----------------------------------------------------------------------
 constexpr int kHeroBlurSize = 128; // longest side; aspect is preserved
 constexpr size_t kHeroBlurCacheMax = 24;
+// The full-screen lyrics view stretches its cover across the whole window;
+// the hero's 128px texture is visibly blocky at that size.
+constexpr int kImmersiveBlurSize = 512;
+constexpr size_t kImmersiveBlurCacheMax = 2;
 
 GLuint g_blur_program = 0;
 GLuint g_blur_vao = 0;
@@ -968,6 +972,9 @@ struct BlurTexture
 std::map<std::string, BlurTexture> g_blur_ready;
 std::set<std::string> g_blur_pending;
 std::deque<std::string> g_blur_order;
+std::map<std::string, BlurTexture> g_immersive_ready;
+std::set<std::string> g_immersive_pending;
+std::deque<std::string> g_immersive_order;
 std::vector<GLuint> g_blur_graveyard; // deleted next frame, after draw data is submitted
 
 bool init_blur_shader()
@@ -1086,7 +1093,12 @@ void render_blur_pass(GLuint source, GLuint fbo, GLuint dest, int w, int h, floa
     p_glDrawArrays(GL_TRIANGLES, 0, 3);
 }
 
-bool generate_hero_blur(const std::string &url)
+// Shared generator for the small hero blur and the larger immersive blur.
+// `strength` scales the blur radius in destination texels, so a bigger
+// texture keeps the same visual softness instead of looking sharper.
+static bool generate_blur(const std::string &url, int size, float strength,
+                          std::map<std::string, BlurTexture> &ready,
+                          std::deque<std::string> &order, size_t max_entries)
 {
     const TextureInfo src = texture_info(url);
     if (src.id == 0 || !init_blur_shader())
@@ -1107,24 +1119,24 @@ bool generate_hero_blur(const std::string &url)
     glDisable(GL_DEPTH_TEST);
 
     // Preserve the cover's aspect ratio: the blur is drawn cover-fitted (and
-    // cropped) into the hero, so it must never be stretched.
-    int bw = kHeroBlurSize;
-    int bh = kHeroBlurSize;
+    // cropped), so it must never be stretched.
+    int bw = size;
+    int bh = size;
     if (src.width > 0 && src.height > 0)
     {
         const float aspect = (float)src.width / (float)src.height;
         if (aspect >= 1.0f)
-            bh = std::max(1, (int)std::lround((float)kHeroBlurSize / aspect));
+            bh = std::max(1, (int)std::lround((float)size / aspect));
         else
-            bw = std::max(1, (int)std::lround((float)kHeroBlurSize * aspect));
+            bw = std::max(1, (int)std::lround((float)size * aspect));
     }
 
     GLuint fbo = 0;
     p_glGenFramebuffers(1, &fbo);
     const GLuint mid = create_blur_texture(bw, bh);
     const GLuint out = create_blur_texture(bw, bh);
-    render_blur_pass(src.id, fbo, mid, bw, bh, 1.0f, 0.0f);
-    render_blur_pass(mid, fbo, out, bw, bh, 0.0f, 1.0f);
+    render_blur_pass(src.id, fbo, mid, bw, bh, strength, 0.0f);
+    render_blur_pass(mid, fbo, out, bw, bh, 0.0f, strength);
 
     // Restore.
     p_glBindFramebuffer(GL_FRAMEBUFFER, (GLuint)prev_fbo);
@@ -1141,22 +1153,35 @@ bool generate_hero_blur(const std::string &url)
 
     if (out == 0)
         return false;
-    g_blur_ready[url] = BlurTexture{out, bw, bh};
-    g_blur_order.push_back(url);
-    while (g_blur_order.size() > kHeroBlurCacheMax)
+    ready[url] = BlurTexture{out, bw, bh};
+    order.push_back(url);
+    while (order.size() > max_entries)
     {
-        const std::string &old = g_blur_order.front();
-        auto it = g_blur_ready.find(old);
-        if (it != g_blur_ready.end() && old != url)
+        const std::string &old = order.front();
+        auto it = ready.find(old);
+        if (it != ready.end() && old != url)
         {
             // The current frame's draw data may still reference this texture;
             // delete it on the next process() call instead.
             g_blur_graveyard.push_back(it->second.id);
-            g_blur_ready.erase(it);
+            ready.erase(it);
         }
-        g_blur_order.pop_front();
+        order.pop_front();
     }
     return true;
+}
+
+static bool generate_hero_blur(const std::string &url)
+{
+    return generate_blur(url, kHeroBlurSize, 1.0f,
+                         g_blur_ready, g_blur_order, kHeroBlurCacheMax);
+}
+
+static bool generate_immersive_blur(const std::string &url)
+{
+    return generate_blur(url, kImmersiveBlurSize,
+                         (float)kImmersiveBlurSize / (float)kHeroBlurSize,
+                         g_immersive_ready, g_immersive_order, kImmersiveBlurCacheMax);
 }
 } // namespace
 
@@ -1167,6 +1192,13 @@ void ui_hero_blur_request(const std::string &url)
     g_blur_pending.insert(url);
 }
 
+void ui_immersive_blur_request(const std::string &url)
+{
+    if (url.empty() || g_blur_failed || g_immersive_ready.count(url))
+        return;
+    g_immersive_pending.insert(url);
+}
+
 void ui_hero_blur_process()
 {
     if (!g_blur_graveyard.empty())
@@ -1174,15 +1206,28 @@ void ui_hero_blur_process()
         glDeleteTextures((GLsizei)g_blur_graveyard.size(), g_blur_graveyard.data());
         g_blur_graveyard.clear();
     }
-    if (g_blur_pending.empty() || g_blur_failed)
+    if (g_blur_failed)
         return;
-    std::vector<std::string> urls(g_blur_pending.begin(), g_blur_pending.end());
-    for (const std::string &url : urls)
+
+    if (!g_blur_pending.empty())
     {
-        if (generate_hero_blur(url))
-            g_blur_pending.erase(url);
-        // On failure (cover not uploaded yet) it stays pending and is retried
-        // next frame; the check is just a map lookup, not a shader pass.
+        std::vector<std::string> urls(g_blur_pending.begin(), g_blur_pending.end());
+        for (const std::string &url : urls)
+        {
+            if (generate_hero_blur(url))
+                g_blur_pending.erase(url);
+            // On failure (cover not uploaded yet) it stays pending and is
+            // retried next frame; the check is just a map lookup.
+        }
+    }
+    if (!g_immersive_pending.empty())
+    {
+        std::vector<std::string> urls(g_immersive_pending.begin(), g_immersive_pending.end());
+        for (const std::string &url : urls)
+        {
+            if (generate_immersive_blur(url))
+                g_immersive_pending.erase(url);
+        }
     }
 }
 
@@ -1202,9 +1247,27 @@ bool ui_hero_blur_size(const std::string &url, int &w, int &h)
     return true;
 }
 
+GLuint ui_immersive_blur_texture(const std::string &url)
+{
+    auto it = g_immersive_ready.find(url);
+    return it == g_immersive_ready.end() ? 0 : it->second.id;
+}
+
+bool ui_immersive_blur_size(const std::string &url, int &w, int &h)
+{
+    auto it = g_immersive_ready.find(url);
+    if (it == g_immersive_ready.end())
+        return false;
+    w = it->second.w;
+    h = it->second.h;
+    return true;
+}
+
 void ui_hero_blur_clear()
 {
     for (auto &kv : g_blur_ready)
+        glDeleteTextures(1, &kv.second.id);
+    for (auto &kv : g_immersive_ready)
         glDeleteTextures(1, &kv.second.id);
     if (!g_blur_graveyard.empty())
         glDeleteTextures((GLsizei)g_blur_graveyard.size(), g_blur_graveyard.data());
@@ -1212,6 +1275,9 @@ void ui_hero_blur_clear()
     g_blur_ready.clear();
     g_blur_order.clear();
     g_blur_pending.clear();
+    g_immersive_ready.clear();
+    g_immersive_order.clear();
+    g_immersive_pending.clear();
 }
 
 void ui_backdrop_render_shader()

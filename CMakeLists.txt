@@ -91,6 +91,8 @@ set(SOURCES
     src/ui/ui_queue.cpp
     src/ui/ui_radio.cpp
     src/ui/ui_lyrics.cpp
+    src/ui/ui_lyrics_immersive.cpp
+    src/ui/ui_audio_reactive.cpp
     src/ui/ui_notify.cpp
     src/ui/ui_settings.cpp
     src/ui/ui_stats.cpp

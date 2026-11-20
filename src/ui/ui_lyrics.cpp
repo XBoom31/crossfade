@@ -291,6 +291,67 @@ LyricsAnim g_anim;
 
 } // namespace
 
+// ----------------------------------------------------------------------
+// Shared lyrics-view helpers
+//
+// The docked panel and the immersive view both need the same answers to
+// "which track am I showing?" (crossfade midpoint) and "which line is
+// active?" (playback position + user timing offset). Keeping the logic here
+// means seeking, pausing, the offset slider and crossfades can never make the
+// two views drift apart.
+// ----------------------------------------------------------------------
+
+Track lyrics_display_track(const AppState &state)
+{
+    // Keep the outgoing track on screen until the midpoint of a crossfade,
+    // matching the bottom bar. `crossfade_from_track` is captured by the main
+    // loop when the fade starts; lyrics are only requested for the incoming
+    // track once the visual hand-off happens.
+    const bool show_incoming = !state.crossfade_active ||
+                               state.crossfade_progress >= 0.5f;
+    if (!show_incoming && !state.crossfade_from_track.id.empty())
+        return state.crossfade_from_track;
+
+    Track display;
+    display.id = state.current_track_id;
+    display.title = state.current_title;
+    display.artist = state.current_artist;
+    display.thumbnail_url = state.current_thumbnail_url;
+    display.url = state.current_track_url;
+    display.album_id = state.current_album_id;
+    display.artist_id = state.current_artist_id;
+    return display;
+}
+
+double lyrics_playback_time(const AppState &state, const MpvPlayer &player)
+{
+    const bool incoming = state.crossfade_active && state.crossfade_progress >= 0.5f;
+    float t = incoming ? (float)state.crossfade_position
+                       : (float)player.cached_time_pos();
+    if (t < 0.0f)
+        t = 0.0f;
+    return (double)t;
+}
+
+int lyrics_active_line(const Lyrics &lx, const AppState &state, const MpvPlayer &player)
+{
+    if (!lx.synced || lx.lines.empty() || lx.times.empty())
+        return -1;
+
+    // User timing offset: positive delays the highlight (lyrics shown later),
+    // negative advances it. The same offset is added back when a line is
+    // clicked, so a click lands on its own highlight straight away.
+    const float t = (float)lyrics_playback_time(state, player) -
+                    state.settings.lyrics_offset;
+    int active = -1;
+    for (int i = 0; i < (int)lx.lines.size() && i < (int)lx.times.size(); ++i)
+    {
+        if ((float)lx.times[i] <= t)
+            active = i;
+    }
+    return active;
+}
+
 void draw_lyrics_panel(AppState &state, MpvPlayer &player, float width, float height)
 {
     const float panel_w = std::max(1.0f, width);
@@ -303,25 +364,7 @@ void draw_lyrics_panel(AppState &state, MpvPlayer &player, float width, float he
 
     auto snap = std::atomic_load(&state.lyrics);
 
-    // Keep the outgoing track on screen until the midpoint of a crossfade,
-    // matching the bottom bar. `crossfade_from_track` is captured by the main
-    // loop when the fade starts; lyrics are only requested for the incoming
-    // track once the visual hand-off happens.
-    const bool show_incoming = !state.crossfade_active ||
-                               state.crossfade_progress >= 0.5f;
-    Track display;
-    if (!show_incoming && !state.crossfade_from_track.id.empty())
-        display = state.crossfade_from_track;
-    else
-    {
-        display.id = state.current_track_id;
-        display.title = state.current_title;
-        display.artist = state.current_artist;
-        display.thumbnail_url = state.current_thumbnail_url;
-        display.url = state.current_track_url;
-        display.album_id = state.current_album_id;
-        display.artist_id = state.current_artist_id;
-    }
+    const Track display = lyrics_display_track(state);
     const std::string &current_id = display.id;
     const bool has_payload = snap && snap->track_id == current_id;
 
@@ -598,22 +641,7 @@ void draw_lyrics_panel(AppState &state, MpvPlayer &player, float width, float he
             bool morphing = false;
             if (lx.synced)
             {
-                // User timing offset: positive delays the highlight (lyrics
-                // shown later), negative advances it. The same offset is added
-                // back when a line is clicked, so a click lands on its own
-                // highlight straight away.
-                const bool incoming =
-                    state.crossfade_active && state.crossfade_progress >= 0.5f;
-                float t = incoming ? (float)state.crossfade_position
-                                   : (float)player.cached_time_pos();
-                if (t < 0.0f)
-                    t = 0.0f;
-                t -= state.settings.lyrics_offset;
-                for (int i = 0; i < (int)lx.lines.size() && i < (int)lx.times.size(); ++i)
-                {
-                    if ((float)lx.times[i] <= t)
-                        active = i;
-                }
+                active = lyrics_active_line(lx, state, player);
 
                 // (Re)size the per-line animation state. A fresh set is snapped
                 // straight to its target so a newly arrived payload never

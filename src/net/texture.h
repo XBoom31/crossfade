@@ -33,6 +33,11 @@ TextureInfo texture_info(const std::string &url);
 // Cached dominant colour for a thumbnail. Cheap to call every frame: the
 // analysis happens once, in the loader, while the image is already decoded.
 TextureColor texture_dominant_color(const std::string &url);
+// Three colour samples from the left / centre / right of the cover, computed
+// alongside the dominant colour in the same decode pass. Invalid entries mean
+// that band had no usable colour (e.g. a monochrome sleeve); callers fall back
+// to the dominant colour or the app accent.
+bool texture_cover_palette(const std::string &url, TextureColor out[3]);
 // Cover-fit UVs: fills a box of box_w x box_h with the texture, cropping
 // the longer axis so the aspect ratio is preserved (i.e. no stretching).
 // Returns false if the box or texture is degenerate.

@@ -292,6 +292,19 @@ void ui_draw_icon(ImDrawList *dl, UiIcon icon, ImVec2 c, float s, ImU32 col, flo
                         p(c, s, -0.46f, 0.46f), col, t);
         break;
     }
+    case UiIcon::Expand:
+    {
+        // Four corner brackets opening outward: "go full screen".
+        dl->AddLine(p(c, s, -0.42f, -0.42f), p(c, s, -0.16f, -0.42f), col, t);
+        dl->AddLine(p(c, s, -0.42f, -0.42f), p(c, s, -0.42f, -0.16f), col, t);
+        dl->AddLine(p(c, s, 0.42f, -0.42f), p(c, s, 0.16f, -0.42f), col, t);
+        dl->AddLine(p(c, s, 0.42f, -0.42f), p(c, s, 0.42f, -0.16f), col, t);
+        dl->AddLine(p(c, s, -0.42f, 0.42f), p(c, s, -0.16f, 0.42f), col, t);
+        dl->AddLine(p(c, s, -0.42f, 0.42f), p(c, s, -0.42f, 0.16f), col, t);
+        dl->AddLine(p(c, s, 0.42f, 0.42f), p(c, s, 0.16f, 0.42f), col, t);
+        dl->AddLine(p(c, s, 0.42f, 0.42f), p(c, s, 0.42f, 0.16f), col, t);
+        break;
+    }
     }
 }
 
