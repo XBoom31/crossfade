@@ -5,6 +5,7 @@
 #include "tunables.h"
 #include "json_util.h"
 #include "paths.h"
+#include "atomic_file.h"
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
@@ -2324,10 +2325,7 @@ static std::string json_escape(const std::string &s)
 static void save_metadata(const Track &t, const std::string &audio_path)
 {
     std::string meta_path = audio_path + ".meta.json";
-    std::ofstream out(meta_path);
-    if (!out)
-        return;
-
+    std::ostringstream out;
     out << "{"
         << "\"id\":\"" << json_escape(t.id) << "\","
         << "\"title\":\"" << json_escape(t.title) << "\","
@@ -2339,7 +2337,43 @@ static void save_metadata(const Track &t, const std::string &audio_path)
         << "\"thumbnail_url\":\"" << json_escape(t.thumbnail_url) << "\","
         << "\"duration_sec\":" << t.duration_sec
         << "}";
-    out.close();
+    atomic_file::replace_text(meta_path, out.str());
+}
+
+std::string authoritative_thumbnail_url(const std::string &video_id,
+                                        const std::string &fallback)
+{
+    if (video_id.empty() || video_id.rfind("local:", 0) == 0)
+        return fallback;
+
+    // Sidecars are named from the cached audio file, so they are identity-
+    // scoped. Only trust the URL when it also carries the video id; a channel
+    // avatar copied from another row must never become this track's cover.
+    const std::string dir = cache_dir() + "/audio_cache";
+    std::error_code ec;
+    if (std::filesystem::is_directory(dir, ec))
+    {
+        const std::string prefix = video_id + ".";
+        for (std::filesystem::directory_iterator it(dir, ec), end;
+             !ec && it != end; it.increment(ec))
+        {
+            const std::string name = it->path().filename().string();
+            if (name.rfind(prefix, 0) != 0 || name.size() < 10 ||
+                name.compare(name.size() - 10, 10, ".meta.json") != 0)
+                continue;
+            std::ifstream in(it->path());
+            if (!in)
+                continue;
+            std::ostringstream buf;
+            buf << in.rdbuf();
+            const std::string url = jsonutil::get_string(buf.str(), "thumbnail_url");
+            if (!url.empty() && url.find(video_id) != std::string::npos)
+                return url;
+        }
+    }
+
+    // id-derived YouTube art is always correct, even if lower resolution.
+    return "https://img.youtube.com/vi/" + video_id + "/hqdefault.jpg";
 }
 
 // ------------------ Metadata sidecar coordination ------------------

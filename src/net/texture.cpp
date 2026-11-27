@@ -1,6 +1,7 @@
 #include "texture.h"
 #include "tunables.h"
 #include "paths.h"
+#include "atomic_file.h"
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -177,11 +178,7 @@ static void save_to_file(const std::string &path, const std::vector<uint8_t> &da
 {
     if (path.empty() || data.empty())
         return;
-    FILE *f = fopen(path.c_str(), "wb");
-    if (!f)
-        return;
-    fwrite(data.data(), 1, data.size(), f);
-    fclose(f);
+    atomic_file::replace_bytes(path, data);
 }
 
 static bool download_url(const std::string &url, std::vector<uint8_t> &data)

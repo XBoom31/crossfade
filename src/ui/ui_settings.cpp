@@ -182,6 +182,8 @@ void save_settings(const Settings &settings)
         << "\"ytdl_browser\":\"" << settings.ytdl_browser << "\","
         << "\"auth_mode\":\"" << (settings.auth_mode == "oauth" ? "oauth" : "browser") << "\","
         << "\"lyrics_offset\":" << settings.lyrics_offset << ","
+        << "\"lyrics_effect_style\":"
+        << std::max(0, std::min(2, settings.lyrics_effect_style)) << ","
         << "\"lyrics_panel_open\":" << (settings.lyrics_panel_open ? "true" : "false") << ","
         << "\"lyrics_panel_width\":" << settings.lyrics_panel_width << ","
         << "\"ui_scale\":" << settings.ui_scale << ","
@@ -526,6 +528,8 @@ Settings load_settings()
             s.lyrics_offset = 5.0f;
         if (s.lyrics_offset < -5.0f)
             s.lyrics_offset = -5.0f;
+        s.lyrics_effect_style =
+            std::max(0, std::min(2, (int)std::lround(get_float("lyrics_effect_style"))));
         // Keep the struct default (open) when the key is absent from an
         // older settings file -- get_bool would report false for a missing key.
         if (json.find("\"lyrics_panel_open\"") != std::string::npos)
@@ -2823,6 +2827,20 @@ void draw_settings_panel(AppState &state)
                                 &state.settings.lyrics_offset, -5.0f, 5.0f, "%+.2f s",
                                 "Positive shows lyrics later, negative earlier. Takes effect immediately."))
             save = true;
+
+        settings_group_label("Immersive lyrics");
+        {
+            static const char *effect_styles[] = {"Waves", "Spectrum", "Off"};
+            const int style =
+                std::max(0, std::min(2, state.settings.lyrics_effect_style));
+            settings_row_label("Intro / gap effect", effect_styles[style],
+                               "Visual style for the loader before the first word and between instrumental lyric rows. Timing is identical for Waves and Spectrum.");
+            ImGui::SetNextItemWidth(field_w);
+            if (ImGui::Combo("##lyrics_effect_style",
+                             &state.settings.lyrics_effect_style,
+                             effect_styles, 3))
+                save = true;
+        }
     }
     if (s_settings_category == SC_YOUTUBE)
     {

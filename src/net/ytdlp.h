@@ -516,6 +516,11 @@ std::string get_cached_audio_path(const std::string &video_id);
 // (yt-dlp's generic metadata does not know which show an episode belongs to).
 // No-op when the file is missing or the track is being deleted.
 void save_cached_track_metadata(const Track &track, const std::string &audio_path);
+// Artwork pulled from stale session/history rows can belong to a different
+// track. Prefer a sidecar whose URL contains the video id, otherwise fall back
+// to an id-derived thumbnail so the cover is always tied to the track.
+std::string authoritative_thumbnail_url(const std::string &video_id,
+                                        const std::string &fallback = "");
 // Resolve a direct streaming URL via the backend ("yt-dlp -g").
 std::string fetch_stream_url(const std::string &video_id);
 

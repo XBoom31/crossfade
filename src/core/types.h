@@ -233,6 +233,9 @@ struct Settings
     // shown later), negative advances it. Applied to both the active-line
     // search and click-to-seek.
     float lyrics_offset = 0.0f;
+    // Immersive-lyrics loader style: 0 = layered waves, 1 = spectrum bars,
+    // 2 = disabled. Waves and Spectrum share the same intro/gap timing rules.
+    int lyrics_effect_style = 0;
     // Horizontal width of the lyrics panel in logical units (persisted).
     // Multiplied by the layout scale and clamped at runtime; dragged by the
     // divider between the track list and the lyrics panel.
@@ -410,6 +413,7 @@ struct Settings
                endless_radio == o.endless_radio && ytdl_browser == o.ytdl_browser &&
                auth_mode == o.auth_mode && lyrics_panel_open == o.lyrics_panel_open &&
                lyrics_offset == o.lyrics_offset &&
+               lyrics_effect_style == o.lyrics_effect_style &&
                lyrics_panel_width == o.lyrics_panel_width && ui_scale == o.ui_scale &&
                ui_text_scale == o.ui_text_scale &&
                ui_widget_scale == o.ui_widget_scale &&

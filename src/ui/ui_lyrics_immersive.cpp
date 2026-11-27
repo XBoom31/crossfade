@@ -21,11 +21,11 @@
 // fixed focal point, one or two faint upcoming lines below it, and a small
 // pulse on every line change.
 //
-// There is deliberately no live audio analysis here. The "reactive" pulse is
-// timestamp-driven: the active line is resolved by the shared helpers in
-// ui_lyrics.cpp, and every index change fires a decaying glow/scale envelope.
-// That keeps it honest and cheap, and it works for any track the lyrics
-// provider already timestamps.
+// Line activation stays timestamp-driven. Rows whose intervals overlap are
+// grouped as simultaneous singers, so every row in that group gets the accent
+// sweep and glow together. Each group change fires a decaying glow envelope;
+// the horizontal energy ribbon lands on its NOW boundary at that same moment,
+// while live bass/guitar/treble levels only colour and thicken it.
 //
 // Motion is entirely optional. With animations off the view becomes a static,
 // centred reading layout: no entrance, no pulse, no auto-scroll.
@@ -48,6 +48,7 @@ const double kCenterUp = 0.46;     // then leaves upward
 const double kCenterIn = 0.52;     // then the next cover rises in
 const double kLyricReveal = 0.34;  // one lyric line's fade/rise
 const double kLyricStagger = 0.05; // delay between consecutive lines
+const int kWaveLayers = 5;         // main carrier + four quiet echoes
 
 float clampf(float v, float lo, float hi)
 {
@@ -68,6 +69,62 @@ float ease_in_out(float t)
     t = clampf(t, 0.0f, 1.0f);
     return t < 0.5f ? 4.0f * t * t * t
                     : 1.0f - std::pow(-2.0f * t + 2.0f, 3.0f) * 0.5f;
+}
+
+float smooth_unit(float t)
+{
+    t = clampf(t, 0.0f, 1.0f);
+    return t * t * (3.0f - 2.0f * t);
+}
+
+// Spectrum needs a taller pocket than Waves: its bars grow up from a baseline
+// near the bottom of the rail, so the whole band has to be deeper to read as
+// tall. Both styles still share the same timestamp-driven loader.
+float energy_band_height(float size, int style)
+{
+    return style == 1
+               ? clampf(size * 2.25f, ui_px(86.0f), ui_px(210.0f))
+               : clampf(size * 1.75f, ui_px(64.0f), ui_px(156.0f));
+}
+
+float am_bell(float u, float centre, float width)
+{
+    const float d = (u - centre) / width;
+    return std::exp(-d * d);
+}
+
+// Amplitude envelope in the spirit of the Arctic Monkeys "AM" cover: three
+// smooth lobes and a shallow central notch hint at the letterform without ever
+// drawing readable text. Both loader styles share it, so Waves and Spectrum
+// read as the same signal rather than two unrelated visualisers.
+float am_envelope(float u, float phase, float seed)
+{
+    const float a = am_bell(u, 0.26f, 0.15f);
+    const float m_left = am_bell(u, 0.51f, 0.17f);
+    const float m_right = am_bell(u, 0.76f, 0.14f);
+    const float notch = am_bell(u, 0.50f, 0.045f);
+    const float drift =
+        0.88f + 0.12f * std::sin(phase * 0.34f + u * 2.3f + seed);
+    return clampf((0.20f + 0.52f * a + 0.46f * m_left +
+                   0.40f * m_right - 0.12f * notch) *
+                      drift,
+                  0.06f, 1.0f);
+}
+
+// Carrier riding inside that envelope. Two close harmonics keep the signal
+// crisp like an AM waveform, but the slower one dominates so it still reads as
+// a smooth curve rather than a jagged analyser trace.
+float am_carrier(float u, float phase, float seed, float layer,
+                 float freq_scale = 1.0f)
+{
+    const float p = phase + seed * 1.4f + layer * 0.73f;
+    const float scale = (1.0f + 0.12f * layer) * freq_scale;
+    const float c1 =
+        std::sin(u * 6.4f * scale * 6.2831853f + p * 1.35f);
+    const float c2 =
+        std::sin(u * 9.7f * scale * 6.2831853f - p * 0.82f + 1.3f);
+    return (0.80f * c1 + 0.20f * c2) *
+           am_envelope(u, phase, seed + layer * 0.41f);
 }
 
 bool blank(const std::string &s)
@@ -228,6 +285,9 @@ struct ImmersiveAnim
 {
     std::string track;
     int active = -2;
+    // All lyric rows currently being sung. More than one entry when a provider
+    // gives two singers overlapping timestamps.
+    std::vector<int> active_group;
     // Eased line index the view is centred on (continuous, not snapped).
     float scroll = -1.0f;
     double active_since = 0.0;
@@ -267,18 +327,43 @@ struct ImmersiveAnim
     ImVec2 last_mouse = ImVec2(-1.0f, -1.0f);
     float chrome = 1.0f;
     bool chrome_init = false;
+    // Intro/gap loading bar state. Keys are lyric-index based so a loader can
+    // only run once per track, even after seeking backwards.
+    std::vector<std::string> energy_done;
+    std::string energy_active_key;
+    double energy_hit_start = -100.0;
+    // Eases the reserved lyric pocket back after the completion flash so the
+    // rows settle instead of snapping when the loader vanishes.
+    float energy_pocket = 0.0f;
+    std::uint64_t energy_seek_gen = 0;
+    // Wave motion is integrated from playback time, never wall time, so it
+    // freezes on pause/buffering/stop and follows the player's speed.
+    double energy_phase = 0.0;
+    double energy_drive = 0.55;
+    double energy_last_pos = -1.0;
+    float energy_held_rms = 0.0f;
+    float energy_held_bass = 0.0f;
+    float energy_held_mid = 0.0f;
+    float energy_held_treble = 0.0f;
+    float energy_held_instrument = 0.0f;
+    // Slow per-track peak reference. Quiet guitar intros are compared against
+    // this instead of an absolute level, so they do not look inert next to a
+    // much louder, drum-heavy song.
+    double energy_inst_ref = 0.18;
+    float energy_held_density = 0.0f;
+    float energy_held_beat = 0.0f;
+    float energy_held_pluck = 0.0f;
 };
 
 // Soft radial bloom used to carry the app's album-colour backdrop into the
 // takeover. Drawn as a vertex-coloured triangle fan so the falloff is
 // interpolated per-pixel by the GPU rather than stacked as visible
 // concentric rings: a shader-style gradient with a smooth (1 - t)^2 profile.
-void soft_glow(ImDrawList *dl, ImVec2 centre, float radius, ImVec4 col, float peak)
+void soft_glow(ImDrawList *dl, ImVec2 centre, float radius, ImVec4 col,
+               float peak, int rings = 8, int segs = 96)
 {
     if (radius <= 0.5f || peak <= 0.0005f)
         return;
-    const int rings = 8;
-    const int segs = 96;
     const ImVec2 uv = ImGui::GetFontTexUvWhitePixel();
 
     const int vtx_count = 1 + (rings + 1) * segs;
@@ -403,9 +488,92 @@ ImU32 lerp_col(ImU32 a, ImU32 b, float t)
                                      ca.w + (cb.w - ca.w) * t));
 }
 
+// Two-colour quad for the loader's gradient fills. ImGui has no shader hook
+// here, but a four-vertex gradient is cheap and stays in the same draw batch.
+void add_gradient_quad(ImDrawList *dl, const ImVec2 &tl, const ImVec2 &tr,
+                       const ImVec2 &br, const ImVec2 &bl, ImU32 top,
+                       ImU32 bottom)
+{
+    if (!dl)
+        return;
+    const ImVec2 uv = ImGui::GetFontTexUvWhitePixel();
+    const unsigned int base = dl->VtxBuffer.Size;
+    dl->PrimReserve(6, 4);
+    dl->PrimWriteVtx(tl, uv, top);
+    dl->PrimWriteVtx(tr, uv, top);
+    dl->PrimWriteVtx(br, uv, bottom);
+    dl->PrimWriteVtx(bl, uv, bottom);
+    dl->PrimWriteIdx((ImDrawIdx)(base + 0));
+    dl->PrimWriteIdx((ImDrawIdx)(base + 1));
+    dl->PrimWriteIdx((ImDrawIdx)(base + 2));
+    dl->PrimWriteIdx((ImDrawIdx)(base + 0));
+    dl->PrimWriteIdx((ImDrawIdx)(base + 2));
+    dl->PrimWriteIdx((ImDrawIdx)(base + 3));
+}
+
+void add_gradient_rect(ImDrawList *dl, float x0, float y0, float x1, float y1,
+                       ImU32 top, ImU32 bottom)
+{
+    add_gradient_quad(dl, ImVec2(x0, y0), ImVec2(x1, y0), ImVec2(x1, y1),
+                      ImVec2(x0, y1), top, bottom);
+}
+
+// One karaoke row, drawn glyph by glyph. `reveal` is measured in glyphs, so
+// the colour front can sit between two letters. The letter at the front also
+// grows a little and settles back as the front moves on, which marks the note
+// being sung without changing the line's size or position.
+void draw_sweep_glyphs(ImDrawList *dl, ImFont *font, float size, float x, float y,
+                       const std::string &text, ImU32 unsung, ImU32 lit,
+                       float reveal, float glow)
+{
+    const ImU32 glow_col = ui_accent_text_u32();
+    const char *p = text.c_str();
+    const char *end = p + text.size();
+    int gi = 0;
+    float gx = x;
+    while (p < end)
+    {
+        const char *q = next_cp(p, end);
+        const std::string glyph(p, (std::size_t)(q - p));
+        const float w = measure(font, size, glyph);
+        const bool space = glyph[0] == ' ' || glyph[0] == '\t';
+        if (!space)
+        {
+            const float frac = clampf(reveal - (float)gi, 0.0f, 1.0f);
+            // 1 exactly while the front crosses this glyph's centre, 0 once
+            // it is a glyph away in either direction.
+            const float emphasis =
+                clampf(1.0f - std::fabs(reveal - ((float)gi + 0.5f)) * 2.0f,
+                       0.0f, 1.0f);
+            const float gs = size * (1.0f + 0.16f * emphasis);
+            const float gw = measure(font, gs, glyph);
+            const float dx = (w - gw) * 0.5f;
+            const float dy = (size - gs) * 0.5f;
+            if (glow > 0.001f && emphasis > 0.001f)
+            {
+                const float o = (1.4f + 1.8f * glow) * (gs / std::max(1.0f, size));
+                const float a = glow * 0.075f * emphasis;
+                dl->AddText(font, gs, ImVec2(gx + dx - o, y + dy),
+                            ui_with_alpha(glow_col, a), glyph.c_str());
+                dl->AddText(font, gs, ImVec2(gx + dx + o, y + dy),
+                            ui_with_alpha(glow_col, a), glyph.c_str());
+                dl->AddText(font, gs, ImVec2(gx + dx, y + dy - o),
+                            ui_with_alpha(glow_col, a), glyph.c_str());
+                dl->AddText(font, gs, ImVec2(gx + dx, y + dy + o),
+                            ui_with_alpha(glow_col, a), glyph.c_str());
+            }
+            dl->AddText(font, gs, ImVec2(gx + dx, y + dy),
+                        lerp_col(unsung, lit, frac), glyph.c_str());
+        }
+        gx += w;
+        p = q;
+        ++gi;
+    }
+}
+
 void draw_rows(ImDrawList *dl, ImFont *font, const TextLayout &lay, ImVec2 center,
                ImU32 col, float alpha, float scale, float glow,
-               float karaoke = -1.0f)
+               float karaoke = -1.0f, float unsung_tint = 0.0f)
 {
     if (alpha <= 0.001f)
         return;
@@ -416,7 +584,12 @@ void draw_rows(ImDrawList *dl, ImFont *font, const TextLayout &lay, ImVec2 cente
     const ImU32 glow_col = ui_accent_text_u32();
     // Un-sung text stays readable but recedes; the accent "fills" it in as the
     // line plays, like a karaoke wipe.
-    const ImU32 unsung = ui_with_alpha(ui_text_dim_u32(), alpha * 0.80f);
+    const ImU32 unsung_base =
+        unsung_tint > 0.0f
+            ? lerp_col(ui_text_dim_u32(), ui_accent_text_u32(),
+                       0.42f * unsung_tint)
+            : ui_text_dim_u32();
+    const ImU32 unsung = ui_with_alpha(unsung_base, alpha * 0.80f);
     const int total = karaoke >= 0.0f ? std::max(1, count_cp_layout(lay)) : 0;
     const float reveal = clampf(karaoke, 0.0f, 1.0f) * (float)total;
     int seen = 0;
@@ -427,45 +600,10 @@ void draw_rows(ImDrawList *dl, ImFont *font, const TextLayout &lay, ImVec2 cente
         const float x = center.x - w * 0.5f;
         if (karaoke >= 0.0f && !row.text.empty())
         {
-            const char *p = row.text.c_str();
-            const char *end = p + row.text.size();
-            float tx = x;
-            while (p < end)
-            {
-                const bool space = (*p == ' ' || *p == '\t');
-                const char *tok = p;
-                int chars = 0;
-                while (p < end)
-                {
-                    const bool sp = (*p == ' ' || *p == '\t');
-                    if (sp != space)
-                        break;
-                    ++p;
-                    while (p < end && (((unsigned char)*p) & 0xC0) == 0x80)
-                        ++p;
-                    ++chars;
-                }
-                const float frac =
-                    clampf((reveal - (float)seen) / std::max(1, chars), 0.0f, 1.0f);
-                const ImU32 c = lerp_col(unsung, ui_with_alpha(col, alpha), frac);
-                const std::string piece(tok, p - tok);
-                if (!space && glow > 0.01f && frac > 0.0f)
-                {
-                    const float o = (1.4f + 1.8f * glow) * scale;
-                    const float a = alpha * 0.075f * glow * frac;
-                    dl->AddText(font, size, ImVec2(tx - o, y),
-                                ui_with_alpha(glow_col, a), piece.c_str());
-                    dl->AddText(font, size, ImVec2(tx + o, y),
-                                ui_with_alpha(glow_col, a), piece.c_str());
-                    dl->AddText(font, size, ImVec2(tx, y - o),
-                                ui_with_alpha(glow_col, a), piece.c_str());
-                    dl->AddText(font, size, ImVec2(tx, y + o),
-                                ui_with_alpha(glow_col, a), piece.c_str());
-                }
-                dl->AddText(font, size, ImVec2(tx, y), c, piece.c_str());
-                tx += measure(font, size, piece);
-                seen += chars;
-            }
+            draw_sweep_glyphs(dl, font, size, x, y, row.text, unsung,
+                              ui_with_alpha(col, alpha), reveal - (float)seen,
+                              glow);
+            seen += count_cp(row.text);
         }
         else
         {
@@ -490,7 +628,7 @@ void draw_rows(ImDrawList *dl, ImFont *font, const TextLayout &lay, ImVec2 cente
 // subtle glow around the letter currently being sung.
 bool draw_words_app(ImDrawList *dl, ImFont *font, float size, ImVec2 center,
                     float max_w, const RichLyricLine &line, double t,
-                    double next_start, float alpha)
+                    double line_start_at, double line_end_at, float alpha)
 {
     struct W
     {
@@ -504,10 +642,10 @@ bool draw_words_app(ImDrawList *dl, ImFont *font, float size, ImVec2 center,
             words.push_back({w.text, w.start_ms / 1000.0, w.end_ms / 1000.0});
     if (words.empty())
         return false; // line-only lyrics use the normal line renderer
-    const double line_start = line.start_ms / 1000.0;
-    double line_end = line.end_ms / 1000.0;
-    if (line_end <= line_start && next_start > line_start)
-        line_end = next_start;
+    const double line_start = line_start_at >= 0.0 ? line_start_at
+                                                   : line.start_ms / 1000.0;
+    double line_end = line_end_at > line_start ? line_end_at
+                                               : line.end_ms / 1000.0;
     if (line_end <= line_start)
         line_end = line_start + 4.0;
     if (words.size() > 1 && words.front().start <= 0.0)
@@ -572,61 +710,28 @@ bool draw_words_app(ImDrawList *dl, ImFont *font, float size, ImVec2 center,
         else
         {
             // The word is a karaoke sweep, not a snap: keep the unsung text
-            // dim and reveal the accent fill from left to right.
-            dl->AddText(font, size, ImVec2(x, y), ui_with_alpha(dim, alpha),
-                        w.text.c_str());
+            // dim and brighten it one glyph at a time from left to right.
+            // The glyph at the leading edge grows slightly as it is sung.
             std::string glyphs = w.text;
             while (!glyphs.empty() && (glyphs.back() == ' ' || glyphs.back() == '\t'))
                 glyphs.pop_back();
-            const float word_w = measure(font, size, glyphs);
             const double span = std::max(0.05, w.end - w.start);
             const float p = clampf((float)((t - w.start) / span), 0.0f, 1.0f);
-            if (!glyphs.empty() && p > 0.001f)
+            if (glyphs.empty())
             {
-                dl->PushClipRect(ImVec2(x, y - size * 0.25f),
-                                 ImVec2(x + word_w * p, y + size * 1.20f), true);
-                dl->AddText(font, size, ImVec2(x, y), ui_with_alpha(accent, alpha),
+                dl->AddText(font, size, ImVec2(x, y), ui_with_alpha(dim, alpha),
                             w.text.c_str());
-                dl->PopClipRect();
+            }
+            else
+            {
+                const int glyph_count = std::max(1, count_cp(glyphs));
+                draw_sweep_glyphs(dl, font, size, x, y, glyphs,
+                                  ui_with_alpha(dim, alpha),
+                                  ui_with_alpha(accent, alpha),
+                                  p * (float)glyph_count, alpha);
             }
         }
 
-        if (current && !w.text.empty())
-        {
-            // Progress within the word decides the active letter. The glow is
-            // intentionally faint: two offset copies, no halo or particles.
-            const double frac = clampf((float)((t - w.start) / std::max(0.05, w.end - w.start)),
-                                       0.0f, 1.0f);
-            std::string glyphs = w.text;
-            while (!glyphs.empty() && (glyphs.back() == ' ' || glyphs.back() == '\t'))
-                glyphs.pop_back();
-            if (!glyphs.empty())
-            {
-                const int n = std::max(1, count_cp(glyphs));
-                int idx = (int)(frac * n);
-                if (idx >= n)
-                    idx = n - 1;
-                const char *p = glyphs.c_str();
-                const char *end = p + glyphs.size();
-                int cp = 0;
-                while (p < end && cp < idx)
-                {
-                    p = next_cp(p, end);
-                    ++cp;
-                }
-                const char *q = next_cp(p, end);
-                const std::string prefix = glyphs.substr(0, (std::size_t)(p - glyphs.c_str()));
-                const std::string letter = glyphs.substr((std::size_t)(p - glyphs.c_str()),
-                                                         (std::size_t)(q - p));
-                const float lx = x + measure(font, size, prefix);
-                const float o = std::max(0.7f, ui_px(0.8f));
-                const float ga = alpha * 0.105f;
-                dl->AddText(font, size, ImVec2(lx - o, y), ui_with_alpha(accent, ga), letter.c_str());
-                dl->AddText(font, size, ImVec2(lx + o, y), ui_with_alpha(accent, ga), letter.c_str());
-                dl->AddText(font, size, ImVec2(lx, y - o), ui_with_alpha(accent, ga), letter.c_str());
-                dl->AddText(font, size, ImVec2(lx, y + o), ui_with_alpha(accent, ga), letter.c_str());
-            }
-        }
         x += advance[wi];
     }
     return true;
@@ -783,6 +888,886 @@ int next_nonempty_index(const Lyrics &lx, int from)
     return -1;
 }
 
+// Instrumental rows count as blank for the loading bar: empty strings and
+// notation such as ♪ / ♫ / "...". Real words never do.
+bool is_blank_lyric(const std::string &s)
+{
+    const std::string marks[] = {"♪", "♫", "♩", "♬", "…", "...", "--", "-",
+                                 "*", "•", "·"};
+    std::size_t i = 0;
+    while (i < s.size())
+    {
+        const unsigned char c = (unsigned char)s[i];
+        if (c == ' ' || c == '\t' || c == '\r' || c == '\n')
+        {
+            ++i;
+            continue;
+        }
+        bool matched = false;
+        for (const std::string &mark : marks)
+        {
+            if (!mark.empty() && s.compare(i, mark.size(), mark) == 0)
+            {
+                i += mark.size();
+                matched = true;
+                break;
+            }
+        }
+        if (!matched)
+            return false;
+    }
+    return true;
+}
+
+int next_real_index(const Lyrics &lx, int from)
+{
+    for (int i = std::max(0, from); i < (int)lx.lines.size(); ++i)
+        if (!is_blank_lyric(lx.lines[(std::size_t)i]))
+            return i;
+    return -1;
+}
+
+double lyric_start_time(const Lyrics &lx, int i)
+{
+    if (i < 0 || i >= (int)lx.lines.size())
+        return -1.0;
+    if (i < (int)lx.rich.size() && lx.rich[(std::size_t)i].start_ms > 0)
+        return lx.rich[(std::size_t)i].start_ms / 1000.0;
+    if (i < (int)lx.times.size() && lx.times[(std::size_t)i] >= 0)
+        return lx.times[(std::size_t)i];
+    return -1.0;
+}
+
+double lyric_end_time(const Lyrics &lx, int i)
+{
+    if (i < 0 || i >= (int)lx.lines.size())
+        return -1.0;
+    if (i < (int)lx.rich.size() &&
+        lx.rich[(std::size_t)i].end_ms > lx.rich[(std::size_t)i].start_ms)
+        return lx.rich[(std::size_t)i].end_ms / 1000.0;
+    return -1.0;
+}
+
+bool has_word_timings(const Lyrics &lx, int i)
+{
+    return i >= 0 && i < (int)lx.rich.size() &&
+           !lx.rich[(std::size_t)i].words.empty();
+}
+
+// Most cached lyrics only carry line timestamps. In that case the original
+// start is often placed a little before the vocal, so synthesising word times
+// from it makes letters brighten early. Hold those lines back by a fraction of
+// their own gap; lines with real word timings keep the provider's timing.
+double lyric_vocal_guard(const Lyrics &lx, int i)
+{
+    if (has_word_timings(lx, i))
+        return 0.0;
+    const double start = lyric_start_time(lx, i);
+    if (start < 0.0)
+        return 0.0;
+    double end = lyric_end_time(lx, i);
+    if (end <= start && i + 1 < (int)lx.lines.size())
+        end = lyric_start_time(lx, i + 1);
+    if (end <= start)
+        end = start + 2.5;
+    return clampf((float)((end - start) * 0.12), 0.10f, 0.40f);
+}
+
+double effective_start_time(const Lyrics &lx, int i)
+{
+    const double start = lyric_start_time(lx, i);
+    return start < 0.0 ? start : start + lyric_vocal_guard(lx, i);
+}
+
+// Two singers are not reliably encoded with the same timestamp. Providers may
+// give them overlapping intervals (A 10-14, B 12-16) or identical ones. Group
+// by real interval overlap instead of start-time proximity, otherwise the
+// second singer is treated as the next distinct line and the first stops
+// sweeping too early.
+const double kOverlapMinSec = 0.18;
+const double kOverlapMinRatio = 0.12;
+const double kStartEpsilon = 0.05;
+
+double inferred_line_end(const Lyrics &lx, int i)
+{
+    const double start = lyric_start_time(lx, i);
+    if (start < 0.0)
+        return -1.0;
+
+    double end = lyric_end_time(lx, i);
+    if (end <= start && i < (int)lx.rich.size() &&
+        !lx.rich[(std::size_t)i].words.empty())
+    {
+        const auto &words = lx.rich[(std::size_t)i].words;
+        end = words.back().end_ms / 1000.0;
+    }
+    if (end <= start)
+    {
+        // Duplicate rows share a start; skip them and use the next genuinely
+        // new line as this row's end.
+        for (int j = i + 1; j < (int)lx.lines.size(); ++j)
+        {
+            const double sj = lyric_start_time(lx, j);
+            if (sj > start + kStartEpsilon)
+            {
+                end = sj;
+                break;
+            }
+        }
+    }
+    if (end <= start)
+        end = start + 2.5;
+    return end;
+}
+
+// Connected components of overlapping lyric intervals. Rows in one component
+// are sung together and stay lit until the next component starts.
+std::vector<std::vector<int>> lyric_overlap_components(const Lyrics &lx)
+{
+    std::vector<std::vector<int>> components;
+    std::vector<int> current;
+    double component_start = 0.0;
+    double component_end = 0.0;
+
+    for (int i = 0; i < (int)lx.lines.size(); ++i)
+    {
+        const double start = lyric_start_time(lx, i);
+        const double end = inferred_line_end(lx, i);
+        if (start < 0.0 || end <= start)
+            continue;
+
+        if (current.empty())
+        {
+            current.push_back(i);
+            component_start = start;
+            component_end = end;
+            continue;
+        }
+
+        const double overlap = std::min(component_end, end) - start;
+        const double shorter = std::min(component_end - component_start,
+                                        end - start);
+        const bool same_voice = overlap >= kOverlapMinSec &&
+                                overlap >= kOverlapMinRatio * shorter;
+        if (same_voice)
+        {
+            current.push_back(i);
+            component_end = std::max(component_end, end);
+        }
+        else
+        {
+            components.push_back(current);
+            current.clear();
+            current.push_back(i);
+            component_start = start;
+            component_end = end;
+        }
+    }
+    if (!current.empty())
+        components.push_back(current);
+    return components;
+}
+
+std::vector<int> lyric_component_for_index(const Lyrics &lx, int index)
+{
+    for (const auto &component : lyric_overlap_components(lx))
+        for (int i : component)
+            if (i == index)
+                return component;
+    return std::vector<int>{index};
+}
+
+double effective_end_time(const Lyrics &lx, int i)
+{
+    const double start = lyric_start_time(lx, i);
+    if (start < 0.0)
+        return -1.0;
+
+    // Keep the sweep alive through every row in the same singer group. The
+    // next distinct component, not the next timestamp, ends this line.
+    const std::vector<int> group = lyric_component_for_index(lx, i);
+    double next = -1.0;
+    for (int j = i + 1; j < (int)lx.lines.size(); ++j)
+    {
+        if (std::find(group.begin(), group.end(), j) != group.end())
+            continue;
+        const double sj = lyric_start_time(lx, j);
+        if (sj > start)
+        {
+            next = sj;
+            break;
+        }
+    }
+
+    double end = inferred_line_end(lx, i);
+    if (next > 0.0 && (end <= start || next > end))
+        end = next;
+    return end + lyric_vocal_guard(lx, i);
+}
+
+float line_karaoke_fraction(const Lyrics &lx, int i, double t)
+{
+    const double t0 = effective_start_time(lx, i);
+    if (t0 < 0.0)
+        return -1.0f;
+    double t1 = effective_end_time(lx, i);
+    if (t1 <= t0)
+        t1 = t0 + 0.5;
+    return clampf((float)((t - t0) / (t1 - t0)), 0.0f, 1.0f);
+}
+
+std::vector<int> immersive_active_group(const Lyrics &lx, const AppState &state,
+                                        const MpvPlayer &player)
+{
+    std::vector<int> group;
+    if (!lx.synced || lx.lines.empty() || lx.times.empty())
+        return group;
+    const double t = lyrics_playback_time(state, player) -
+                     state.settings.lyrics_offset;
+
+    int last = -1;
+    for (int i = 0; i < (int)lx.lines.size(); ++i)
+        if (lyric_start_time(lx, i) <= t)
+            last = i;
+    if (last < 0)
+        return group;
+
+    // The component owns the whole overlap interval, including the tail after
+    // the shorter singer finishes, so both rows stay lit until the next
+    // distinct line begins.
+    return lyric_component_for_index(lx, last);
+}
+
+// Horizontal loading bar for the opening intro and long instrumental runs.
+// Timestamps own the fill; live bass/guitar/treble levels only give the wave
+// layers motion and weight. Each loader is consumed by lyric index so it never
+// replays inside the same track.
+struct EnergyLoader
+{
+    bool active = false;
+    bool hit = false;
+    bool intro = false;
+    float progress = 0.0f;
+    float flash = 0.0f;
+    float seed = 0.0f;
+    float phase = 0.0f;
+    bool moving = false;
+    float rms = 0.0f;
+    float bass = 0.0f;
+    float mid = 0.0f;
+    float treble = 0.0f;
+    float instrument = 0.0f;
+    float density = 0.0f;
+    float beat = 0.0f;
+    float pluck = 0.0f;
+};
+
+EnergyLoader prepare_energy_loader(const AppState &state, MpvPlayer &player,
+                                   const Lyrics &lx, const AudioReactive &au,
+                                   std::vector<std::string> &energy_done,
+                                   std::string &energy_active_key,
+                                   double &energy_hit_start,
+                                   double &energy_phase, double &energy_drive,
+                                   double &energy_last_pos,
+                                   std::uint64_t &energy_seek_gen,
+                                   float &energy_held_rms,
+                                   float &energy_held_bass,
+                                   float &energy_held_mid,
+                                   float &energy_held_treble,
+                                   float &energy_held_instrument,
+                                   double &energy_inst_ref,
+                                   float &energy_held_density,
+                                   float &energy_held_beat,
+                                   float &energy_held_pluck, double now,
+                                   bool motion)
+{
+    EnergyLoader out;
+    const double raw_pos = lyrics_playback_time(state, player);
+    const double t = raw_pos - state.settings.lyrics_offset;
+    const double hit_window = 0.34;
+
+    // A seek re-arms the intro/gap loader at its new position. Seeking into a
+    // gap (or back into the intro) should show the effect again, not stay
+    // hidden because that region played earlier in the same track.
+    const std::uint64_t seek_gen = player.seek_generation();
+    if (energy_seek_gen != seek_gen)
+    {
+        energy_seek_gen = seek_gen;
+        energy_done.clear();
+        energy_active_key.clear();
+        energy_hit_start = -100.0;
+    }
+
+    // Advance the wave clock only when the song actually advances. A paused,
+    // stopped, buffering or seeked player gives no usable delta, so the wave
+    // simply holds its current shape instead of drifting on wall time.
+    double dt = 0.0;
+    if (energy_last_pos >= 0.0)
+    {
+        dt = raw_pos - energy_last_pos;
+        if (dt < 0.0 || dt > 0.25)
+            dt = 0.0;
+    }
+    energy_last_pos = raw_pos;
+    out.moving = motion && dt > 0.0;
+
+    if (out.moving)
+    {
+        // There is no tempo/FFT source here. Live sink bands act as the
+        // "instrumental drive": bass hits still push the low layer, but the
+        // guitar/mid band and its plucked onsets carry the same weight so a
+        // quiet guitar intro does not look slower than a drum-heavy one.
+        energy_held_rms = au.active ? clampf(au.rms, 0.0f, 1.0f) : 0.0f;
+        energy_held_bass = au.active ? clampf(au.bass, 0.0f, 1.0f) : 0.0f;
+        energy_held_mid = au.active ? clampf(au.mid, 0.0f, 1.0f) : 0.0f;
+        energy_held_treble = au.active ? clampf(au.treble, 0.0f, 1.0f) : 0.0f;
+        const float raw_instrument =
+            au.active ? clampf(au.instrument, 0.0f, 1.0f) : 0.0f;
+        // Peak reference: rises quickly to a new loud section, then falls
+        // slowly so a quiet guitar passage still reads as active relative to
+        // the song's own level. The floor stops silence from being amplified.
+        if (raw_instrument > energy_inst_ref)
+            energy_inst_ref +=
+                (raw_instrument - energy_inst_ref) *
+                clampf((float)dt * 1.2f, 0.0f, 1.0f);
+        else
+            energy_inst_ref =
+                std::max(0.18, energy_inst_ref - dt * 0.035);
+        const float norm_instrument = clampf(
+            raw_instrument / std::max(0.18, energy_inst_ref), 0.0f, 1.0f);
+        energy_held_instrument +=
+            (norm_instrument - energy_held_instrument) *
+            clampf((float)dt * 7.0f, 0.0f, 1.0f);
+        const float raw_density =
+            au.active ? clampf(au.density, 0.0f, 1.0f) : 0.0f;
+        energy_held_density +=
+            (raw_density - energy_held_density) *
+            clampf((float)dt * 8.0f, 0.0f, 1.0f);
+        energy_held_beat = au.active ? clampf(au.beat, 0.0f, 1.0f) : 0.0f;
+        energy_held_pluck = au.active ? clampf(au.pluck, 0.0f, 1.0f) : 0.0f;
+        // Overall loudness stays only a modest input. Without this, a loud
+        // vocal/drum mix always outruns a quiet acoustic intro.
+        const float target =
+            clampf(0.42f + 0.65f * energy_held_rms + 0.45f * energy_held_beat +
+                       0.28f * energy_held_bass + 0.18f * energy_held_mid +
+                       1.65f * energy_held_instrument +
+                       0.85f * energy_held_pluck + 0.20f * energy_held_treble,
+                   0.32f, 2.90f);
+        energy_drive +=
+            (target - energy_drive) * clampf((float)dt * 9.0f, 0.0f, 1.0f);
+        energy_phase += dt * energy_drive;
+    }
+    // Held levels keep every wave amplitude and glow frozen with the song.
+    out.rms = energy_held_rms;
+    out.bass = energy_held_bass;
+    out.mid = energy_held_mid;
+    out.treble = energy_held_treble;
+    out.instrument = energy_held_instrument;
+    out.density = energy_held_density;
+    out.beat = energy_held_beat;
+    out.pluck = energy_held_pluck;
+    out.phase = (float)std::fmod(energy_phase, 100000.0);
+
+    auto consumed = [&energy_done](const std::string &key) {
+        return std::find(energy_done.begin(), energy_done.end(), key) !=
+               energy_done.end();
+    };
+    auto finish = [&](const std::string &key) {
+        if (!consumed(key))
+            energy_done.push_back(key);
+        if (energy_active_key == key)
+        {
+            energy_hit_start = now;
+            energy_active_key.clear();
+        }
+    };
+
+    std::string loader_key;
+    double progress = -1.0;
+
+    // Intro: playback 0 -> first non-blank lyric line. Even a short intro gets
+    // a loader; only an immediate first word (t <= 0) skips it.
+    const int first_real = next_real_index(lx, 0);
+    if (first_real >= 0 && !consumed("i:" + std::to_string(first_real)))
+    {
+        const double end = effective_start_time(lx, first_real);
+        if (end > 0.0)
+        {
+            const std::string key = "i:" + std::to_string(first_real);
+            if (t >= end)
+            {
+                out.intro = true;
+                finish(key);
+            }
+            else if (t >= 0.0)
+            {
+                out.active = true;
+                out.intro = true;
+                loader_key = key;
+                progress = t / end;
+            }
+        }
+    }
+
+    // Instrumental runs: one loader for the whole blank run, starting at the
+    // previous real line's end (or the first blank row when no end is cached),
+    // and finishing at the next real line's timestamp.
+    if (!out.active)
+    {
+        for (int i = 0; i < (int)lx.lines.size();)
+        {
+            if (!is_blank_lyric(lx.lines[(std::size_t)i]))
+            {
+                ++i;
+                continue;
+            }
+            const int run_start = i;
+            while (i < (int)lx.lines.size() &&
+                   is_blank_lyric(lx.lines[(std::size_t)i]))
+                ++i;
+            const int next_real = i;
+            if (run_start == 0 || next_real >= (int)lx.lines.size())
+                continue;
+
+            const double blank_start = effective_start_time(lx, run_start);
+            const double prev_end = effective_end_time(lx, run_start - 1);
+            double start = blank_start;
+            if (prev_end > 0.0 && (start < 0.0 || prev_end <= start))
+                start = prev_end;
+            const double end = effective_start_time(lx, next_real);
+            if (start < 0.0 || end <= start || end - start < 1.0)
+                continue;
+
+            const std::string key = "g:" + std::to_string(run_start);
+            if (consumed(key))
+                continue;
+            if (t >= end)
+            {
+                // The next real line is now focal, so the finished gap sits
+                // *above* it. Keeping the old below-focal anchor here is what
+                // made the completion flash appear over the lyrics underneath.
+                out.intro = true;
+                finish(key);
+                continue;
+            }
+            if (t >= start)
+            {
+                out.active = true;
+                out.intro = false;
+                loader_key = key;
+                progress = (t - start) / (end - start);
+                break;
+            }
+            // Still before this run: later runs cannot be current either.
+            break;
+        }
+    }
+
+    if (out.active)
+        energy_active_key = loader_key;
+    else if (now - energy_hit_start >= hit_window)
+        energy_active_key.clear();
+
+    const double hit_age = now - energy_hit_start;
+    out.hit = hit_age >= 0.0 && hit_age < hit_window;
+    out.progress = clampf((float)progress, 0.0f, 1.0f);
+    out.flash = out.hit
+                    ? clampf(1.0f - (float)(hit_age / hit_window), 0.0f, 1.0f)
+                    : 0.0f;
+    for (char c : loader_key)
+        out.seed += (float)(unsigned char)c * 0.173f;
+    out.seed = std::fmod(out.seed + 1.7f, 6.283f);
+    return out;
+}
+
+void draw_energy_ribbon(ImDrawList *dl, const EnergyLoader &loader,
+                        const ImVec2 &wp,
+                        float left, float right, float center_y, float pitch,
+                        float size, float view_a, int style, bool motion,
+                        bool &animating)
+{
+    if (!dl || view_a <= 0.003f || left >= right ||
+        (!loader.active && !loader.hit))
+        return;
+
+    const float x0 = wp.x + left;
+    const float x1 = wp.x + right;
+    const float span = x1 - x0;
+    const float text_h = size * 1.26f;
+
+    // The loader is much taller now, but capped by the space we reserved in
+    // `pitch`: intro sits above the first line, gaps sit between two lines.
+    const float wanted_h = energy_band_height(size, style);
+    const float room_h = std::max(ui_px(24.0f), pitch - text_h - ui_px(14.0f));
+    const float band_h = loader.intro ? wanted_h : std::min(wanted_h, room_h);
+    const float half = band_h * 0.5f;
+    const float rail_y = loader.intro
+                             ? wp.y + center_y - text_h * 0.5f - half - ui_px(12.0f)
+                             : wp.y + center_y + pitch * 0.5f;
+    const ImVec4 accent = ImGui::ColorConvertU32ToFloat4(ui_accent_u32(1.0f));
+
+    // Smoothstep keeps the same timestamp-owned endpoints but gives the front
+    // a softer launch and settle instead of a mechanical linear crawl.
+    const float raw_p = clampf(loader.progress, 0.0f, 1.0f);
+    const float p = raw_p * raw_p * (3.0f - 2.0f * raw_p);
+    const float fx = x0 + span * p;
+    const float energy = loader.rms;
+    const float bass = loader.bass;
+    const float mid = loader.mid;
+    const float treble = loader.treble;
+    const float instrument = loader.instrument;
+    const float beat = loader.beat;
+    const float pluck = loader.pluck;
+    const float density = loader.density;
+    const float phase = loader.phase;
+    // Height comes from stable absolute loudness/density, not the per-track
+    // normalised instrument level. That normaliser rises during a loader and
+    // would otherwise make the waves shrink as the axis grows. Spectrum keeps
+    // its own bar math.
+    const float wave_level =
+        clampf(std::max(energy * 1.6f, density * 1.15f), 0.0f, 1.0f);
+    const float gate = smooth_unit((wave_level - 0.03f) / 0.22f);
+
+    // Frosted-glass rail. It belongs to the live loader only: once the gap
+    // finishes, the container must vanish instead of lingering over the next
+    // lyric while the short NOW flash fades.
+    if (loader.active)
+    {
+        const ImVec2 rail0(x0, rail_y - half * 1.12f);
+        const ImVec2 rail1(x1, rail_y + half * 1.12f);
+        const float rail_round = ui_px(std::max(6.0f, half * 0.42f));
+        dl->AddRectFilled(rail0, rail1,
+                          ui_with_alpha(ui_overlay_u32(1.0f), 0.052f * view_a),
+                          rail_round);
+        dl->AddRectFilled(rail0, rail1, ui_accent_u32(0.020f * view_a),
+                          rail_round);
+        dl->AddRect(rail0, rail1, ui_accent_u32(0.065f * view_a), rail_round,
+                    ui_px(1.0f));
+    }
+
+    dl->PushClipRect(ImVec2(x0, rail_y - half * 1.34f),
+                     ImVec2(x1, rail_y + half * 1.34f), true);
+
+    if (loader.active)
+    {
+        // Faint track, solid filled portion. This is the unrolled loading
+        // ring: everything alive is behind the travelling front.
+        dl->AddLine(ImVec2(x0, rail_y), ImVec2(x1, rail_y),
+                    ui_accent_u32(0.035f * view_a), ui_px(1.0f));
+        add_gradient_rect(dl, x0, rail_y - half * 0.34f, fx,
+                          rail_y + half * 0.34f,
+                          ui_with_alpha(ui_accent_text_u32(),
+                                        (0.048f + 0.022f * energy) * view_a),
+                          ui_accent_u32(0.008f * view_a));
+
+        // Short afterglow behind the front; it fades out over ~6% of the span
+        // so the leading edge feels warm without smearing the whole track.
+        const float tail = std::min(span * 0.07f, ui_px(90.0f));
+        for (int i = 5; i >= 1; --i)
+        {
+            const float f = (float)i / 5.0f;
+            const float ax = fx - tail * f;
+            const float aw = tail * 0.28f;
+            add_gradient_rect(dl, ax - aw, rail_y - half * 0.95f, ax + aw,
+                              rail_y + half * 0.95f,
+                              ui_with_alpha(ui_accent_text_u32(),
+                                            (0.006f + 0.016f * (1.0f - f)) * view_a),
+                              ui_accent_u32(0.0f));
+        }
+
+        soft_glow(dl, ImVec2(x1, rail_y), half * 1.45f, accent,
+                  (0.022f + 0.028f * beat) * view_a, 4, 24);
+        dl->AddLine(ImVec2(x1, rail_y - half * 0.92f),
+                    ImVec2(x1, rail_y + half * 0.92f),
+                    ui_accent_u32((0.11f + 0.06f * beat) * view_a), ui_px(1.4f));
+
+        if (style == 1)
+        {
+            // Spectrum AM variant: bar heights follow the shared AM envelope,
+            // so the silhouette reads like the "AM" carrier instead of a
+            // generic EQ. Live bands only push the envelope up and down;
+            // timing is still owned by the lyrics timestamps.
+            const int bars = 28;
+            const float step = span / (float)bars;
+            const float baseline = rail_y + half * 0.98f;
+            // The bars still jump, but the shape behind them drifts slowly.
+            // Only the spectrum gets this slowed clock; Waves keeps its own.
+            const float slow_phase = phase * 0.32f;
+            float prev_amp = 0.0f;
+            for (int i = 0; i < bars; ++i)
+            {
+                const float u = ((float)i + 0.5f) / (float)bars;
+                if (u > p)
+                    break;
+                const float env = am_envelope(u, slow_phase, loader.seed);
+                const float shimmer =
+                    0.5f + 0.5f * std::sin(slow_phase * 0.9f + u * 19.0f +
+                                           loader.seed);
+                // Per-bar transient: spectrum should snap upward like a real
+                // analyser, not sway like the wave ribbon. The golden-angle
+                // offset keeps neighbouring bars from rising in lockstep, but
+                // the clock is slowed so the backdrop does not strobe.
+                const float jitter =
+                    0.5f + 0.5f * std::sin(slow_phase * 1.7f +
+                                           (float)i * 2.399f + loader.seed);
+                const float spike =
+                    std::pow(jitter, 6.0f) *
+                    (0.22f + 0.24f * beat + 0.16f * treble +
+                     0.26f * instrument + 0.34f * pluck);
+                const float du = u - p;
+                const float front = std::exp(-du * du * 150.0f);
+                const float drive = 0.50f + 0.10f * bass + 0.14f * mid +
+                                    0.10f * treble + 0.08f * beat +
+                                    0.38f * instrument + 0.40f * pluck +
+                                    0.08f * energy;
+                const float raw = clampf(
+                    0.06f + env * (drive + 0.08f * shimmer) + 0.22f * front +
+                        spike,
+                    0.04f, 1.60f);
+                // Fast attack, almost no smoothing; peaks may pass the rail
+                // limit before settling, so this stays visibly jumpy.
+                const float amp = 0.92f * raw + 0.08f * prev_amp;
+                prev_amp = amp;
+                // Bars now grow from near the bottom of the taller rail and
+                // can reach almost to its top, instead of occupying a shallow
+                // strip around the centre line.
+                const float bh = half * (0.08f + amp * 1.34f);
+                const float bw = step * 0.30f;
+                const float bx = x0 + u * span;
+                const float top_y = baseline - bh;
+
+                add_gradient_rect(dl, bx - bw, top_y, bx + bw, baseline,
+                                  ui_with_alpha(ui_accent_text_u32(),
+                                                (0.13f + 0.12f * amp +
+                                                 0.10f * front +
+                                                 0.08f * pluck) * view_a),
+                                  ui_accent_u32((0.022f + 0.038f * amp) * view_a));
+                dl->AddRectFilled(
+                    ImVec2(bx - bw, top_y),
+                    ImVec2(bx + bw, top_y + std::max(ui_px(2.0f), bh * 0.07f)),
+                    ui_with_alpha(ui_accent_text_u32(),
+                                  (0.30f + 0.16f * front) * view_a),
+                    ui_px(1.2f));
+                add_gradient_rect(dl, bx - bw, baseline, bx + bw,
+                                  baseline + bh * 0.28f,
+                                  ui_accent_u32((0.035f + 0.035f * amp) * view_a),
+                                  ui_accent_u32(0.0f));
+            }
+            dl->AddLine(ImVec2(x0, baseline), ImVec2(x1, baseline),
+                        ui_accent_u32(0.045f * view_a), ui_px(1.0f));
+        }
+        else
+        {
+            // Waves AM variant: a slim accent-tinted carrier rides the shared
+            // amplitude envelope, with two quieter carrier layers behind it.
+            // Loudness opens the waveform and waveform density sets how many
+            // low-to-high points it draws; near silence collapses to a still
+            // line instead of carrying on with a fixed decorative sine.
+            const int samples = 192;
+            ImVec2 spine[samples + 1];
+            float thick[samples + 1];
+            ImVec2 points[samples + 1];
+            const float low = clampf(bass * 1.8f, 0.0f, 1.0f);
+            const float middle = clampf(mid * 1.8f, 0.0f, 1.0f);
+            const float high = clampf(treble * 1.8f, 0.0f, 1.0f);
+            const float detail =
+                clampf(0.42f * wave_level + 0.58f * density, 0.0f, 1.0f);
+            // The carrier is drawn in a local 0..1 coordinate behind the
+            // front dot, which stretches a fixed number of peaks as the bar
+            // grows. Drive the peak count from the actual filled pixel width
+            // instead, so a longer axis literally has more waves. Audio only
+            // adds a modest density/bass multiplier on top of that width.
+            const float filled_px = span * p;
+            const float base_cycles = clampf(
+                filled_px / std::max(1.0f, ui_px(34.0f)), 3.0f, 32.0f);
+            const float audio_cycles =
+                0.85f + 0.25f * detail + 0.30f * low + 0.25f * beat;
+            const float carrier_scale =
+                std::min(4.0f, base_cycles * audio_cycles / 6.4f);
+            // Bring back a gentle bass-driven bounce: enough to feel alive,
+            // far below the old kick/pluck spikes that made the line jump.
+            const float wave_phase = phase * 0.30f;
+            const float bounce = 0.10f * low + 0.12f * beat;
+            const float amps[kWaveLayers] = {
+                half * gate * (0.40f + 0.10f * low + 0.38f * wave_level + bounce),
+                half * gate * (0.28f + 0.20f * middle + 0.36f * wave_level +
+                               0.85f * bounce),
+                half * gate * (0.22f + 0.16f * high + 0.34f * wave_level +
+                               0.70f * bounce),
+                half * gate * (0.16f + 0.24f * middle + 0.14f * high +
+                               0.55f * bounce),
+                half * gate * (0.10f + 0.20f * high + 0.16f * density +
+                               0.40f * bounce)};
+
+            // The front dot is the pen that draws the ribbon. Work in a
+            // coordinate measured back from that dot so the AM shape stays
+            // anchored to it instead of drifting along the absolute X axis.
+            const float front_span = std::max(0.001f, p);
+            const float front_pad = std::max(0.02f, p * 0.18f);
+            const float front_carrier =
+                am_carrier(0.0f, wave_phase, loader.seed, 0.0f,
+                           carrier_scale);
+
+            int count = 0;
+            for (int s = 0; s <= samples; ++s)
+            {
+                const float u = (float)s / (float)samples;
+                if (u > p)
+                    break;
+                const float local = (p - u) / front_span;
+                const float anchor = smooth_unit(local / front_pad);
+                const float left_fade =
+                    smooth_unit(u / std::max(0.001f, p * 0.10f));
+                const float breathe =
+                    0.90f + 0.10f * std::sin(wave_phase * 0.70f +
+                                             local * 1.6f + loader.seed);
+                const float envelope = anchor * left_fade * breathe;
+                // Subtracting the carrier at the front pins the line to the
+                // circle's centre; the surrounding samples still move on Y.
+                const float wave =
+                    am_carrier(local, wave_phase, loader.seed, 0.0f,
+                               carrier_scale) -
+                    front_carrier;
+                spine[count] = ImVec2(x0 + span * u,
+                                      rail_y + wave * amps[0] * envelope);
+                thick[count] =
+                    half * gate *
+                    (0.10f + 0.05f * low + 0.06f * wave_level) *
+                    envelope;
+                ++count;
+            }
+
+            for (int k = 1; k < count; ++k)
+            {
+                const float du = (float)k / (float)samples - p;
+                const float front = std::exp(-du * du * 150.0f);
+                add_gradient_quad(
+                    dl,
+                    ImVec2(spine[k - 1].x, spine[k - 1].y - thick[k - 1]),
+                    ImVec2(spine[k].x, spine[k].y - thick[k]),
+                    ImVec2(spine[k].x, spine[k].y + thick[k]),
+                    ImVec2(spine[k - 1].x, spine[k - 1].y + thick[k - 1]),
+                    ui_with_alpha(ui_accent_text_u32(),
+                                  (0.10f + 0.09f * front +
+                                   0.07f * wave_level) *
+                                      view_a),
+                    ui_accent_u32((0.008f + 0.018f * energy) * view_a));
+            }
+
+            // Mirrored, faint echo below the rail. It stays inside the clipped
+            // band but gives the ribbon a soft reflection instead of a hard cut.
+            const float axis = rail_y + half * 0.70f;
+            for (int k = 1; k < count; ++k)
+            {
+                const float y0 = axis + (axis - spine[k - 1].y) * 0.42f;
+                const float y1 = axis + (axis - spine[k].y) * 0.42f;
+                const float t0 = thick[k - 1] * 0.42f;
+                const float t1 = thick[k] * 0.42f;
+                add_gradient_quad(
+                    dl, ImVec2(spine[k - 1].x, y0 - t0),
+                    ImVec2(spine[k].x, y1 - t1), ImVec2(spine[k].x, y1 + t1),
+                    ImVec2(spine[k - 1].x, y0 + t0),
+                    ui_accent_u32(0.026f * view_a), ui_accent_u32(0.0f));
+            }
+
+            if (count >= 2)
+                dl->AddPolyline(spine, count,
+                                ui_with_alpha(ui_accent_text_u32(),
+                                              (0.12f + 0.12f * gate +
+                                               0.10f * wave_level) *
+                                                  view_a),
+                                ui_px(1.8f));
+
+            for (int layer = 1; layer < kWaveLayers; ++layer)
+            {
+                const float layer_front =
+                    am_carrier(0.0f, wave_phase, loader.seed, (float)layer,
+                               carrier_scale);
+                int n = 0;
+                for (int s = 0; s <= samples; ++s)
+                {
+                    const float u = (float)s / (float)samples;
+                    if (u > p)
+                        break;
+                    const float local = (p - u) / front_span;
+                    const float anchor = smooth_unit(local / front_pad);
+                    const float left_fade =
+                        smooth_unit(u / std::max(0.001f, p * 0.10f));
+                    const float breathe =
+                        0.90f + 0.10f * std::sin(wave_phase * 0.70f +
+                                                 local * 1.6f + loader.seed +
+                                                 (float)layer);
+                    const float wave =
+                        am_carrier(local, wave_phase, loader.seed, (float)layer,
+                                   carrier_scale) -
+                        layer_front;
+                    points[n++] =
+                        ImVec2(x0 + span * u,
+                               rail_y + wave * amps[layer] * anchor *
+                                            left_fade * breathe);
+                }
+                if (n >= 2)
+                    dl->AddPolyline(points, n,
+                                    ui_accent_u32((0.06f + 0.06f * gate -
+                                                   0.015f * (float)layer +
+                                                   0.07f * wave_level) *
+                                      view_a),
+                                    ui_px(1.3f));
+            }
+        }
+
+        soft_glow(dl, ImVec2(fx, rail_y), half * 1.25f, accent,
+                  (0.035f + 0.055f * gate + 0.035f * instrument +
+                   0.045f * pluck + 0.045f * beat) * view_a, 4, 24);
+        dl->AddLine(ImVec2(fx, rail_y - half * 0.88f),
+                    ImVec2(fx, rail_y + half * 0.88f),
+                    ui_with_alpha(ui_accent_text_u32(),
+                                  (0.34f + 0.30f * beat) * view_a),
+                    ui_px(1.8f));
+        dl->AddCircleFilled(ImVec2(fx, rail_y),
+                            ui_px(2.6f) + half * 0.045f,
+                            ui_with_alpha(ui_accent_text_u32(), 0.88f * view_a), 14);
+    }
+
+    if (loader.hit)
+    {
+        soft_glow(dl, ImVec2(x1, rail_y), half * 1.75f, accent,
+                  (0.16f * loader.flash + 0.05f * beat) * view_a, 4, 24);
+        dl->AddCircle(
+            ImVec2(x1, rail_y),
+            half * (0.25f + 0.90f * (1.0f - loader.flash)),
+            ui_with_alpha(ui_accent_text_u32(), 0.18f * loader.flash * view_a),
+            32, ui_px(2.0f));
+        dl->AddLine(ImVec2(x1, rail_y - half * 1.05f),
+                    ImVec2(x1, rail_y + half * 1.05f),
+                    ui_accent_u32((0.48f * loader.flash + 0.08f * beat) * view_a),
+                    ui_px(2.4f));
+        dl->AddCircleFilled(
+            ImVec2(x1, rail_y), ui_px(2.8f) + half * 0.06f,
+            ui_with_alpha(ui_accent_text_u32(), 0.95f * loader.flash * view_a), 14);
+    }
+
+    if (span > ui_px(240.0f))
+    {
+        const float label_s = clampf(size * 0.22f, 11.0f, 15.0f);
+        const char *label = "NOW";
+        const float label_w = measure(g_ui_fonts.body, label_s, label);
+        dl->AddText(g_ui_fonts.body, label_s,
+                    ImVec2(x1 - label_w - ui_px(6.0f),
+                           rail_y - half * 1.18f),
+                    ui_with_alpha(ui_accent_text_u32(),
+                                  (0.14f + 0.40f * loader.flash +
+                                   0.12f * beat) * view_a),
+                    label);
+    }
+
+    dl->PopClipRect();
+
+    if (motion && loader.moving)
+        animating = true;
+}
+
+
 } // namespace
 
 void draw_lyrics_immersive(AppState &state, MpvPlayer &player)
@@ -805,6 +1790,7 @@ void draw_lyrics_immersive(AppState &state, MpvPlayer &player)
         g_imm.chrome = 1.0f;
         g_imm.chrome_init = true;
         g_imm.active = -2;
+        g_imm.active_group.clear();
         if (!g_hint_done)
         {
             g_hint_done = true;
@@ -899,6 +1885,25 @@ void draw_lyrics_immersive(AppState &state, MpvPlayer &player)
         {
             const bool had_track = !g_imm.track.empty();
             g_imm.track = display.id;
+            // Loading-bar consumption is per track; seeking inside a track
+            // never re-arms an intro or instrumental run.
+            g_imm.energy_done.clear();
+            g_imm.energy_active_key.clear();
+            g_imm.energy_hit_start = -100.0;
+            g_imm.energy_pocket = 0.0f;
+            g_imm.energy_seek_gen = player.seek_generation();
+            g_imm.energy_phase = 0.0;
+            g_imm.energy_drive = 0.55;
+            g_imm.energy_last_pos = -1.0;
+            g_imm.energy_held_rms = 0.0f;
+            g_imm.energy_held_bass = 0.0f;
+            g_imm.energy_held_mid = 0.0f;
+            g_imm.energy_held_treble = 0.0f;
+            g_imm.energy_held_instrument = 0.0f;
+            g_imm.energy_inst_ref = 0.18;
+            g_imm.energy_held_density = 0.0f;
+            g_imm.energy_held_beat = 0.0f;
+            g_imm.energy_held_pluck = 0.0f;
             if (had_track)
             {
                 // Songs change while the takeover stays open. Keep the view
@@ -954,6 +1959,7 @@ void draw_lyrics_immersive(AppState &state, MpvPlayer &player)
             g_imm.cover_x = -1.0f;
             g_imm.view_start = now;
             g_imm.active = -2;
+            g_imm.active_group.clear();
             g_imm.scroll = -1.0f;
             g_imm.pulse = 0.0f;
             g_imm.prev_text.clear();
@@ -1528,28 +2534,36 @@ void draw_lyrics_immersive(AppState &state, MpvPlayer &player)
             // Each line is drawn at its distance from the eased scroll
             // position, so the next line glides up and grows into focus
             // instead of being swapped in from a corner.
-            const int active = lyrics_active_line(*lx, state, player);
+            const std::vector<int> active_group =
+                immersive_active_group(*lx, state, player);
+            const int active = active_group.empty() ? -1 : active_group.front();
             if (g_imm.active == -2)
             {
                 g_imm.active = active;
+                g_imm.active_group = active_group;
                 g_imm.scroll = active >= 0 ? (float)active : 0.0f;
                 g_imm.active_since = now;
                 if (active >= 0)
                     g_imm.pulse = motion ? 1.0f : 0.0f;
             }
-            else if (active != g_imm.active)
+            else if (active_group != g_imm.active_group)
             {
                 g_imm.active = active;
+                g_imm.active_group = active_group;
                 g_imm.active_since = now;
                 if (motion && active >= 0)
                     g_imm.pulse = 1.0f;
             }
 
-            const bool preview = active < 0;
+            const bool preview = active_group.empty();
             int center_idx = active;
             if (center_idx < 0 || center_idx >= (int)lx->lines.size() ||
                 blank(lx->lines[center_idx]))
                 center_idx = next_nonempty_index(*lx, center_idx < 0 ? 0 : center_idx);
+            auto is_active_line = [&active_group](int i) {
+                return std::find(active_group.begin(), active_group.end(), i) !=
+                       active_group.end();
+            };
 
             if (center_idx >= 0)
             {
@@ -1568,38 +2582,141 @@ void draw_lyrics_immersive(AppState &state, MpvPlayer &player)
                         animating = true;
                 }
 
-                // Karaoke wipe, timed by the gap to the next lyric line.
-                float karaoke = -1.0f;
-                if (!preview && center_idx < (int)lx->times.size())
+                // Every lyric line keeps one font size. The active line is
+                // marked by colour and by the growing letter at the karaoke
+                // front, not by zooming neighbours in and out.
+                float uniform_size = active_pref;
+                const float uniform_floor = std::max(18.0f, active_pref * 0.5f);
                 {
-                    const double t = lyrics_playback_time(state, player) -
-                                     state.settings.lyrics_offset;
-                    const double t0 = lx->times[center_idx];
-                    double t1 = center_idx + 1 < (int)lx->times.size()
-                                    ? lx->times[center_idx + 1]
-                                    : t0 + 4.0;
-                    if (t1 <= t0)
-                        t1 = t0 + 0.5;
-                    karaoke = clampf((float)((t - t0) / (t1 - t0)), 0.0f, 1.0f);
-                    if (karaoke < 1.0f && state.playing)
-                        animating = true;
+                    const float step = std::max(1.0f, active_pref * 0.035f);
+                    while (uniform_size > uniform_floor)
+                    {
+                        float widest = 0.0f;
+                        for (const std::string &ln : lx->lines)
+                            if (!ln.empty())
+                                widest = std::max(widest,
+                                                  measure(font, uniform_size, ln));
+                        if (widest <= max_text_w)
+                            break;
+                        uniform_size = std::max(uniform_floor, uniform_size - step);
+                    }
                 }
 
-                const float pitch = active_pref * 1.92f;
-                const float up_floor = std::max(15.0f, active_pref * 0.34f);
+                // Translation for the focal line. It sits under the active
+                // lyric in a frosted-glass pill and deliberately has no
+                // karaoke/glow pass of its own. Reserve its height in the
+                // scroll pitch so it never collides with the next line.
+                const bool has_translation =
+                    !preview && center_idx < (int)lx->rich.size() &&
+                    !lx->rich[(std::size_t)center_idx].translation.empty();
+                TextLayout trans_lay;
+                float trans_gap = 0.0f;
+                float trans_pill_h = 0.0f;
+                if (has_translation)
+                {
+                    const float trans_size =
+                        clampf(uniform_size * 0.42f, 14.0f, 30.0f);
+                    const float trans_max_w = std::max(80.0f, max_text_w * 0.78f);
+                    trans_lay = layout_text(g_ui_fonts.body,
+                                            lx->rich[(std::size_t)center_idx].translation,
+                                            trans_max_w, trans_size,
+                                            std::max(12.0f, trans_size * 0.85f));
+                    trans_gap = ui_px(10.0f);
+                    trans_pill_h = trans_lay.height + ui_px(18.0f);
+                }
+
+                const EnergyLoader energy = prepare_energy_loader(
+                    state, player, *lx, au, g_imm.energy_done,
+                    g_imm.energy_active_key, g_imm.energy_hit_start,
+                    g_imm.energy_phase, g_imm.energy_drive,
+                    g_imm.energy_last_pos, g_imm.energy_seek_gen,
+                    g_imm.energy_held_rms,
+                    g_imm.energy_held_bass, g_imm.energy_held_mid,
+                    g_imm.energy_held_treble, g_imm.energy_held_instrument,
+                    g_imm.energy_inst_ref, g_imm.energy_held_density,
+                    g_imm.energy_held_beat, g_imm.energy_held_pluck,
+                    now, motion);
+
+                // Style 2 turns the whole intro/gap effect off: no rail, no
+                // animation, and no extra row spacing for a hidden loader.
+                const bool effects_enabled =
+                    state.settings.lyrics_effect_style != 2;
+                const bool want_pocket =
+                    effects_enabled && (energy.active || energy.hit);
+                if (!effects_enabled)
+                    g_imm.energy_pocket = 0.0f;
+                if (want_pocket)
+                    g_imm.energy_pocket = 1.0f;
+                else if (!motion)
+                    g_imm.energy_pocket = 0.0f;
+                else if (g_imm.energy_pocket > 0.0f)
+                {
+                    // Let the row spacing settle after the completion flash
+                    // instead of snapping shut the instant the loader exits.
+                    g_imm.energy_pocket =
+                        std::max(0.0f, g_imm.energy_pocket - dt / 0.20f);
+                    animating = true;
+                }
+
+                float pitch = uniform_size * 1.92f;
+                if (g_imm.energy_pocket > 0.0f)
+                {
+                    // Open a real pocket between lyric rows so the taller
+                    // loader never sits on top of the text. The spectrum's
+                    // taller band is reserved here as well, not just drawn.
+                    const float wanted_h = energy_band_height(
+                        uniform_size, state.settings.lyrics_effect_style);
+                    const float full_pitch =
+                        std::max(pitch, wanted_h + uniform_size * 1.26f +
+                                            ui_px(22.0f));
+                    pitch += (full_pitch - pitch) *
+                             smooth_unit(g_imm.energy_pocket);
+                }
+                if (has_translation)
+                {
+                    // Reserve a real gap below the glass card. Measuring the
+                    // focal line instead of assuming one row also covers a
+                    // wrapped translation/original pair.
+                    float active_h = uniform_size * 1.26f;
+                    if (center_idx >= 0 &&
+                        center_idx < (int)lx->lines.size())
+                    {
+                        const TextLayout active_lay =
+                            layout_text(font, lx->lines[(std::size_t)center_idx],
+                                        max_text_w, uniform_size, uniform_size);
+                        active_h = active_lay.height;
+                    }
+                    const float min_pitch =
+                        active_h * 0.5f + trans_gap + trans_pill_h +
+                        ui_px(30.0f) + uniform_size * 0.5f;
+                    pitch = std::max(pitch, min_pitch);
+                }
+
+                // Drawn before the glyphs and translation card, inside the
+                // pitch pocket reserved above. "Off" skips it entirely.
+                if (effects_enabled)
+                    draw_energy_ribbon(dl, energy, wp,
+                                       lyrics_x + pad * 0.45f, w - pad * 0.65f,
+                                       focal.y, pitch, uniform_size, view_a,
+                                       state.settings.lyrics_effect_style,
+                                       motion, animating);
+
                 const double tplay = lyrics_playback_time(state, player) -
                                      state.settings.lyrics_offset;
                 const int lo = std::max(0, (int)std::floor(g_imm.scroll) - 3);
                 const int hi = std::min((int)lx->lines.size() - 1,
                                         (int)std::ceil(g_imm.scroll) + 3);
+                float active_line_h = 0.0f;
+                float active_line_center_y = 0.0f;
+                float active_line_alpha = 0.0f;
                 for (int i = lo; i <= hi; ++i)
                 {
                     if (blank(lx->lines[i]))
                         continue;
                     const float d = (float)i - g_imm.scroll;
-                    // 1 on the focal line, 0 by ~1.8 lines away: size and
-                    // opacity both fall off so the neighbour reads as
-                    // "coming into focus" as the scroll passes it.
+                    // Opacity still falls off with distance, but the font
+                    // size is fixed so a line never looks pre-highlighted
+                    // just because it is sliding toward the centre.
                     const float focus = clampf(1.0f - std::fabs(d) * 0.55f, 0.0f, 1.0f);
                     const float f2 = focus * focus;
                     float alpha =
@@ -1615,36 +2732,131 @@ void draw_lyrics_immersive(AppState &state, MpvPlayer &player)
                             0.0f, 1.0f));
                         alpha *= reveal;
                     }
-                    const bool is_active = (!preview && i == center_idx);
-                    // The size cap is measured once at the focal font size and
-                    // does not depend on the current focus. Fitting against a
-                    // moving preferred size made a long line shrink and regrow
-                    // on every frame (the visible jitter), and letting the
-                    // animation aim at active_pref overshot the fitted size.
-                    TextLayout cap_lay = layout_text(font, lx->lines[i], max_text_w,
-                                                     active_pref,
-                                                     std::max(13.0f, active_pref * 0.5f));
-                    const float cap = cap_lay.size;
-                    float size = up_floor + (cap - up_floor) * f2;
-                    size = std::round(size * 2.0f) * 0.5f; // stable half-pixel steps
-                    TextLayout lay = (size >= cap - 0.01f)
-                                         ? cap_lay
-                                         : layout_text(font, lx->lines[i], max_text_w, size,
-                                                       std::max(13.0f, size * 0.5f));
+                    // Every row in the simultaneous group is fully active:
+                    // providers use adjacent/equal timestamps for two singers,
+                    // and both need the accent sweep instead of only the top
+                    // row being lit.
+                    const bool is_active = !preview && is_active_line(i);
+                    if (is_active)
+                        alpha = std::max(alpha, view_a * reveal);
+                    TextLayout lay = layout_text(font, lx->lines[i], max_text_w,
+                                                 uniform_size, uniform_size);
+                    const float size = lay.size;
                     bool drew_words = false;
                     const ImVec2 line_center(focal.x,
                                              focal.y + d * pitch +
                                                  (1.0f - reveal) * ui_px(16.0f));
+                    if (is_active)
+                    {
+                        // A soft accent halo makes the whole simultaneous row
+                        // read as "being sung", even before its sweep arrives.
+                        // Non-focal singers get a slightly stronger halo so a
+                        // line below the focal one does not disappear into the
+                        // normal distance fade.
+                        const ImU32 glow_col = ui_accent_text_u32();
+                        const float o = ui_px(1.8f) + 1.6f * g_imm.pulse;
+                        const float ga = (i == center_idx ? 0.05f : 0.10f) *
+                                         view_a * reveal;
+                        float gy = line_center.y - lay.height * 0.5f;
+                        for (const TextRow &grow : lay.rows)
+                        {
+                            if (grow.text.empty())
+                            {
+                                gy += lay.line_h;
+                                continue;
+                            }
+                            const float gw = measure(font, size, grow.text);
+                            const float gx = focal.x - gw * 0.5f;
+                            dl->AddText(font, size, ImVec2(gx - o, gy),
+                                        ui_with_alpha(glow_col, ga), grow.text.c_str());
+                            dl->AddText(font, size, ImVec2(gx + o, gy),
+                                        ui_with_alpha(glow_col, ga), grow.text.c_str());
+                            dl->AddText(font, size, ImVec2(gx, gy - o),
+                                        ui_with_alpha(glow_col, ga), grow.text.c_str());
+                            dl->AddText(font, size, ImVec2(gx, gy + o),
+                                        ui_with_alpha(glow_col, ga), grow.text.c_str());
+                            gy += lay.line_h;
+                        }
+                    }
+                    if (i == center_idx)
+                    {
+                        active_line_h = lay.height;
+                        active_line_center_y = line_center.y;
+                        active_line_alpha = alpha;
+                    }
+                    float karaoke = -1.0f;
+                    if (is_active)
+                    {
+                        karaoke = line_karaoke_fraction(*lx, i, tplay);
+                        if (state.playing && karaoke >= 0.0f && karaoke < 1.0f)
+                            animating = true;
+                    }
                     if (is_active && i < (int)lx->rich.size())
                         drew_words = draw_words_app(
                             dl, font, size, line_center, max_text_w, lx->rich[(size_t)i],
-                            tplay,
-                            (i + 1 < (int)lx->times.size()) ? (double)lx->times[i + 1] : 0.0,
-                            alpha);
+                            tplay, effective_start_time(*lx, i),
+                            effective_end_time(*lx, i), alpha);
                     if (!drew_words)
                         draw_rows(dl, font, lay, line_center,
                                   is_active ? ui_accent_text_u32() : ui_text_dim_u32(),
-                                  alpha, 1.0f, 0.0f, is_active ? karaoke : -1.0f);
+                                  alpha, 1.0f,
+                                  is_active ? (0.22f + 0.38f * g_imm.pulse) : 0.0f,
+                                  karaoke, is_active ? (i == center_idx ? 0.45f : 1.0f) : 0.0f);
+                }
+
+                // Liquid-glass translation card. It is static: only the
+                // original lyric receives the per-letter karaoke sweep.
+                if (has_translation && active_line_h > 0.0f)
+                {
+                    float trans_w = 0.0f;
+                    for (const TextRow &row : trans_lay.rows)
+                        trans_w = std::max(trans_w,
+                                           measure(g_ui_fonts.body, trans_lay.size, row.text));
+                    const float pad_x = ui_px(20.0f);
+                    const float pad_y = ui_px(9.0f);
+                    const float pill_w =
+                        std::min(max_text_w * 0.92f,
+                                 std::max(ui_px(120.0f), trans_w + pad_x * 2.0f));
+                    const float pill_h = trans_lay.height + pad_y * 2.0f;
+                    const ImVec2 p0(focal.x - pill_w * 0.5f,
+                                    active_line_center_y + active_line_h * 0.5f + trans_gap);
+                    const ImVec2 p1(p0.x + pill_w, p0.y + pill_h);
+                    const float rounding = pill_h * 0.5f;
+                    const float ga = clampf(active_line_alpha, 0.0f, 1.0f);
+
+                    // Soft drop shadow, translucent theme wash, and a thin
+                    // accent rim. The white top edge is the "glass" catch.
+                    dl->AddRectFilled(ImVec2(p0.x + ui_px(2.0f), p0.y + ui_px(4.0f)),
+                                      ImVec2(p1.x + ui_px(2.0f), p1.y + ui_px(4.0f)),
+                                      ui_with_alpha(IM_COL32(0, 0, 0, 255), 0.16f * ga),
+                                      rounding);
+                    dl->AddRectFilled(p0, p1,
+                                      ui_with_alpha(ui_overlay_u32(1.0f), 0.075f * ga),
+                                      rounding);
+                    dl->AddRectFilled(p0, p1,
+                                      ui_with_alpha(ui_accent_u32(1.0f), 0.045f * ga),
+                                      rounding);
+                    dl->AddRect(p0, p1,
+                                ui_with_alpha(ui_accent_text_u32(), 0.16f * ga),
+                                rounding, ImDrawFlags_None, ui_px(1.0f));
+                    dl->AddRectFilled(
+                        ImVec2(p0.x + rounding * 0.55f, p0.y + ui_px(1.0f)),
+                        ImVec2(p1.x - rounding * 0.55f, p0.y + ui_px(1.6f)),
+                        ui_with_alpha(IM_COL32(255, 255, 255, 255),
+                                      (ui_theme_is_light() ? 0.55f : 0.12f) * ga),
+                        ui_px(0.6f));
+
+                    float ty = p0.y + pad_y;
+                    for (const TextRow &row : trans_lay.rows)
+                    {
+                        const float rw =
+                            measure(g_ui_fonts.body, trans_lay.size, row.text);
+                        dl->AddText(g_ui_fonts.body, trans_lay.size,
+                                    ImVec2(focal.x - rw * 0.5f, ty),
+                                    ui_with_alpha(ui_text_u32(), 0.86f * ga),
+                                    row.text.c_str());
+                        ty += trans_lay.line_h;
+                    }
                 }
             }
         }

@@ -2,6 +2,7 @@
 #include "mpvplayer.h"
 #include "paths.h"
 #include "json_util.h"
+#include "atomic_file.h"
 
 #include <chrono>
 #include <cstdio>
@@ -112,11 +113,9 @@ void save_session(const AppState &state, const MpvPlayer &player, int volume_ove
     const int volume = volume_override >= 0
                            ? volume_override
                            : (int)player.get_property_double("volume");
-    std::ofstream out(path);
-    if (!out)
-        return;
-    out << session_json(state, player.get_property_double("time-pos"), volume);
-    out.close();
+    std::ostringstream json;
+    json << session_json(state, player.get_property_double("time-pos"), volume);
+    atomic_file::replace_text(path, json.str());
 }
 
 

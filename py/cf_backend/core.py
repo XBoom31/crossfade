@@ -1794,10 +1794,12 @@ def get_lyrics(yt, video_id):
         if not result:
             continue
         if result.get('synced'):
-            return result
+            return _translate_lyrics(result, timeout=per_call)
         if plain_fallback is None:
             plain_fallback = result
-    return plain_fallback or {'none': True}
+    if plain_fallback:
+        return _translate_lyrics(plain_fallback, timeout=per_call)
+    return {'none': True}
 
 
 def _extract_meta(meta):
@@ -1902,6 +1904,66 @@ def _plain_result(source, text):
     lines = [{'t': 0, 'text': p}
              for p in (text or '').replace('\r\n', '\n').split('\n') if p.strip()]
     return {'synced': False, 'source': source, 'lines': lines} if lines else None
+
+
+def _translate_lyrics(result, timeout=None):
+    """
+    Add English translations (and romanization) to a line-level payload.
+
+    The native backend has its own translation pass, but lyrics served by the
+    Python backend must get the same treatment or the immersive view has
+    nothing to draw under the original line. The endpoint auto-detects the
+    language; English lines come back without a translation, so they keep
+    showing only the original text.
+    """
+    lines = (result or {}).get('lines') or []
+    if not lines:
+        return result
+    unique = []
+    by_text = {}
+    for line in lines:
+        text = (line.get('text') or '').strip()
+        if not text:
+            continue
+        if text not in by_text:
+            by_text[text] = len(unique)
+            unique.append(text)
+    # Keep a direct index for every line, including duplicates and blanks.
+    owners = []
+    for line in lines:
+        text = (line.get('text') or '').strip()
+        owners.append(by_text.get(text, -1) if text else -1)
+    if not unique:
+        return result
+
+    body = json.dumps({'lines': unique, 'to': 'en'}).encode('utf-8')
+    headers = {
+        'User-Agent': _BROWSER_UA,
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+        'Origin': 'https://unison.betterlyrics.org',
+    }
+    req = urllib.request.Request('https://unison.betterlyrics.org/translate',
+                                 data=body, headers=headers, method='POST')
+    try:
+        with urllib.request.urlopen(req, timeout=timeout or 5) as resp:
+            payload = json.loads(resp.read().decode('utf-8', 'replace'))
+    except Exception:
+        return result
+    if (payload.get('detectedLang') or '').lower() == 'en':
+        return result
+    rows = payload.get('lines') or []
+    for i, owner in enumerate(owners):
+        if owner < 0 or owner >= len(rows):
+            continue
+        row = rows[owner] or {}
+        translation = row.get('translation')
+        if translation and translation != unique[owner]:
+            lines[i]['translation'] = translation
+        roman = row.get('romanization')
+        if roman and roman != unique[owner]:
+            lines[i]['roman'] = roman
+    return result
 
 
 def _synced_from_lrc(source, lrc):

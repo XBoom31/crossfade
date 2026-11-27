@@ -462,20 +462,32 @@ void prefetch_lyrics(const std::vector<std::string> &track_ids)
         Lyrics lx;
         if (load_lyrics_cache(id, lx))
             continue;
-        if (fetch_lyrics(id, lx))
-            save_lyrics_cache(id, lx);
+        // Stale cache: keep it as a fallback, but try the richer provider
+        // cascade before giving up on translations and word timings.
+        Lyrics fresh;
+        if (fetch_lyrics(id, fresh))
+            save_lyrics_cache(id, fresh);
     }
 }
 
 void load_lyrics_worker(std::string track_id, int expect_seq)
 {
     Lyrics lx;
-    if (!load_lyrics_cache(track_id, lx))
+    const bool have_cached = load_lyrics_cache(track_id, lx);
+    if (!have_cached)
     {
-        if (fetch_lyrics(track_id, lx))
+        Lyrics fresh;
+        if (fetch_lyrics(track_id, fresh))
+        {
+            lx = std::move(fresh);
             save_lyrics_cache(track_id, lx); // caches real lyrics and "none" results
-        else
-            lx.ok = false; // fetch failed: don't cache, retry on next play/open
+        }
+        else if (!lx.ok)
+        {
+            // No cache and no network result: let the UI show the retry
+            // message instead of an empty, successful-looking payload.
+            lx.ok = false;
+        }
     }
 
     // Discard if a newer request superseded this one.

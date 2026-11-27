@@ -46,10 +46,11 @@ bool load_lyrics_cache(const std::string &video_id, Lyrics &out)
     in.close();
     if (!parse_lyrics_json(json, out))
         return false;
-    // Version 1 caches predate word timings, translations and the Unison
-    // provider. Fetch once more so the immersive view can use the richer
-    // source (including tracks the old cascade had marked "none").
-    return out.version >= 2;
+    // Version 3 caches predate the Python backend's translation pass and can
+    // still be from a provider that never supplied word timings. Refetch once
+    // so the immersive view can pick up translations. The caller keeps this
+    // payload as a fallback if the refetch fails.
+    return out.version >= 4;
 }
 
 void save_lyrics_cache(const std::string &video_id, const Lyrics &lyrics)
@@ -64,11 +65,11 @@ void save_lyrics_cache(const std::string &video_id, const Lyrics &lyrics)
         return;
     if (lyrics.none)
     {
-        out << "{\"version\":2,\"none\":true}";
+        out << "{\"version\":4,\"none\":true}";
         out.close();
         return;
     }
-    out << "{\"version\":2,\"synced\":" << (lyrics.synced ? "true" : "false")
+    out << "{\"version\":4,\"synced\":" << (lyrics.synced ? "true" : "false")
         << ",\"source\":\"" << json_escape(lyrics.source) << "\",\"language\":\""
         << json_escape(lyrics.language) << "\",\"lines\":[";
     const size_t count = std::max(lyrics.lines.size(), lyrics.rich.size());

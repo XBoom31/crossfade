@@ -108,6 +108,25 @@ int main()
     (void)get_cached_tracks();
     check(!fs::exists(cache / "orphan.webm.meta.json"), "orphan sidecar swept");
 
+    // Artwork validation: a sidecar is identity-scoped, but its URL must also
+    // carry the id. A URL copied from another row must never become the cover.
+    write_file(cache / "cover.webm.meta.json",
+               "{\"thumbnail_url\":\"https://i.ytimg.com/vi/cover/maxresdefault.jpg\"}");
+    write_file(cache / "stolen.webm.meta.json",
+               "{\"thumbnail_url\":\"https://yt3.googleusercontent.com/deftones\"}");
+    check(authoritative_thumbnail_url("cover", "https://wrong") ==
+              "https://i.ytimg.com/vi/cover/maxresdefault.jpg",
+          "id-matching sidecar artwork trusted");
+    check(authoritative_thumbnail_url("stolen", "https://wrong") ==
+              "https://img.youtube.com/vi/stolen/hqdefault.jpg",
+          "foreign sidecar artwork rejected");
+    check(authoritative_thumbnail_url("missing", "https://wrong") ==
+              "https://img.youtube.com/vi/missing/hqdefault.jpg",
+          "missing sidecar falls back to id-derived art");
+    check(authoritative_thumbnail_url("local:abc", "file:///cover.jpg") ==
+              "file:///cover.jpg",
+          "local media keeps its explicit artwork");
+
     // Clear keeps the current file and its sidecar.
     audio_cache_clear("meta");
     check(fs::exists(cache / "meta.webm"), "clear keeps current audio");

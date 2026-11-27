@@ -953,7 +953,11 @@ int app_run(int argc, char **argv)
             strncpy(g_state.search_buffer, r.search_query.c_str(), sizeof(g_state.search_buffer) - 1);
         g_state.current_title = r.track_title;
         g_state.current_artist = r.track_artist;
-        g_state.current_thumbnail_url = r.track_thumbnail;
+        // Saved artwork is only a hint: it may have been copied from another
+        // row while the session was being written. Re-derive it from the
+        // restored track id before the first frame is painted.
+        g_state.current_thumbnail_url =
+            authoritative_thumbnail_url(r.track_id, r.track_thumbnail);
         g_state.current_track_id = r.track_id;
         g_state.current_album_id = r.track_album_id;
         g_state.current_artist_id = r.track_artist_id;
@@ -974,7 +978,7 @@ int app_run(int argc, char **argv)
         g_state.pending_play_url = playable_track_url(r.track_id, r.track_url);
         g_state.pending_play_title = r.track_title;
         g_state.pending_play_artist = r.track_artist;
-        g_state.pending_play_thumbnail_url = r.track_thumbnail;
+        g_state.pending_play_thumbnail_url = g_state.current_thumbnail_url;
         g_state.pending_play_duration_sec = 0; // session state has no duration
         g_state.pending_video_id = r.track_id;
         g_state.pending_video_url = playable_track_url(r.track_id, r.track_url);
@@ -2608,7 +2612,15 @@ int app_run(int argc, char **argv)
                                        (g_state.playing ? "p" : "s") + '|' +
                                        std::to_string((int)g_state.current_playlist_source.load()) + '|' +
                                        std::to_string(g_state.current_track_index) + '|' +
-                                       g_state.search_buffer;
+                                       g_state.search_buffer + '|' +
+                                       g_state.current_thumbnail_url + '|' +
+                                       g_state.current_album_id + '|' +
+                                       g_state.current_artist_id + '|' +
+                                       g_state.album_browse_id + '|' +
+                                       g_state.album_title + '|' +
+                                       g_state.album_artist + '|' +
+                                       g_state.artist_browse_id + '|' +
+                                       g_state.artist_name;
                 static std::string s_last_sess_sig;
                 static int s_last_vol = -1;
                 if (sess_sig != s_last_sess_sig || s_last_vol != vol)

@@ -658,7 +658,10 @@ void commit_play_count()
     ev.id = g_state.current_track_id;
     ev.title = g_state.current_title;
     ev.artist = g_state.current_artist;
-    ev.thumbnail_url = g_state.current_thumbnail_url;
+    // Never let a stale cover from another row reach the play log: the
+    // repair worker trusts it and would copy it into cached metadata.
+    ev.thumbnail_url = authoritative_thumbnail_url(
+        g_state.current_track_id, g_state.current_thumbnail_url);
     ev.ts = (int64_t)time(nullptr);
     g_state.play_log.push_back(ev);
     if ((int)g_state.play_log.size() > kPlayLogCap)
@@ -2326,8 +2329,10 @@ void handle_player_event(const std::string &event, MprisPlayer *mpris)
         std::string artist = g_state.current_artist;
         if (title.empty()) title = "Unknown Track";
         if (artist.empty()) artist = "Unknown Artist";
-        std::string thumb_path = thumbnail_is_cached(g_state.current_thumbnail_url)
-                                     ? get_cached_thumbnail_path(g_state.current_thumbnail_url)
+        const std::string thumb_url = authoritative_thumbnail_url(
+            g_state.current_track_id, g_state.current_thumbnail_url);
+        std::string thumb_path = thumbnail_is_cached(thumb_url)
+                                     ? get_cached_thumbnail_path(thumb_url)
                                      : "";
         if (thumb_path.empty()) thumb_path = "audio-x-generic";
         show_notification(title, "by " + artist, thumb_path);
@@ -2339,7 +2344,8 @@ void handle_player_event(const std::string &event, MprisPlayer *mpris)
             history_entry.id = g_state.current_track_id;
             history_entry.title = g_state.current_title;
             history_entry.artist = g_state.current_artist;
-            history_entry.thumbnail_url = g_state.current_thumbnail_url;
+            history_entry.thumbnail_url = authoritative_thumbnail_url(
+                history_entry.id, g_state.current_thumbnail_url);
             history_entry.url = g_state.current_track_url;
             history_entry.duration_sec = (int)duration;
             // Insert at front (most-recent-first). Drop an earlier
